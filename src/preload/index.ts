@@ -36,6 +36,8 @@ const api = {
   getOllamaStatus: () => ipcRenderer.invoke('cookbook:ollama-status'),
   getInstalledModels: () => ipcRenderer.invoke('cookbook:installed-models'),
   pullOllamaModel: (modelTag: string) => ipcRenderer.invoke('cookbook:ollama-pull', modelTag),
+  deleteOllamaModel: (modelTag: string) =>
+    ipcRenderer.invoke('cookbook:ollama-delete', modelTag) as Promise<{ success: boolean; error?: string }>,
   onPullProgress: (callback: (data: any) => void) => {
     const listener = (_: any, data: any) => callback(data)
     ipcRenderer.on('cookbook:pull-progress', listener)
@@ -52,7 +54,8 @@ const api = {
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
   downloadModel: (url: string, filename: string) => ipcRenderer.invoke('engine:download-model', url, filename),
   listLocalModels: () => ipcRenderer.invoke('engine:list-models'),
-  deleteLocalModel: (filename: string) => ipcRenderer.invoke('engine:delete-model', filename),
+  deleteLocalModel: (filename: string) =>
+    ipcRenderer.invoke('engine:delete-model', filename) as Promise<{ success: boolean; error?: string }>,
   onEngineProgress: (callback: (data: any) => void) => {
     const listener = (_: any, data: any) => callback(data)
     ipcRenderer.on('engine:download-progress', listener)

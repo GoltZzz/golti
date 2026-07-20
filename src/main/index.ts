@@ -517,11 +517,60 @@ function setupIpcHandlers(): void {
   ipcMain.handle('engine:list-models', () => listLocalModels())
 
   ipcMain.handle('engine:delete-model', async (_, filename: string) => {
-    const res = deleteLocalModel(filename)
+    const state = getEngineState()
+    if (state.loadedModel) {
+      const loadedName = path.basename(state.loadedModel)
+      if (loadedName === filename || loadedName === path.basename(filename)) {
+        return {
+          success: false,
+          error: 'This model is currently loaded in Golti Engine. Switch or unload it first, then try again.'
+        }
+      }
+    }
+
     try {
-      await getAllModels()
-    } catch (e) {}
-    return res
+      const res = deleteLocalModel(filename)
+      try {
+        await getAllModels()
+      } catch (e) {}
+      return { success: res, error: res ? undefined : 'Model file not found' }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to delete model' }
+    }
+  })
+
+  // Cookbook Ollama Model Delete
+  ipcMain.handle('cookbook:ollama-delete', async (_, modelTag: string) => {
+    const providers = dbProviders.list()
+    const ollamaProvider = providers.find(p => p.type === 'ollama')
+    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+
+    try {
+      const response = await fetch(`${endpoint}/api/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelTag, name: modelTag })
+      })
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        return {
+          success: false,
+          error: text || `Ollama delete failed (${response.status})`
+        }
+      }
+
+      try {
+        await getAllModels()
+      } catch (e) {}
+
+      return { success: true }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message || 'Failed to delete Ollama model. Is Ollama running?'
+      }
+    }
   })
 }
 

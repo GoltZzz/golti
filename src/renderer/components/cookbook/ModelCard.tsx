@@ -1,10 +1,16 @@
-import React from 'react'
+import React, { useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
 import { getCompatibility } from '../../../shared/compatibility'
+import { normalizeOllamaTag } from '../../../shared/ollama-tags'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { useEngineStore } from '../../stores/engineStore'
+import {
+  DeleteModelDialog,
+  DeleteSource,
+  DeleteSourceOption
+} from './DeleteModelDialog'
 import {
   Cpu,
   HardDrive,
@@ -15,13 +21,15 @@ import {
   MessageSquare,
   Sparkles,
   RefreshCw,
-  Zap
+  Zap,
+  Trash2
 } from 'lucide-react'
 
 interface ModelCardProps {
   model: CookbookModel
   systemInfo: SystemInfoFull | null
   isInstalled: boolean
+  installedOllamaTag?: string
   isOllamaOnline: boolean
 }
 
@@ -29,9 +37,17 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   model,
   systemInfo,
   isInstalled,
+  installedOllamaTag,
   isOllamaOnline
 }) => {
-  const { pullingModel, pullProgress, pullError, pullModel } = useCookbookStore()
+  const {
+    pullingModel,
+    pullProgress,
+    pullError,
+    pullModel,
+    deleteOllamaModel,
+    deletingOllamaTag
+  } = useCookbookStore()
   const {
     localModels,
     downloadingModelFilename,
@@ -40,8 +56,16 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     engineState,
     installEngine,
     downloadModel,
-    loadModel
+    loadModel,
+    deleteLocalModel
   } = useEngineStore()
+
+  const selectedModel = useChatStore((s) => s.selectedModel)
+
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [selectedSource, setSelectedSource] = useState<DeleteSource | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const isEngineInstalled = engineState.status !== 'not-installed'
   const isEngineModelDownloaded = model.ggufFilename
@@ -53,6 +77,69 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const comp = getCompatibility(systemInfo, model)
 
   const isCurrentPulling = pullingModel === model.ollamaTag
+
+  const isEngineActive = useMemo(() => {
+    if (!model.ggufFilename || !engineState.loadedModel) return false
+    return engineState.loadedModel.split(/[/\\]/).pop() === model.ggufFilename
+  }, [model.ggufFilename, engineState.loadedModel])
+
+  const isEngineSelectedInChat = useMemo(() => {
+    if (!selectedModel || selectedModel.providerType !== 'golti-engine' || !model.ggufFilename) {
+      return false
+    }
+    const selectedName = selectedModel.name.toLowerCase().replace(/\.gguf$/, '')
+    const ggufName = model.ggufFilename.toLowerCase().replace(/\.gguf$/, '')
+    return selectedName === ggufName || selectedModel.name === model.ggufFilename
+  }, [selectedModel, model.ggufFilename])
+
+  const isOllamaActive = useMemo(() => {
+    if (!selectedModel || selectedModel.providerType !== 'ollama') return false
+    const tag = installedOllamaTag || model.ollamaTag
+    return normalizeOllamaTag(selectedModel.name) === normalizeOllamaTag(tag)
+  }, [selectedModel, installedOllamaTag, model.ollamaTag])
+
+  const deleteSources: DeleteSourceOption[] = useMemo(() => {
+    const sources: DeleteSourceOption[] = []
+
+    if (isEngineModelDownloaded && model.ggufFilename) {
+      const blocked = isEngineActive || isEngineSelectedInChat
+      sources.push({
+        id: 'engine',
+        label: 'Golti Engine (GGUF)',
+        detail: model.ggufFilename,
+        blocked,
+        blockedReason: blocked
+          ? isEngineActive
+            ? 'Currently loaded in Golti Engine. Switch or unload it in Chat or Settings first.'
+            : 'Currently selected for chat. Choose a different model first.'
+          : undefined
+      })
+    }
+
+    if (isInstalled) {
+      const tag = installedOllamaTag || model.ollamaTag
+      sources.push({
+        id: 'ollama',
+        label: 'Ollama',
+        detail: tag,
+        blocked: isOllamaActive,
+        blockedReason: isOllamaActive
+          ? 'Currently selected for chat. Choose a different model first.'
+          : undefined
+      })
+    }
+
+    return sources
+  }, [
+    isEngineModelDownloaded,
+    model.ggufFilename,
+    isEngineActive,
+    isEngineSelectedInChat,
+    isInstalled,
+    installedOllamaTag,
+    model.ollamaTag,
+    isOllamaActive
+  ])
 
   const getCompBadge = () => {
     switch (comp) {
@@ -105,12 +192,18 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       matchingModel = chatStore.models.find((m) => m.providerType === 'golti-engine')
     } else {
       matchingModel = chatStore.models.find(
-        (m) => m.providerType === 'ollama' && m.name.split(':')[0] === model.ollamaTag.split(':')[0]
+        (m) =>
+          m.providerType === 'ollama' &&
+          normalizeOllamaTag(m.name) === normalizeOllamaTag(installedOllamaTag || model.ollamaTag)
       )
     }
 
     const providerId = matchingModel ? matchingModel.providerId : viaEngine ? 'golti-engine-local' : 'ollama-local'
-    const fullModelTag = matchingModel ? matchingModel.name : viaEngine ? (model.ggufFilename?.replace(/\.gguf$/, '') || model.name) : model.ollamaTag
+    const fullModelTag = matchingModel
+      ? matchingModel.name
+      : viaEngine
+        ? model.ggufFilename?.replace(/\.gguf$/, '') || model.name
+        : installedOllamaTag || model.ollamaTag
 
     const targetModelInfo = matchingModel || {
       id: `${providerId}:${fullModelTag}`,
@@ -161,6 +254,72 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       await downloadModel(model.ggufUrl, model.ggufFilename)
     }
   }
+
+  const openDeleteDialog = () => {
+    setDeleteError(null)
+    const available = deleteSources.filter((s) => !s.blocked)
+    if (deleteSources.length === 1) {
+      setSelectedSource(deleteSources[0].id)
+    } else if (available.length === 1) {
+      setSelectedSource(available[0].id)
+    } else {
+      setSelectedSource(null)
+    }
+    setDialogOpen(true)
+  }
+
+  const closeDeleteDialog = () => {
+    if (isDeleting) return
+    setDialogOpen(false)
+    setDeleteError(null)
+    setSelectedSource(null)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!selectedSource) return
+    const source = deleteSources.find((s) => s.id === selectedSource)
+    if (!source || source.blocked) return
+
+    setIsDeleting(true)
+    setDeleteError(null)
+
+    try {
+      if (selectedSource === 'engine') {
+        if (!model.ggufFilename) {
+          setDeleteError('Missing GGUF filename')
+          setIsDeleting(false)
+          return
+        }
+        const result = await deleteLocalModel(model.ggufFilename)
+        if (!result.success) {
+          setDeleteError(result.error || 'Failed to delete Engine model')
+          setIsDeleting(false)
+          return
+        }
+      } else {
+        const tag = installedOllamaTag || model.ollamaTag
+        const result = await deleteOllamaModel(tag)
+        if (!result.success) {
+          setDeleteError(result.error || 'Failed to delete Ollama model')
+          setIsDeleting(false)
+          return
+        }
+      }
+
+      setIsDeleting(false)
+      setDialogOpen(false)
+      setSelectedSource(null)
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete model')
+      setIsDeleting(false)
+    }
+  }
+
+  const showDelete = isInstalled || isEngineModelDownloaded
+  const deletingThisOllama =
+    deletingOllamaTag !== null &&
+    normalizeOllamaTag(deletingOllamaTag) ===
+      normalizeOllamaTag(installedOllamaTag || model.ollamaTag)
 
   return (
     <div className={`model-card animate-scale-in ${isInstalled || isEngineModelDownloaded ? 'installed-border' : ''}`}>
@@ -306,6 +465,19 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             <span>{isOllamaOnline ? 'Install with Ollama' : 'Ollama Offline'}</span>
           </button>
         )}
+
+        {showDelete && (
+          <button
+            type="button"
+            className="action-btn delete-model-btn"
+            onClick={openDeleteDialog}
+            disabled={isDeleting || deletingThisOllama}
+            title="Delete downloaded copy"
+          >
+            <Trash2 size={14} />
+            <span>{isDeleting || deletingThisOllama ? 'Deleting…' : 'Delete downloaded'}</span>
+          </button>
+        )}
       </div>
 
       {isCurrentPulling && pullError && (
@@ -313,7 +485,18 @@ export const ModelCard: React.FC<ModelCardProps> = ({
           <AlertTriangle size={12} /> {pullError}
         </div>
       )}
+
+      <DeleteModelDialog
+        open={dialogOpen}
+        modelName={model.name}
+        sources={deleteSources}
+        selectedSource={selectedSource}
+        onSelectSource={setSelectedSource}
+        onConfirm={handleConfirmDelete}
+        onCancel={closeDeleteDialog}
+        isDeleting={isDeleting}
+        error={deleteError}
+      />
     </div>
   )
 }
-

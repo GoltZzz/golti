@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { SystemInfoFull, CookbookModel, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, PullProgress } from '../../shared/types'
+import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, PullProgress } from '../../shared/types'
+import { useChatStore } from './chatStore'
 
 interface CookbookFilters {
   useCases: ModelUseCase[]
@@ -23,11 +24,14 @@ interface CookbookState {
   pullingModel: string | null // ollamaTag of model being pulled
   pullProgress: PullProgress | null
   pullError: string | null
+  deletingOllamaTag: string | null
+  deleteError: string | null
 
   scanHardware: () => Promise<void>
   checkOllama: () => Promise<void>
   fetchInstalled: () => Promise<void>
   pullModel: (ollamaTag: string) => Promise<void>
+  deleteOllamaModel: (ollamaTag: string) => Promise<{ success: boolean; error?: string }>
   setFilter: <K extends keyof CookbookFilters>(key: K, value: CookbookFilters[K]) => void
   resetFilters: () => void
   isHardwareCardCollapsed: boolean
@@ -36,6 +40,7 @@ interface CookbookState {
   setSearch: (query: string) => void
   setPullingModel: (model: string | null) => void
   setPullProgress: (progress: PullProgress | null) => void
+  clearDeleteError: () => void
 }
 
 export const useCookbookStore = create<CookbookState>((set, get) => {
@@ -63,6 +68,8 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     pullingModel: null,
     pullProgress: null,
     pullError: null,
+    deletingOllamaTag: null,
+    deleteError: null,
 
     scanHardware: async () => {
       set({ loadingInfo: true, scanError: null })
@@ -116,6 +123,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
             })
             // Refetch installed models
             get().fetchInstalled()
+            useChatStore.getState().fetchModels()
             if (cleanupListener) {
               cleanupListener()
               cleanupListener = null
@@ -167,6 +175,32 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
         }
       }
     },
+
+    deleteOllamaModel: async (ollamaTag: string) => {
+      if (get().deletingOllamaTag) {
+        return { success: false, error: 'Another model is currently being deleted' }
+      }
+
+      set({ deletingOllamaTag: ollamaTag, deleteError: null })
+      try {
+        const result = await window.goltiAPI.deleteOllamaModel(ollamaTag)
+        if (result?.success) {
+          await get().fetchInstalled()
+          useChatStore.getState().fetchModels()
+          set({ deletingOllamaTag: null, deleteError: null })
+          return { success: true }
+        }
+        const error = result?.error || 'Failed to delete Ollama model'
+        set({ deletingOllamaTag: null, deleteError: error })
+        return { success: false, error }
+      } catch (err: any) {
+        const error = err.message || 'Failed to delete Ollama model'
+        set({ deletingOllamaTag: null, deleteError: error })
+        return { success: false, error }
+      }
+    },
+
+    clearDeleteError: () => set({ deleteError: null }),
 
     setFilter: (key, value) => {
       set((state) => ({

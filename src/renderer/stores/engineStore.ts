@@ -22,7 +22,7 @@ interface EngineStore {
   stopEngine: () => Promise<void>
   downloadModel: (url: string, filename: string) => Promise<void>
   fetchLocalModels: () => Promise<void>
-  deleteLocalModel: (filename: string) => Promise<void>
+  deleteLocalModel: (filename: string) => Promise<{ success: boolean; error?: string }>
   loadModel: (ggufPath: string) => Promise<void>
   setupListeners: () => () => void
 }
@@ -102,10 +102,25 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
 
   deleteLocalModel: async (filename: string) => {
     try {
-      await window.goltiAPI.deleteLocalModel(filename)
+      const result = await window.goltiAPI.deleteLocalModel(filename)
+      if (result && typeof result === 'object' && 'success' in result) {
+        if (!result.success) {
+          const error = result.error || 'Failed to delete model'
+          set({ error })
+          return { success: false, error }
+        }
+        await get().fetchLocalModels()
+        useChatStore.getState().fetchModels()
+        return { success: true }
+      }
+      // Legacy boolean return
       await get().fetchLocalModels()
+      useChatStore.getState().fetchModels()
+      return { success: !!result }
     } catch (err: any) {
-      set({ error: err.message || String(err) })
+      const error = err.message || String(err)
+      set({ error })
+      return { success: false, error }
     }
   },
 

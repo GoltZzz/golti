@@ -6,6 +6,8 @@ import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
 import { getCompatibility } from '../../../shared/compatibility'
+import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
+import { CookbookModel } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2 } from 'lucide-react'
 
 export const CookbookView: React.FC = () => {
@@ -23,7 +25,7 @@ export const CookbookView: React.FC = () => {
     fetchInstalled
   } = useCookbookStore()
 
-  const { engineState, setupListeners, installEngine, isInstallingBinary } = useEngineStore()
+  const { engineState, localModels, setupListeners, installEngine, isInstallingBinary } = useEngineStore()
 
   useEffect(() => {
     scanHardware()
@@ -32,6 +34,12 @@ export const CookbookView: React.FC = () => {
     const unsub = setupListeners()
     return () => unsub()
   }, [])
+
+  const isEngineDownloaded = (model: CookbookModel) =>
+    !!(model.ggufFilename && localModels.some((lm) => lm.filename === model.ggufFilename))
+
+  const isDownloaded = (model: CookbookModel) =>
+    isOllamaTagInstalled(model.ollamaTag, installedModels) || isEngineDownloaded(model)
 
   // Filter Catalog
   const filteredModels = MODEL_CATALOG.filter(model => {
@@ -75,8 +83,14 @@ export const CookbookView: React.FC = () => {
     return true
   })
 
-  // Sort Catalog
+  // Sort Catalog — downloaded models first, then selected secondary sort
   const sortedModels = [...filteredModels].sort((a, b) => {
+    const aDownloaded = isDownloaded(a) ? 1 : 0
+    const bDownloaded = isDownloaded(b) ? 1 : 0
+    if (aDownloaded !== bDownloaded) {
+      return bDownloaded - aDownloaded
+    }
+
     if (sortBy === 'name') {
       return a.name.localeCompare(b.name)
     }
@@ -106,17 +120,6 @@ export const CookbookView: React.FC = () => {
 
     return 0
   })
-
-  // Helper to check if model tag is pulled
-  const checkIsInstalled = (tag: string) => {
-    // Ollama tags can be returned as "llama3.2:latest" or "llama3.2:1b"
-    // Let's normalize name check
-    const cleanTag = tag.toLowerCase().split(':')[0]
-    return installedModels.some(m => {
-      const cleanM = m.toLowerCase().split(':')[0]
-      return cleanM === cleanTag || m.toLowerCase() === tag.toLowerCase()
-    })
-  }
 
   return (
     <div className="cookbook-container animate-fade-in">
@@ -228,7 +231,8 @@ export const CookbookView: React.FC = () => {
                   key={model.id}
                   model={model}
                   systemInfo={systemInfo}
-                  isInstalled={checkIsInstalled(model.ollamaTag)}
+                  isInstalled={isOllamaTagInstalled(model.ollamaTag, installedModels)}
+                  installedOllamaTag={findInstalledOllamaTag(model.ollamaTag, installedModels)}
                   isOllamaOnline={ollamaOnline}
                 />
               ))}

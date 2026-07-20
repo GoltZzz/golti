@@ -43,8 +43,19 @@ export function listLocalModels(): LocalModelFile[] {
 }
 
 export function deleteLocalModel(filename: string): boolean {
+  // Only allow simple basenames ending in .gguf (no path traversal)
+  const base = path.basename(filename)
+  if (base !== filename || !base.toLowerCase().endsWith('.gguf') || base.includes('..')) {
+    throw new Error('Invalid model filename')
+  }
+
   const dir = getModelDir()
-  const filepath = path.join(dir, filename)
+  const filepath = path.join(dir, base)
+  const resolved = path.resolve(filepath)
+  if (!resolved.startsWith(path.resolve(dir) + path.sep)) {
+    throw new Error('Invalid model path')
+  }
+
   if (fs.existsSync(filepath)) {
     fs.unlinkSync(filepath)
     return true
