@@ -4,12 +4,26 @@ import { fetchOllamaModels, streamOllamaChat } from './providers/ollama'
 import { fetchOpenAIModels, streamOpenAIChat } from './providers/openai'
 import { fetchAnthropicModels, streamAnthropicChat } from './providers/anthropic'
 import { fetchGoogleModels, streamGoogleChat } from './providers/google'
+import { fetchGoltiEngineModels, streamGoltiEngineChat } from './providers/golti-engine'
+
+import { isBinaryInstalled, listLocalModels } from '../engine'
 
 export async function getAllModels(): Promise<ModelInfo[]> {
-  const providers = dbProviders.list().filter(p => p.isActive)
+  let providers = dbProviders.list()
+
+  // Ensure golti-engine is active if local models exist or binary is installed
+  const engineProvider = providers.find((p) => p.type === 'golti-engine')
+  if (engineProvider && !engineProvider.isActive) {
+    if (isBinaryInstalled() || listLocalModels().length > 0) {
+      dbProviders.upsert({ ...engineProvider, isActive: true })
+      providers = dbProviders.list()
+    }
+  }
+
+  const activeProviders = providers.filter((p) => p.isActive)
   const allModels: ModelInfo[] = []
 
-  for (const provider of providers) {
+  for (const provider of activeProviders) {
     try {
       let modelsList: string[] = []
       if (provider.type === 'ollama') {
@@ -20,6 +34,8 @@ export async function getAllModels(): Promise<ModelInfo[]> {
         modelsList = await fetchAnthropicModels(provider)
       } else if (provider.type === 'google') {
         modelsList = await fetchGoogleModels(provider)
+      } else if (provider.type === 'golti-engine') {
+        modelsList = await fetchGoltiEngineModels(provider.endpoint)
       }
 
       dbProviders.upsert({ ...provider, models: modelsList, error: undefined })
@@ -33,7 +49,7 @@ export async function getAllModels(): Promise<ModelInfo[]> {
         })
       }
     } catch (e: any) {
-      console.warn(`Error fetching models for ${provider.name}:`, e)
+      console.warn(`Error fetching models for ${provider.name}: ${e.message || String(e)}`)
       dbProviders.upsert({ ...provider, error: e.message || String(e) })
     }
   }
@@ -62,7 +78,10 @@ export async function* streamChatResponse(
     yield* streamAnthropicChat(provider, model, messages, systemPrompt)
   } else if (provider.type === 'google') {
     yield* streamGoogleChat(provider, model, messages, systemPrompt)
+  } else if (provider.type === 'golti-engine') {
+    yield* streamGoltiEngineChat(provider, model, messages, systemPrompt)
   } else {
     throw new Error(`Unsupported provider type: ${provider.type}`)
   }
 }
+

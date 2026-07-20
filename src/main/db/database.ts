@@ -25,6 +25,39 @@ function getDbPath(): string {
   return dbPath
 }
 
+const defaultSettings: Settings = {
+  theme: 'dark',
+  accentColor: '#e06c75',
+  fontSize: 'medium',
+  sidebarCollapsed: false,
+  ollamaAutoDetect: true,
+  systemPrompt: 'You are Golti, an intelligent, helpful AI personal assistant.',
+  engineEnabled: true,
+  enginePort: 8391,
+  engineGpuLayers: -1
+}
+
+const defaultProviders: AIProviderConfig[] = [
+  {
+    id: 'golti-engine-local',
+    type: 'golti-engine',
+    name: 'Golti Engine (Local)',
+    endpoint: 'http://127.0.0.1:8391',
+    apiKey: '',
+    isActive: true,
+    models: []
+  },
+  {
+    id: 'ollama-local',
+    type: 'ollama',
+    name: 'Ollama (Local)',
+    endpoint: 'http://localhost:11434',
+    apiKey: '',
+    isActive: true,
+    models: []
+  }
+]
+
 function loadDb(): DBData {
   if (dbData) return dbData
 
@@ -33,32 +66,26 @@ function loadDb(): DBData {
     try {
       const content = fs.readFileSync(p, 'utf-8')
       dbData = JSON.parse(content)
-      return dbData!
+      if (dbData) {
+        if (!dbData.providers) {
+          dbData.providers = []
+        }
+        let updated = false
+        for (const defProv of defaultProviders) {
+          if (!dbData.providers.some((prov) => prov.id === defProv.id)) {
+            dbData.providers.push({ ...defProv })
+            updated = true
+          }
+        }
+        if (updated) {
+          saveDb()
+        }
+        return dbData
+      }
     } catch (e) {
       console.warn('Failed to parse database JSON, initializing new DB:', e)
     }
   }
-
-  const defaultSettings: Settings = {
-    theme: 'dark',
-    accentColor: '#e06c75',
-    fontSize: 'medium',
-    sidebarCollapsed: false,
-    ollamaAutoDetect: true,
-    systemPrompt: 'You are Golti, an intelligent, helpful AI personal assistant.'
-  }
-
-  const defaultProviders: AIProviderConfig[] = [
-    {
-      id: 'ollama-local',
-      type: 'ollama',
-      name: 'Ollama (Local)',
-      endpoint: 'http://localhost:11434',
-      apiKey: '',
-      isActive: true,
-      models: []
-    }
-  ]
 
   dbData = {
     settings: defaultSettings,

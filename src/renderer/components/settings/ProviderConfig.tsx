@@ -21,12 +21,14 @@ export const ProviderConfig: React.FC = () => {
   const handleCreate = (type: ProviderType) => {
     const newId = `${type}_${Date.now()}`
     const defaultEndpoints: Record<ProviderType, string> = {
+      'golti-engine': 'http://127.0.0.1:8391',
       ollama: 'http://localhost:11434',
       openai: 'https://api.openai.com/v1',
       anthropic: 'https://api.anthropic.com/v1',
       google: 'https://generativelanguage.googleapis.com'
     }
     const names: Record<ProviderType, string> = {
+      'golti-engine': 'Golti Engine Local',
       ollama: 'Ollama Local',
       openai: 'OpenAI Cloud',
       anthropic: 'Anthropic Claude',

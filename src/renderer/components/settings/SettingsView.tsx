@@ -1,17 +1,32 @@
 import React, { useState, useEffect } from "react";
-import { Server, Sliders, Info, Shield } from "lucide-react";
+import { Server, Sliders, Info, Shield, Zap, Play, Square, Download, Trash2, CheckCircle2 } from "lucide-react";
 import { ProviderConfig } from "./ProviderConfig";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useEngineStore } from "../../stores/engineStore";
 
 export const SettingsView: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<
-    "providers" | "general" | "about"
+    "providers" | "engine" | "general" | "about"
   >("providers");
   const { settings, fetchSettings, updateSettings } = useSettingsStore();
+  const {
+    engineState,
+    localModels,
+    isInstallingBinary,
+    error: engineError,
+    startEngine,
+    stopEngine,
+    installEngine,
+    fetchLocalModels,
+    deleteLocalModel,
+    loadModel
+  } = useEngineStore();
+
   const [systemPrompt, setSystemPrompt] = useState("");
 
   useEffect(() => {
     fetchSettings();
+    fetchLocalModels();
   }, []);
 
   useEffect(() => {
@@ -60,6 +75,11 @@ export const SettingsView: React.FC = () => {
               icon: <Server size={14} />,
             },
             {
+              id: "engine",
+              label: "Golti Engine",
+              icon: <Zap size={14} />,
+            },
+            {
               id: "general",
               label: "General & Prompt",
               icon: <Sliders size={14} />,
@@ -95,6 +115,201 @@ export const SettingsView: React.FC = () => {
       {/* Tab Content */}
       <div style={{ flex: 1, padding: "var(--space-4)" }}>
         {activeSubTab === "providers" && <ProviderConfig />}
+
+        {activeSubTab === "engine" && (
+          <div
+            style={{
+              maxWidth: "680px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--space-4)",
+            }}
+          >
+            {/* Status Card */}
+            <div
+              style={{
+                padding: "16px",
+                borderRadius: "var(--radius-md)",
+                backgroundColor: "var(--bg-card)",
+                border: "1px solid var(--border-subtle)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px"
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Zap size={16} style={{ color: "#e5c07b" }} /> Golti Engine Server
+                  </h3>
+                  <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+                    Local standalone inference process running llama-server.
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  {engineState.status === "not-installed" ? (
+                    <button
+                      onClick={() => installEngine()}
+                      disabled={isInstallingBinary}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: "var(--radius-sm)",
+                        backgroundColor: "#e5c07b",
+                        color: "#1e1e1e",
+                        fontWeight: 600,
+                        fontSize: "12px"
+                      }}
+                    >
+                      {isInstallingBinary ? "Installing..." : "Install Engine"}
+                    </button>
+                  ) : engineState.status === "running" ? (
+                    <button
+                      onClick={() => stopEngine()}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: "var(--radius-sm)",
+                        backgroundColor: "rgba(224, 108, 117, 0.2)",
+                        color: "#e06c75",
+                        border: "1px solid rgba(224, 108, 117, 0.4)",
+                        fontSize: "12px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}
+                    >
+                      <Square size={12} /> Stop Server
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => startEngine()}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: "var(--radius-sm)",
+                        backgroundColor: "rgba(152, 195, 121, 0.2)",
+                        color: "#98c379",
+                        border: "1px solid rgba(152, 195, 121, 0.4)",
+                        fontSize: "12px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}
+                    >
+                      <Play size={12} /> Start Server
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", background: "var(--bg-app)", padding: "12px", borderRadius: "6px" }}>
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Status</span>
+                  <div style={{ fontSize: "13px", fontWeight: 500, color: engineState.status === "running" ? "#98c379" : "var(--text-primary)" }}>
+                    {engineState.status.toUpperCase()}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Port</span>
+                  <div style={{ fontSize: "13px", fontWeight: 500 }}>{engineState.port || 8391}</div>
+                </div>
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Process PID</span>
+                  <div style={{ fontSize: "13px", fontWeight: 500 }}>{engineState.pid || "—"}</div>
+                </div>
+              </div>
+
+              {engineState.loadedModel && (
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                  <strong>Active Loaded Model:</strong> {engineState.loadedModel.split(/[\/\\]/).pop()}
+                </div>
+              )}
+
+              {engineError && (
+                <div style={{ fontSize: "12px", color: "#e06c75", backgroundColor: "rgba(224, 108, 117, 0.1)", padding: "8px", borderRadius: "4px" }}>
+                  {engineError}
+                </div>
+              )}
+            </div>
+
+            {/* Local Models List */}
+            <div
+              style={{
+                padding: "16px",
+                borderRadius: "var(--radius-md)",
+                backgroundColor: "var(--bg-card)",
+                border: "1px solid var(--border-subtle)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px"
+              }}
+            >
+              <h3 style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-primary)" }}>
+                Downloaded GGUF Models (~/Golti/models)
+              </h3>
+
+              {localModels.length === 0 ? (
+                <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                  No models downloaded yet. Browse the Hardware Cookbook to download GGUF models directly!
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {localModels.map((m) => {
+                    const isLoaded = engineState.loadedModel === m.filepath
+                    return (
+                      <div
+                        key={m.filename}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "10px 12px",
+                          backgroundColor: "var(--bg-app)",
+                          borderRadius: "6px",
+                          border: isLoaded ? "1px solid #98c379" : "1px solid var(--border-subtle)"
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>
+                            {m.filename} {isLoaded && <span style={{ color: "#98c379", fontSize: "11px", marginLeft: "6px" }}><CheckCircle2 size={12} style={{ verticalAlign: "middle" }} /> Loaded</span>}
+                          </div>
+                          <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{m.sizeGB} GB</div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            onClick={() => loadModel(m.filepath)}
+                            disabled={isLoaded}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: "4px",
+                              backgroundColor: isLoaded ? "transparent" : "var(--accent-primary)",
+                              color: isLoaded ? "var(--text-muted)" : "var(--text-on-accent)",
+                              fontSize: "12px",
+                              fontWeight: 500
+                            }}
+                          >
+                            {isLoaded ? "Active" : "Load Model"}
+                          </button>
+                          <button
+                            onClick={() => deleteLocalModel(m.filename)}
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: "4px",
+                              backgroundColor: "rgba(224, 108, 117, 0.15)",
+                              color: "#e06c75",
+                              fontSize: "12px"
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {activeSubTab === "general" && (
           <div
@@ -260,3 +475,4 @@ export const SettingsView: React.FC = () => {
     </div>
   );
 };
+

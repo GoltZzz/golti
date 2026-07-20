@@ -11,10 +11,10 @@ export async function fetchOllamaModels(endpoint: string = 'http://localhost:114
     }
     return []
   } catch (err: any) {
-    console.warn('[Ollama] Failed to fetch models:', err)
     if (err.message?.includes('fetch failed') || err.cause?.code === 'ECONNREFUSED') {
       throw new Error('Cannot connect to Ollama. Make sure the Ollama server is running.')
     }
+    console.warn('[Ollama] Failed to fetch models:', err.message || String(err))
     throw err
   }
 }

@@ -14,6 +14,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 2.0,
     diskSizeGB: 1.3,
     ollamaTag: 'llama3.2:1b',
+    ggufUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+    ggufFilename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+    ggufFileSize: 808000000,
     description: 'Ultra-lightweight Llama 3.2 model optimized for edge devices and low-memory setups.',
     highlights: ['Extremely fast', 'Low memory footprint', 'Great for simple tasks']
   },
@@ -29,6 +32,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 4.0,
     diskSizeGB: 2.0,
     ollamaTag: 'llama3.2',
+    ggufUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf',
+    ggufFilename: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf',
+    ggufFileSize: 2020000000,
     description: 'The standard lightweight model from Meta. Outstanding balance of speed and capability.',
     highlights: ['Fast responses', 'Highly capable reasoning', 'Fits on almost any modern laptop']
   },
@@ -44,6 +50,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 6.0,
     diskSizeGB: 3.4,
     ollamaTag: 'llama3.2:3b-instruct-q8_0',
+    ggufUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q8_0.gguf',
+    ggufFilename: 'Llama-3.2-3B-Instruct-Q8_0.gguf',
+    ggufFileSize: 3400000000,
     description: 'High-precision 8-bit quantization of Llama 3.2 3B. Reduced quantization loss for sharper reasoning.',
     highlights: ['Better output quality', 'Slightly higher memory required', 'Good fallback for 8GB RAM systems']
   },
@@ -60,6 +69,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 8.0,
     diskSizeGB: 4.7,
     ollamaTag: 'llama3.1',
+    ggufUrl: 'https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+    ggufFilename: 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+    ggufFileSize: 4920000000,
     description: 'Meta\'s popular 8B model. Highly versatile, handles complex logic and coding well.',
     highlights: ['Strong coding support', '128k context window', 'Very popular general-purpose model']
   },
@@ -75,6 +87,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 48.0,
     diskSizeGB: 42.0,
     ollamaTag: 'llama3.3',
+    ggufUrl: 'https://huggingface.co/bartowski/Llama-3.3-70B-Instruct-GGUF/resolve/main/Llama-3.3-70B-Instruct-Q4_K_M.gguf',
+    ggufFilename: 'Llama-3.3-70B-Instruct-Q4_K_M.gguf',
+    ggufFileSize: 42500000000,
     description: 'State-of-the-art 70B model from Meta. Performs on par with much larger closed-source models.',
     highlights: ['Superb reasoning', 'Excellent for complex coding tasks', 'Requires high-end GPU/Unified Memory']
   },
@@ -92,6 +107,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 3.0,
     diskSizeGB: 1.1,
     ollamaTag: 'deepseek-r1:1.5b',
+    ggufUrl: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf',
+    ggufFilename: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf',
+    ggufFileSize: 1120000000,
     description: 'DeepSeek\'s ultra-lightweight reasoning model. Outputs chain-of-thought `<think>` tags.',
     highlights: ['Native chain-of-thought reasoning', 'Runs on low-end hardware', 'Impressive math and logic for size']
   },
@@ -107,6 +125,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 8.0,
     diskSizeGB: 4.7,
     ollamaTag: 'deepseek-r1:7b',
+    ggufUrl: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf',
+    ggufFilename: 'DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf',
+    ggufFileSize: 4680000000,
     description: 'DeepSeek\'s distilled 7B model. Strikingly strong reasoning, math, and coding abilities.',
     highlights: ['Best value-to-performance reasoning', 'Detailed step-by-step thinking', 'Great for 8GB/16GB RAM machines']
   },
@@ -122,6 +143,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 8.0,
     diskSizeGB: 4.7,
     ollamaTag: 'deepseek-r1:8b',
+    ggufUrl: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf',
+    ggufFilename: 'DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf',
+    ggufFileSize: 4920000000,
     description: 'DeepSeek\'s reasoning model distilled into the Llama 3.1 8B architecture.',
     highlights: ['Llama-based fine-tune', 'Excellent logical consistency', 'Runs well on 16GB unified memory']
   },
@@ -137,6 +161,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 16.0,
     diskSizeGB: 9.0,
     ollamaTag: 'deepseek-r1:14b',
+    ggufUrl: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf',
+    ggufFilename: 'DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf',
+    ggufFileSize: 9000000000,
     description: 'DeepSeek\'s distilled 14B Qwen-based model. Excellent for intermediate complex problem-solving.',
     highlights: ['Strong developer companion', 'Highly detailed explanations', 'Needs 16GB+ RAM']
   },
@@ -152,6 +179,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 24.0,
     diskSizeGB: 20.0,
     ollamaTag: 'deepseek-r1:32b',
+    ggufUrl: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf',
+    ggufFilename: 'DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf',
+    ggufFileSize: 20000000000,
     description: 'Distilled 32B reasoning model. Near frontier-level math and coding capabilities.',
     highlights: ['Frontier-like math/coding', 'Deep logical synthesis', 'Requires 24GB-32GB RAM/VRAM']
   },
@@ -167,6 +197,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     ramRecommendedGB: 48.0,
     diskSizeGB: 42.0,
     ollamaTag: 'deepseek-r1:70b',
+    ggufUrl: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Llama-70B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-70B-Q4_K_M.gguf',
+    ggufFilename: 'DeepSeek-R1-Distill-Llama-70B-Q4_K_M.gguf',
+    ggufFileSize: 42500000000,
     description: 'DeepSeek R1 distilled into Llama 70B. Superb reasoning capacity matching top closed models.',
     highlights: ['Exceptional performance', 'Full complex analysis', 'Requires high-end Mac Studio or multi-GPU PC']
   },

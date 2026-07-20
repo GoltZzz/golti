@@ -1,4 +1,25 @@
-export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google'
+export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
+
+export type EngineStatus = 'not-installed' | 'downloading' | 'stopped' | 'starting' | 'running' | 'error'
+
+export interface EngineState {
+  status: EngineStatus
+  binaryVersion?: string
+  binaryPath?: string
+  port?: number
+  pid?: number
+  loadedModel?: string
+  error?: string
+}
+
+export interface EngineDownloadProgress {
+  type: 'binary' | 'model'
+  name: string
+  completed: number
+  total: number
+  percent: number
+  speed?: string
+}
 
 export interface AIProviderConfig {
   id: string
@@ -121,6 +142,9 @@ export interface CookbookModel {
   ramRecommendedGB: number
   diskSizeGB: number
   ollamaTag: string
+  ggufUrl?: string
+  ggufFilename?: string
+  ggufFileSize?: number
   description: string
   highlights: string[]
 }
@@ -145,5 +169,10 @@ export interface Settings {
   ollamaAutoDetect: boolean
   systemPrompt: string
   osPlatformOverride?: 'auto' | 'darwin' | 'win32' | 'linux'
+  engineEnabled: boolean
+  engineModelDir?: string
+  enginePort: number
+  engineGpuLayers: number
 }
+
 

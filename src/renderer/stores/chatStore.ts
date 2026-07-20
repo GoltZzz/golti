@@ -52,6 +52,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ currentConversationId: id, isGenerating: false })
       const msgs = await window.goltiAPI.getMessages(id)
       set({ messages: msgs })
+
+      const conv = get().conversations.find((c) => c.id === id)
+      if (conv) {
+        const matchingModel = get().models.find(
+          (m) => (m.providerId === conv.providerId && m.name === conv.model) || m.name === conv.model
+        )
+        if (matchingModel) {
+          set({ selectedModel: matchingModel })
+        }
+      }
     } catch (err) {
       console.error('Failed to fetch messages:', err)
     }
@@ -103,7 +113,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const currentConv = get().conversations.find(c => c.id === convId)
     if (currentConv && currentConv.title === 'New Conversation') {
       const truncatedTitle = content.slice(0, 30) + (content.length > 30 ? '...' : '')
-      await window.goltiAPI.updateConversation(convId, { title: truncatedTitle })
+      await window.goltiAPI.updateConversation(convId, { title: truncatedTitle, model: modelName, providerId })
       get().fetchConversations()
     }
 
@@ -149,8 +159,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
   fetchModels: async () => {
     set({ isLoadingModels: true })
     try {
-      const modelsList = await window.goltiAPI.getModels()
+      const modelsList: ModelInfo[] = await window.goltiAPI.getModels()
       set({ models: modelsList, isLoadingModels: false })
+
+      const currentConvId = get().currentConversationId
+      const currentConv = get().conversations.find((c) => c.id === currentConvId)
+
+      if (currentConv) {
+        const matchingModel = modelsList.find(
+          (m) => (m.providerId === currentConv.providerId && m.name === currentConv.model) || m.name === currentConv.model
+        )
+        if (matchingModel) {
+          set({ selectedModel: matchingModel })
+          return
+        }
+      }
+
       if (modelsList.length > 0 && !get().selectedModel) {
         set({ selectedModel: modelsList[0] })
       }
@@ -162,6 +186,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSelectedModel: (model: ModelInfo) => {
     set({ selectedModel: model })
+    const convId = get().currentConversationId
+    if (convId) {
+      window.goltiAPI.updateConversation(convId, { model: model.name, providerId: model.providerId })
+    }
   },
 
   setupStreamListener: () => {

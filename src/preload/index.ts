@@ -42,7 +42,27 @@ const api = {
     return () => ipcRenderer.removeListener('cookbook:pull-progress', listener)
   },
   windowControl: (action: 'minimize' | 'maximize' | 'close') => ipcRenderer.send('window:control', action),
-  getPlatform: (): Promise<'darwin' | 'win32' | 'linux'> => ipcRenderer.invoke('system:platform')
+  getPlatform: (): Promise<'darwin' | 'win32' | 'linux'> => ipcRenderer.invoke('system:platform'),
+
+  // Golti Engine
+  getEngineStatus: () => ipcRenderer.invoke('engine:status'),
+  installEngine: () => ipcRenderer.invoke('engine:install'),
+  startEngine: () => ipcRenderer.invoke('engine:start'),
+  stopEngine: () => ipcRenderer.invoke('engine:stop'),
+  loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
+  downloadModel: (url: string, filename: string) => ipcRenderer.invoke('engine:download-model', url, filename),
+  listLocalModels: () => ipcRenderer.invoke('engine:list-models'),
+  deleteLocalModel: (filename: string) => ipcRenderer.invoke('engine:delete-model', filename),
+  onEngineProgress: (callback: (data: any) => void) => {
+    const listener = (_: any, data: any) => callback(data)
+    ipcRenderer.on('engine:download-progress', listener)
+    return () => ipcRenderer.removeListener('engine:download-progress', listener)
+  },
+  onEngineStatusChange: (callback: (state: any) => void) => {
+    const listener = (_: any, state: any) => callback(state)
+    ipcRenderer.on('engine:status-change', listener)
+    return () => ipcRenderer.removeListener('engine:status-change', listener)
+  }
 }
 
 contextBridge.exposeInMainWorld('goltiAPI', api)

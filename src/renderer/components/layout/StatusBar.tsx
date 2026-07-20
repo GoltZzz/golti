@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react'
-import { Cpu, HardDrive, Circle } from 'lucide-react'
+import { Cpu, HardDrive, Circle, Zap } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
+import { useEngineStore } from '../../stores/engineStore'
 import { SystemInfo } from '../../../shared/types'
 
 export const StatusBar: React.FC = () => {
   const { selectedModel, isGenerating } = useChatStore()
+  const { engineState } = useEngineStore()
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
 
   useEffect(() => {
@@ -38,6 +40,11 @@ export const StatusBar: React.FC = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: engineState.status === 'running' ? '#98c379' : 'var(--text-muted)' }}>
+          <Zap size={12} />
+          <span>Engine: {engineState.status}</span>
+        </div>
+
         {sysInfo && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -54,3 +61,4 @@ export const StatusBar: React.FC = () => {
     </footer>
   )
 }
+

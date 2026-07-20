@@ -3,6 +3,18 @@ import path from 'path'
 import os from 'os'
 import { dbConversations, dbMessages, dbProviders, dbSettings } from './db/database'
 import { getAllModels, streamChatResponse } from './ai/provider-manager'
+import {
+  initEngine,
+  stopEngine,
+  startEngine,
+  getEngineState,
+  onEngineStatusChange,
+  downloadEngineBinary,
+  downloadModel,
+  listLocalModels,
+  deleteLocalModel,
+  loadModelInEngine
+} from './engine'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
@@ -196,6 +208,14 @@ app.whenReady().then(() => {
   setupIpcHandlers()
   createWindow()
 
+  // Subscribe engine status changes to send to renderer
+  onEngineStatusChange((state) => {
+    mainWindow?.webContents.send('engine:status-change', state)
+  })
+
+  // Auto-init engine if enabled
+  initEngine().catch((err) => console.warn('[Engine Init Warning]', err))
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -203,6 +223,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', async () => {
+  await stopEngine()
 })
 
 function setupIpcHandlers(): void {
@@ -454,4 +478,50 @@ function setupIpcHandlers(): void {
       return { success: false, error: err.message }
     }
   })
+
+  // Golti Engine IPC Handlers
+  ipcMain.handle('engine:status', () => getEngineState())
+  
+  ipcMain.handle('engine:install', async () => {
+    return await downloadEngineBinary((progress) => {
+      mainWindow?.webContents.send('engine:download-progress', progress)
+    })
+  })
+
+  ipcMain.handle('engine:start', async () => {
+    const settings = dbSettings.get()
+    const models = listLocalModels()
+    const defaultModel = models.length > 0 ? models[0].filepath : undefined
+    return await startEngine(defaultModel, settings.enginePort, settings.engineGpuLayers)
+  })
+
+  ipcMain.handle('engine:stop', async () => {
+    return await stopEngine()
+  })
+
+  ipcMain.handle('engine:load-model', async (_, ggufPath: string) => {
+    const settings = dbSettings.get()
+    return await loadModelInEngine(ggufPath, settings.enginePort, settings.engineGpuLayers)
+  })
+
+  ipcMain.handle('engine:download-model', async (_, url: string, filename: string) => {
+    const res = await downloadModel(url, filename, (progress) => {
+      mainWindow?.webContents.send('engine:download-progress', progress)
+    })
+    try {
+      await getAllModels()
+    } catch (e) {}
+    return res
+  })
+
+  ipcMain.handle('engine:list-models', () => listLocalModels())
+
+  ipcMain.handle('engine:delete-model', async (_, filename: string) => {
+    const res = deleteLocalModel(filename)
+    try {
+      await getAllModels()
+    } catch (e) {}
+    return res
+  })
 }
+
