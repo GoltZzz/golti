@@ -1,0 +1,376 @@
+import type { BrowserWindow } from 'electron'
+import type {
+  Artifact,
+  Citation,
+  Message,
+  SendMessagePayload,
+  StreamChunkPayload,
+  TokenUsage
+} from '../../shared/types'
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_RESERVED_OUTPUT,
+  computeTokenBudget,
+  estimateTokens,
+  extractArtifacts,
+  getBranchPath
+} from '../../shared/chat-utils'
+import {
+  dbArtifacts,
+  dbCitations,
+  dbContext,
+  dbConversations,
+  dbMessages,
+  dbSettings
+} from '../db/database'
+import { streamChatResponse } from './provider-manager'
+import { runWebSearch } from '../services/web-search'
+
+interface ActiveGeneration {
+  generationId: string
+  conversationId: string
+  messageId: string
+  controller: AbortController
+}
+
+const activeGenerations = new Map<string, ActiveGeneration>()
+
+function newId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function sendChunk(win: BrowserWindow | null, chunk: StreamChunkPayload): void {
+  win?.webContents.send('ai:stream-chunk', chunk)
+}
+
+function buildContextBlock(conversationId: string, contextItemIds?: string[]): string {
+  const items = dbContext.list(conversationId).filter((c) => {
+    if (!c.enabled) return false
+    if (contextItemIds && contextItemIds.length > 0) {
+      return contextItemIds.includes(c.id)
+    }
+    return true
+  })
+  if (items.length === 0) return ''
+  const parts = items.map((item) => {
+    return `<context name="${item.name}" type="${item.type}">\n${item.content}\n</context>`
+  })
+  return `Use the following attached context when relevant:\n\n${parts.join('\n\n')}`
+}
+
+export function cancelGeneration(generationId: string): boolean {
+  const gen = activeGenerations.get(generationId)
+  if (!gen) return false
+  gen.controller.abort()
+  activeGenerations.delete(generationId)
+  return true
+}
+
+export function cancelConversationGenerations(conversationId: string): void {
+  for (const [id, gen] of activeGenerations) {
+    if (gen.conversationId === conversationId) {
+      gen.controller.abort()
+      activeGenerations.delete(id)
+    }
+  }
+}
+
+export async function startChatGeneration(
+  win: BrowserWindow | null,
+  payload: SendMessagePayload
+): Promise<{ userMsgId?: string; assistantMsgId: string; generationId: string }> {
+  const {
+    conversationId,
+    content,
+    model,
+    providerId,
+    systemPrompt,
+    parentId,
+    regenerateFromId,
+    editMessageId,
+    webSearch,
+    contextItemIds,
+    generationSettings
+  } = payload
+
+  const settings = dbSettings.get()
+  const conv = dbConversations.get(conversationId)
+  const allMessages = dbMessages.listForConversation(conversationId)
+
+  let userMsgId: string | undefined
+  let parentForAssistant: string | null = null
+  let variantGroupId: string | null = null
+  let variantIndex = 0
+
+  if (regenerateFromId) {
+    // Regenerate: create a new assistant variant under the same parent as the original assistant
+    const original = dbMessages.get(regenerateFromId)
+    if (!original || original.role !== 'assistant') {
+      throw new Error('Cannot regenerate: assistant message not found')
+    }
+    parentForAssistant = original.parentId ?? null
+    variantGroupId = original.variantGroupId || original.id
+    const siblings = allMessages.filter(
+      (m) => m.role === 'assistant' && (m.variantGroupId === variantGroupId || m.id === variantGroupId || m.parentId === parentForAssistant)
+    )
+    variantIndex = siblings.length
+    // Ensure original has variant group
+    if (!original.variantGroupId) {
+      dbMessages.update(original.id, { variantGroupId, variantIndex: 0 })
+    }
+  } else if (editMessageId) {
+    // Edit user message: version old content, update message, branch new assistant from it
+    const existing = dbMessages.get(editMessageId)
+    if (!existing || existing.role !== 'user') {
+      throw new Error('Cannot edit: user message not found')
+    }
+    dbMessages.createVersion({
+      id: newId('mv'),
+      messageId: existing.id,
+      content: existing.content,
+      editedAt: Date.now(),
+      editSource: 'user'
+    })
+    dbMessages.update(existing.id, { content })
+    userMsgId = existing.id
+    parentForAssistant = existing.id
+  } else {
+    // Normal send
+    const leaf = parentId ?? conv?.activeLeafId ?? null
+    userMsgId = newId('msg_u')
+    const userMsg: Message = {
+      id: userMsgId,
+      conversationId,
+      role: 'user',
+      content,
+      model,
+      createdAt: Date.now(),
+      parentId: leaf
+    }
+    dbMessages.create(userMsg)
+    parentForAssistant = userMsgId
+  }
+
+  const generationId = newId('gen')
+  const assistantMsgId = newId('msg_a')
+  const assistantMsg: Message = {
+    id: assistantMsgId,
+    conversationId,
+    role: 'assistant',
+    content: '',
+    model,
+    createdAt: Date.now() + 1,
+    parentId: parentForAssistant,
+    variantGroupId,
+    variantIndex,
+    generationId,
+    isStreaming: true
+  }
+  dbMessages.create(assistantMsg)
+  dbConversations.update(conversationId, { activeLeafId: assistantMsgId })
+
+  // Build history along branch (exclude empty assistant placeholder)
+  const refreshed = dbMessages.listForConversation(conversationId)
+  const branch = getBranchPath(refreshed, assistantMsgId).filter((m) => m.id !== assistantMsgId)
+
+  const contextBlock = buildContextBlock(conversationId, contextItemIds)
+  const effectiveSystem = [systemPrompt || conv?.systemPrompt || settings.systemPrompt, contextBlock]
+    .filter(Boolean)
+    .join('\n\n')
+
+  // Optional web search
+  let searchPreamble = ''
+  if (webSearch && settings.webSearch?.enabled && settings.webSearch.provider !== 'none') {
+    try {
+      const results = await runWebSearch(content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || '', settings.webSearch)
+      if (results.length > 0) {
+        searchPreamble =
+          'Web search results (cite these sources):\n' +
+          results
+            .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}`)
+            .join('\n\n')
+
+        results.forEach((r, i) => {
+          const citation: Citation = {
+            id: newId('cite'),
+            messageId: assistantMsgId,
+            url: r.url,
+            title: r.title,
+            snippet: r.snippet,
+            retrievedAt: Date.now(),
+            rank: i + 1
+          }
+          dbCitations.create(citation)
+          sendChunk(win, {
+            conversationId,
+            messageId: assistantMsgId,
+            generationId,
+            done: false,
+            citation,
+            eventType: 'citation'
+          })
+        })
+      }
+    } catch (err: any) {
+      console.warn('[web-search]', err.message || err)
+    }
+  }
+
+  const historyForModel: Message[] = searchPreamble
+    ? [
+        ...branch,
+        {
+          id: 'search_ctx',
+          conversationId,
+          role: 'system',
+          content: searchPreamble,
+          createdAt: Date.now()
+        }
+      ]
+    : branch
+
+  const controller = new AbortController()
+  activeGenerations.set(generationId, {
+    generationId,
+    conversationId,
+    messageId: assistantMsgId,
+    controller
+  })
+
+  const mergedSettings = {
+    ...settings.defaultGenerationSettings,
+    ...conv?.generationSettings,
+    ...generationSettings
+  }
+
+  ;(async () => {
+    let accumulated = ''
+    let usage: TokenUsage | undefined
+
+    try {
+      for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
+        signal: controller.signal,
+        generationSettings: mergedSettings
+      })) {
+        if (event.type === 'text') {
+          accumulated += event.text
+          sendChunk(win, {
+            conversationId,
+            messageId: assistantMsgId,
+            generationId,
+            contentDelta: event.text,
+            done: false,
+            eventType: 'text'
+          })
+        } else if (event.type === 'usage') {
+          usage = event.usage
+        } else if (event.type === 'error') {
+          throw new Error(event.error)
+        }
+      }
+
+      if (!usage) {
+        const promptText = historyForModel.map((m) => m.content).join('\n') + (effectiveSystem || '')
+        usage = {
+          promptTokens: estimateTokens(promptText),
+          completionTokens: estimateTokens(accumulated),
+          totalTokens: estimateTokens(promptText) + estimateTokens(accumulated),
+          estimated: true
+        }
+      }
+
+      dbMessages.update(assistantMsgId, {
+        content: accumulated,
+        tokensIn: usage.promptTokens,
+        tokensOut: usage.completionTokens,
+        error: undefined
+      })
+
+      // Extract artifacts
+      const extracted = extractArtifacts(accumulated)
+      for (const [idx, ex] of extracted.entries()) {
+        const artifact: Artifact = {
+          id: newId('art'),
+          conversationId,
+          messageId: assistantMsgId,
+          type: ex.type,
+          title: ex.title,
+          language: ex.language,
+          content: ex.content,
+          version: 1,
+          createdAt: Date.now() + idx,
+          updatedAt: Date.now() + idx
+        }
+        dbArtifacts.create(artifact)
+        sendChunk(win, {
+          conversationId,
+          messageId: assistantMsgId,
+          generationId,
+          done: false,
+          artifact,
+          eventType: 'artifact'
+        })
+      }
+
+      sendChunk(win, {
+        conversationId,
+        messageId: assistantMsgId,
+        generationId,
+        contentDelta: '',
+        done: true,
+        usage,
+        eventType: 'done'
+      })
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        dbMessages.update(assistantMsgId, {
+          content: accumulated || '(generation stopped)',
+          tokensOut: estimateTokens(accumulated)
+        })
+        sendChunk(win, {
+          conversationId,
+          messageId: assistantMsgId,
+          generationId,
+          contentDelta: '',
+          done: true,
+          eventType: 'done'
+        })
+      } else {
+        console.error('[AI Chat Error]', err)
+        const errorText = accumulated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
+        dbMessages.update(assistantMsgId, { content: errorText, error: err.message })
+        sendChunk(win, {
+          conversationId,
+          messageId: assistantMsgId,
+          generationId,
+          contentDelta: '',
+          done: true,
+          error: err.message,
+          eventType: 'error'
+        })
+      }
+    } finally {
+      activeGenerations.delete(generationId)
+    }
+  })()
+
+  return { userMsgId, assistantMsgId, generationId }
+}
+
+export function getTokenBudgetForConversation(conversationId: string, draft = '') {
+  const settings = dbSettings.get()
+  const conv = dbConversations.get(conversationId)
+  const messages = dbMessages.listForConversation(conversationId)
+  const leaf = conv?.activeLeafId
+  const history = getBranchPath(messages, leaf)
+  const contextItems = dbContext.list(conversationId)
+
+  return computeTokenBudget({
+    contextWindow: settings.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    reservedOutputTokens: settings.reservedOutputTokens ?? DEFAULT_RESERVED_OUTPUT,
+    systemPrompt: conv?.systemPrompt || settings.systemPrompt,
+    contextItems,
+    history,
+    draft
+  })
+}

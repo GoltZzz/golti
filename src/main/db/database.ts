@@ -1,13 +1,22 @@
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { Conversation, Message, AIProviderConfig, Settings } from '../../shared/types'
+import { AIProviderConfig, Conversation, Message, Settings } from '../../shared/types'
+import { backupJsonStore, getSqlite } from './sqlite'
+import {
+  chatArtifacts,
+  chatCitations,
+  chatContext,
+  chatConversations,
+  chatMessages
+} from './chat-repos'
 
 interface DBData {
   settings: Settings
   providers: AIProviderConfig[]
   conversations: Conversation[]
   messages: Message[]
+  _chatMigratedToSqlite?: boolean
 }
 
 let dbData: DBData | null = null
@@ -34,7 +43,19 @@ const defaultSettings: Settings = {
   systemPrompt: 'You are Golti, an intelligent, helpful AI personal assistant.',
   engineEnabled: true,
   enginePort: 8391,
-  engineGpuLayers: -1
+  engineGpuLayers: -1,
+  webSearch: {
+    provider: 'none',
+    maxResults: 5,
+    enabled: false
+  },
+  defaultContextWindow: 8192,
+  reservedOutputTokens: 1024,
+  defaultGenerationSettings: {
+    temperature: 0.7,
+    topP: 0.9,
+    maxTokens: 2048
+  }
 }
 
 const defaultProviders: AIProviderConfig[] = [
@@ -70,6 +91,9 @@ function loadDb(): DBData {
         if (!dbData.providers) {
           dbData.providers = []
         }
+        if (!dbData.conversations) dbData.conversations = []
+        if (!dbData.messages) dbData.messages = []
+        dbData.settings = { ...defaultSettings, ...dbData.settings }
         let updated = false
         for (const defProv of defaultProviders) {
           if (!dbData.providers.some((prov) => prov.id === defProv.id)) {
@@ -91,7 +115,8 @@ function loadDb(): DBData {
     settings: defaultSettings,
     providers: defaultProviders,
     conversations: [],
-    messages: []
+    messages: [],
+    _chatMigratedToSqlite: false
   }
 
   saveDb()
@@ -106,73 +131,89 @@ function saveDb(): void {
   fs.renameSync(tempPath, p)
 }
 
-// Conversation DB Helper Methods
+/**
+ * One-time import of conversations/messages from JSON into SQLite.
+ */
+export function migrateChatToSqlite(): void {
+  const data = loadDb()
+  getSqlite() // ensure schema
+
+  if (data._chatMigratedToSqlite) return
+
+  backupJsonStore(getDbPath())
+
+  const existing = chatConversations.list(true)
+  if (existing.length === 0 && (data.conversations?.length || 0) > 0) {
+    const run = getSqlite().transaction(() => {
+      for (const conv of data.conversations || []) {
+        if (!chatConversations.get(conv.id)) {
+          chatConversations.create({
+            ...conv,
+            activeLeafId: null
+          })
+        }
+      }
+      for (const msg of data.messages || []) {
+        if (!chatMessages.get(msg.id)) {
+          chatMessages.create({
+            ...msg,
+            parentId: msg.parentId ?? null,
+            variantIndex: msg.variantIndex ?? 0
+          })
+        }
+      }
+      // Set active leaf to latest message per conversation
+      for (const conv of data.conversations || []) {
+        const msgs = chatMessages.listForConversation(conv.id)
+        if (msgs.length > 0) {
+          const leaf = msgs[msgs.length - 1]
+          chatConversations.update(conv.id, { activeLeafId: leaf.id })
+        }
+      }
+    })
+    run()
+  }
+
+  data._chatMigratedToSqlite = true
+  // Keep conversations/messages arrays empty in JSON going forward (settings/providers only)
+  data.conversations = []
+  data.messages = []
+  saveDb()
+}
+
+export function initDatabase(): void {
+  migrateChatToSqlite()
+}
+
+// Conversation DB Helper Methods — SQLite-backed
 export const dbConversations = {
-  list: (): Conversation[] => {
-    const db = loadDb()
-    return db.conversations
-      .filter(c => !c.archived)
-      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updatedAt - a.updatedAt)
-  },
-
-  get: (id: string): Conversation | undefined => {
-    const db = loadDb()
-    return db.conversations.find(c => c.id === id)
-  },
-
-  create: (conv: Conversation): void => {
-    const db = loadDb()
-    db.conversations.unshift(conv)
-    saveDb()
-  },
-
-  update: (id: string, updates: Partial<Conversation>): void => {
-    const db = loadDb()
-    const index = db.conversations.findIndex(c => c.id === id)
-    if (index !== -1) {
-      db.conversations[index] = { ...db.conversations[index], ...updates, updatedAt: Date.now() }
-      saveDb()
-    }
-  },
-
-  delete: (id: string): void => {
-    const db = loadDb()
-    db.conversations = db.conversations.filter(c => c.id !== id)
-    db.messages = db.messages.filter(m => m.conversationId !== id)
-    saveDb()
-  }
+  list: (): Conversation[] => chatConversations.list(false),
+  listAll: (): Conversation[] => chatConversations.list(true),
+  get: (id: string): Conversation | undefined => chatConversations.get(id),
+  create: (conv: Conversation): void => chatConversations.create(conv),
+  update: (id: string, updates: Partial<Conversation>): void => chatConversations.update(id, updates),
+  delete: (id: string): void => chatConversations.delete(id),
+  search: (query: string) => chatConversations.search(query)
 }
 
-// Message DB Helper Methods
+// Message DB Helper Methods — SQLite-backed
 export const dbMessages = {
-  listForConversation: (conversationId: string): Message[] => {
-    const db = loadDb()
-    return db.messages
-      .filter(m => m.conversationId === conversationId)
-      .sort((a, b) => a.createdAt - b.createdAt)
-  },
-
-  create: (msg: Message): void => {
-    const db = loadDb()
-    db.messages.push(msg)
-    const conv = db.conversations.find(c => c.id === msg.conversationId)
-    if (conv) {
-      conv.updatedAt = Date.now()
-    }
-    saveDb()
-  },
-
-  updateContent: (id: string, content: string): void => {
-    const db = loadDb()
-    const msg = db.messages.find(m => m.id === id)
-    if (msg) {
-      msg.content = content
-      saveDb()
-    }
-  }
+  listForConversation: (conversationId: string): Message[] =>
+    chatMessages.listForConversation(conversationId),
+  get: (id: string) => chatMessages.get(id),
+  create: (msg: Message): void => chatMessages.create(msg),
+  update: (id: string, updates: Partial<Message>): void => chatMessages.update(id, updates),
+  updateContent: (id: string, content: string): void => chatMessages.updateContent(id, content),
+  delete: (id: string): void => chatMessages.delete(id),
+  createVersion: chatMessages.createVersion,
+  listVersions: chatMessages.listVersions
 }
 
-// Provider DB Helper Methods
+export const dbContext = chatContext
+export const dbArtifacts = chatArtifacts
+export const dbCitations = chatCitations
+
+// Provider DB Helper Methods — JSON
 export const dbProviders = {
   list: (): AIProviderConfig[] => {
     const db = loadDb()
@@ -181,7 +222,7 @@ export const dbProviders = {
 
   upsert: (provider: AIProviderConfig): void => {
     const db = loadDb()
-    const index = db.providers.findIndex(p => p.id === provider.id)
+    const index = db.providers.findIndex((p) => p.id === provider.id)
     if (index !== -1) {
       db.providers[index] = provider
     } else {
@@ -192,16 +233,16 @@ export const dbProviders = {
 
   delete: (id: string): void => {
     const db = loadDb()
-    db.providers = db.providers.filter(p => p.id !== id)
+    db.providers = db.providers.filter((p) => p.id !== id)
     saveDb()
   }
 }
 
-// Settings DB Helper Methods
+// Settings DB Helper Methods — JSON
 export const dbSettings = {
   get: (): Settings => {
     const db = loadDb()
-    return db.settings
+    return { ...defaultSettings, ...db.settings }
   },
 
   update: (newSettings: Partial<Settings>): void => {

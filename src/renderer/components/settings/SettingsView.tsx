@@ -378,6 +378,125 @@ export const SettingsView: React.FC = () => {
                   fontSize: "15px",
                   fontWeight: 600,
                   color: "var(--text-primary)",
+                  marginBottom: 8,
+                }}
+              >
+                Web Search
+              </h3>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "var(--text-muted)",
+                  marginBottom: "var(--space-3)",
+                }}
+              >
+                Configure a Brave or Tavily API key. Search stays opt-in per prompt from the chat composer.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings?.webSearch?.enabled)}
+                  onChange={(e) =>
+                    updateSettings({
+                      webSearch: {
+                        provider: settings?.webSearch?.provider || 'brave',
+                        apiKey: settings?.webSearch?.apiKey,
+                        maxResults: settings?.webSearch?.maxResults || 5,
+                        enabled: e.target.checked
+                      }
+                    })
+                  }
+                />
+                Enable web search
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                  Provider
+                  <select
+                    value={settings?.webSearch?.provider || 'none'}
+                    onChange={(e) =>
+                      updateSettings({
+                        webSearch: {
+                          provider: e.target.value as any,
+                          apiKey: settings?.webSearch?.apiKey,
+                          maxResults: settings?.webSearch?.maxResults || 5,
+                          enabled: settings?.webSearch?.enabled || false
+                        }
+                      })
+                    }
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border-medium)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      padding: '8px'
+                    }}
+                  >
+                    <option value="none">None</option>
+                    <option value="brave">Brave</option>
+                    <option value="tavily">Tavily</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                  Max results
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={settings?.webSearch?.maxResults || 5}
+                    onChange={(e) =>
+                      updateSettings({
+                        webSearch: {
+                          provider: settings?.webSearch?.provider || 'brave',
+                          apiKey: settings?.webSearch?.apiKey,
+                          maxResults: Number(e.target.value),
+                          enabled: settings?.webSearch?.enabled || false
+                        }
+                      })
+                    }
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border-medium)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      padding: '8px'
+                    }}
+                  />
+                </label>
+              </div>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                API key
+                <input
+                  type="password"
+                  value={settings?.webSearch?.apiKey || ''}
+                  onChange={(e) =>
+                    updateSettings({
+                      webSearch: {
+                        provider: settings?.webSearch?.provider || 'brave',
+                        apiKey: e.target.value,
+                        maxResults: settings?.webSearch?.maxResults || 5,
+                        enabled: settings?.webSearch?.enabled || false
+                      }
+                    })
+                  }
+                  placeholder="Paste provider API key"
+                  style={{
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-medium)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    padding: '8px'
+                  }}
+                />
+              </label>
+            </div>
+
+            <div style={{ paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+              <h3
+                style={{
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
                 }}
               >
                 OS Navigation Layout Preview

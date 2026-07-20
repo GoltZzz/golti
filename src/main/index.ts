@@ -1,8 +1,31 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import path from 'path'
 import os from 'os'
-import { dbConversations, dbMessages, dbProviders, dbSettings } from './db/database'
-import { getAllModels, streamChatResponse } from './ai/provider-manager'
+import {
+  dbArtifacts,
+  dbCitations,
+  dbContext,
+  dbConversations,
+  dbMessages,
+  dbProviders,
+  dbSettings,
+  initDatabase
+} from './db/database'
+import { getAllModels } from './ai/provider-manager'
+import {
+  cancelGeneration,
+  getTokenBudgetForConversation,
+  startChatGeneration
+} from './ai/chat-runtime'
+import {
+  addContextFromPath,
+  addContextText,
+  addContextUrl,
+  pickContextFiles,
+  pickContextFolder
+} from './services/context-ingest'
+import { exportConversation } from './services/export'
+import type { SendMessagePayload } from '../shared/types'
 import {
   initEngine,
   stopEngine,
@@ -205,6 +228,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  initDatabase()
   setupIpcHandlers()
   createWindow()
 
@@ -249,10 +273,70 @@ function setupIpcHandlers(): void {
   ipcMain.handle('db:conversations:create', (_, conv: any) => dbConversations.create(conv))
   ipcMain.handle('db:conversations:update', (_, id: string, updates: any) => dbConversations.update(id, updates))
   ipcMain.handle('db:conversations:delete', (_, id: string) => dbConversations.delete(id))
+  ipcMain.handle('db:conversations:search', (_, query: string) => dbConversations.search(query))
 
   // DB Messages
   ipcMain.handle('db:messages:list', (_, conversationId: string) => dbMessages.listForConversation(conversationId))
   ipcMain.handle('db:messages:create', (_, msg: any) => dbMessages.create(msg))
+  ipcMain.handle('db:messages:update', (_, id: string, updates: any) => dbMessages.update(id, updates))
+  ipcMain.handle('db:messages:versions', (_, messageId: string) => dbMessages.listVersions(messageId))
+  ipcMain.handle('db:messages:set-active-leaf', (_, conversationId: string, leafId: string) => {
+    dbConversations.update(conversationId, { activeLeafId: leafId })
+    return dbMessages.listForConversation(conversationId)
+  })
+
+  // Context
+  ipcMain.handle('context:list', (_, conversationId: string) => dbContext.list(conversationId))
+  ipcMain.handle('context:add-paths', (_, conversationId: string, paths: string[]) =>
+    paths.map((p) => addContextFromPath(conversationId, p))
+  )
+  ipcMain.handle('context:pick-files', async (_, conversationId: string) =>
+    pickContextFiles(mainWindow, conversationId)
+  )
+  ipcMain.handle('context:pick-folder', async (_, conversationId: string) =>
+    pickContextFolder(mainWindow, conversationId)
+  )
+  ipcMain.handle('context:add-text', (_, conversationId: string, name: string, content: string) =>
+    addContextText(conversationId, name, content, 'text')
+  )
+  ipcMain.handle('context:add-url', async (_, conversationId: string, url: string) =>
+    addContextUrl(conversationId, url)
+  )
+  ipcMain.handle('context:update', (_, id: string, updates: any) => {
+    dbContext.update(id, updates)
+    return true
+  })
+  ipcMain.handle('context:delete', (_, id: string) => {
+    dbContext.delete(id)
+    return true
+  })
+
+  // Artifacts
+  ipcMain.handle('artifacts:list', (_, conversationId: string) =>
+    dbArtifacts.listForConversation(conversationId)
+  )
+  ipcMain.handle('artifacts:update', (_, id: string, content: string) =>
+    dbArtifacts.updateContent(id, content)
+  )
+  ipcMain.handle('artifacts:versions', (_, artifactId: string) => dbArtifacts.listVersions(artifactId))
+  ipcMain.handle('artifacts:restore', (_, artifactId: string, version: number) =>
+    dbArtifacts.restoreVersion(artifactId, version)
+  )
+
+  // Citations
+  ipcMain.handle('citations:list', (_, conversationId: string) =>
+    dbCitations.listForConversation(conversationId)
+  )
+
+  // Token budget
+  ipcMain.handle('tokens:budget', (_, conversationId: string, draft?: string) =>
+    getTokenBudgetForConversation(conversationId, draft || '')
+  )
+
+  // Export
+  ipcMain.handle('conversations:export', async (_, options: any) =>
+    exportConversation(mainWindow, options)
+  )
 
   // DB Providers
   ipcMain.handle('db:providers:list', () => dbProviders.list())
@@ -268,69 +352,16 @@ function setupIpcHandlers(): void {
     return await getAllModels()
   })
 
-  ipcMain.handle('ai:chat', async (_, payload: { conversationId: string; content: string; model: string; providerId: string; systemPrompt?: string }) => {
-    const { conversationId, content, model, providerId, systemPrompt } = payload
+  ipcMain.handle('ai:chat', async (_, payload: SendMessagePayload) => {
+    return startChatGeneration(mainWindow, payload)
+  })
 
-    // Save User message
-    const userMsgId = `msg_${Date.now()}_u`
-    dbMessages.create({
-      id: userMsgId,
-      conversationId,
-      role: 'user',
-      content,
-      model,
-      createdAt: Date.now()
+  ipcMain.handle('ai:chat:cancel', (_, generationId: string) => cancelGeneration(generationId))
+  ipcMain.handle('ai:chat:regenerate', async (_, payload: SendMessagePayload & { messageId: string }) => {
+    return startChatGeneration(mainWindow, {
+      ...payload,
+      regenerateFromId: payload.messageId || payload.regenerateFromId
     })
-
-    // Create placeholder Assistant message
-    const assistantMsgId = `msg_${Date.now()}_a`
-    dbMessages.create({
-      id: assistantMsgId,
-      conversationId,
-      role: 'assistant',
-      content: '',
-      model,
-      createdAt: Date.now() + 1
-    })
-
-    // Get message history for context
-    const history = dbMessages.listForConversation(conversationId)
-
-    // Stream response asynchronously
-    ;(async () => {
-      let accumulated = ''
-      try {
-        for await (const chunk of streamChatResponse(providerId, model, history, systemPrompt)) {
-          accumulated += chunk
-          mainWindow?.webContents.send('ai:stream-chunk', {
-            conversationId,
-            messageId: assistantMsgId,
-            contentDelta: chunk,
-            done: false
-          })
-        }
-        dbMessages.updateContent(assistantMsgId, accumulated)
-        mainWindow?.webContents.send('ai:stream-chunk', {
-          conversationId,
-          messageId: assistantMsgId,
-          contentDelta: '',
-          done: true
-        })
-      } catch (err: any) {
-        console.error('[AI Chat Error]', err)
-        const errorText = accumulated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
-        dbMessages.updateContent(assistantMsgId, errorText)
-        mainWindow?.webContents.send('ai:stream-chunk', {
-          conversationId,
-          messageId: assistantMsgId,
-          contentDelta: '',
-          done: true,
-          error: err.message
-        })
-      }
-    })()
-
-    return { userMsgId, assistantMsgId }
   })
 
   // System Info

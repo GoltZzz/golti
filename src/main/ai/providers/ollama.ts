@@ -1,4 +1,12 @@
-import { Message, AIProviderConfig } from '../../../shared/types'
+import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
+import {
+  applyGenerationDefaults,
+  doneEvent,
+  readLineStream,
+  textEvent,
+  usageEvent,
+  type ProviderChatRequest
+} from '../provider-types'
 
 export async function fetchOllamaModels(endpoint: string = 'http://localhost:11434'): Promise<string[]> {
   try {
@@ -23,11 +31,13 @@ export async function* streamOllamaChat(
   provider: AIProviderConfig,
   model: string,
   messages: Message[],
-  systemPrompt?: string
-): AsyncGenerator<string, void, unknown> {
+  systemPrompt?: string,
+  options?: ProviderChatRequest['options']
+): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const endpoint = (provider.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+  const gen = applyGenerationDefaults(options?.generationSettings)
 
-  const formattedMessages = messages.map(m => ({
+  const formattedMessages = messages.map((m) => ({
     role: m.role,
     content: m.content
   }))
@@ -44,10 +54,18 @@ export async function* streamOllamaChat(
       body: JSON.stringify({
         model,
         messages: formattedMessages,
-        stream: true
-      })
+        stream: true,
+        options: {
+          temperature: gen.temperature,
+          top_p: gen.topP,
+          num_predict: gen.maxTokens,
+          stop: gen.stopSequences
+        }
+      }),
+      signal: options?.signal
     })
   } catch (err: any) {
+    if (err.name === 'AbortError') return
     if (err.message?.includes('fetch failed') || err.cause?.code === 'ECONNREFUSED') {
       throw new Error('Cannot connect to Ollama. Make sure the Ollama server is running.')
     }
@@ -58,38 +76,31 @@ export async function* streamOllamaChat(
     throw new Error(`Ollama error (${response.status}): ${await response.text()}`)
   }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
+  let promptTokens = 0
+  let completionTokens = 0
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-
-    for (const line of lines) {
-      if (!line.trim()) continue
-      try {
-        const parsed = JSON.parse(line)
-        if (parsed.message?.content) {
-          yield parsed.message.content
-        }
-      } catch (e) {
-        // partial line, ignore
-      }
-    }
-  }
-
-  if (buffer.trim()) {
+  for await (const line of readLineStream(response, options?.signal)) {
+    if (!line.trim()) continue
     try {
-      const parsed = JSON.parse(buffer)
+      const parsed = JSON.parse(line)
       if (parsed.message?.content) {
-        yield parsed.message.content
+        yield textEvent(parsed.message.content)
       }
-    } catch (e) {
-      // ignore
+      if (parsed.done) {
+        promptTokens = parsed.prompt_eval_count ?? promptTokens
+        completionTokens = parsed.eval_count ?? completionTokens
+        if (promptTokens || completionTokens) {
+          yield usageEvent({
+            promptTokens,
+            completionTokens,
+            totalTokens: promptTokens + completionTokens,
+            estimated: false
+          })
+        }
+        yield doneEvent(parsed.done_reason || 'stop')
+      }
+    } catch {
+      // partial line
     }
   }
 }

@@ -1,31 +1,108 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type {
+  Artifact,
+  Citation,
+  ContextItem,
+  Conversation,
+  ConversationExportOptions,
+  ConversationSearchHit,
+  Message,
+  MessageVersion,
+  ModelInfo,
+  SendMessagePayload,
+  Settings,
+  StreamChunkPayload,
+  TokenBudget,
+  AIProviderConfig,
+  ArtifactVersion
+} from '../shared/types'
 
 const api = {
   // DB Conversations
-  getConversations: () => ipcRenderer.invoke('db:conversations:list'),
-  getConversation: (id: string) => ipcRenderer.invoke('db:conversations:get', id),
-  createConversation: (conv: any) => ipcRenderer.invoke('db:conversations:create', conv),
-  updateConversation: (id: string, updates: any) => ipcRenderer.invoke('db:conversations:update', id, updates),
-  deleteConversation: (id: string) => ipcRenderer.invoke('db:conversations:delete', id),
+  getConversations: (): Promise<Conversation[]> => ipcRenderer.invoke('db:conversations:list'),
+  getConversation: (id: string): Promise<Conversation | undefined> =>
+    ipcRenderer.invoke('db:conversations:get', id),
+  createConversation: (conv: Conversation): Promise<void> =>
+    ipcRenderer.invoke('db:conversations:create', conv),
+  updateConversation: (id: string, updates: Partial<Conversation>): Promise<void> =>
+    ipcRenderer.invoke('db:conversations:update', id, updates),
+  deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('db:conversations:delete', id),
+  searchConversations: (query: string): Promise<ConversationSearchHit[]> =>
+    ipcRenderer.invoke('db:conversations:search', query),
+  exportConversation: (options: ConversationExportOptions) =>
+    ipcRenderer.invoke('conversations:export', options),
 
   // DB Messages
-  getMessages: (conversationId: string) => ipcRenderer.invoke('db:messages:list', conversationId),
-  createMessage: (msg: any) => ipcRenderer.invoke('db:messages:create', msg),
+  getMessages: (conversationId: string): Promise<Message[]> =>
+    ipcRenderer.invoke('db:messages:list', conversationId),
+  createMessage: (msg: Message): Promise<void> => ipcRenderer.invoke('db:messages:create', msg),
+  updateMessage: (id: string, updates: Partial<Message>): Promise<void> =>
+    ipcRenderer.invoke('db:messages:update', id, updates),
+  getMessageVersions: (messageId: string): Promise<MessageVersion[]> =>
+    ipcRenderer.invoke('db:messages:versions', messageId),
+  setActiveLeaf: (conversationId: string, leafId: string): Promise<Message[]> =>
+    ipcRenderer.invoke('db:messages:set-active-leaf', conversationId, leafId),
+
+  // Context
+  listContext: (conversationId: string): Promise<ContextItem[]> =>
+    ipcRenderer.invoke('context:list', conversationId),
+  addContextPaths: (conversationId: string, paths: string[]): Promise<ContextItem[]> =>
+    ipcRenderer.invoke('context:add-paths', conversationId, paths),
+  pickContextFiles: (conversationId: string): Promise<ContextItem[]> =>
+    ipcRenderer.invoke('context:pick-files', conversationId),
+  pickContextFolder: (conversationId: string): Promise<ContextItem | null> =>
+    ipcRenderer.invoke('context:pick-folder', conversationId),
+  addContextText: (conversationId: string, name: string, content: string): Promise<ContextItem> =>
+    ipcRenderer.invoke('context:add-text', conversationId, name, content),
+  addContextUrl: (conversationId: string, url: string): Promise<ContextItem> =>
+    ipcRenderer.invoke('context:add-url', conversationId, url),
+  updateContext: (id: string, updates: Partial<ContextItem>): Promise<boolean> =>
+    ipcRenderer.invoke('context:update', id, updates),
+  deleteContext: (id: string): Promise<boolean> => ipcRenderer.invoke('context:delete', id),
+
+  // Artifacts
+  listArtifacts: (conversationId: string): Promise<Artifact[]> =>
+    ipcRenderer.invoke('artifacts:list', conversationId),
+  updateArtifact: (id: string, content: string): Promise<Artifact | undefined> =>
+    ipcRenderer.invoke('artifacts:update', id, content),
+  listArtifactVersions: (artifactId: string): Promise<ArtifactVersion[]> =>
+    ipcRenderer.invoke('artifacts:versions', artifactId),
+  restoreArtifactVersion: (artifactId: string, version: number): Promise<Artifact | undefined> =>
+    ipcRenderer.invoke('artifacts:restore', artifactId, version),
+
+  // Citations
+  listCitations: (conversationId: string): Promise<Citation[]> =>
+    ipcRenderer.invoke('citations:list', conversationId),
+
+  // Tokens
+  getTokenBudget: (conversationId: string, draft?: string): Promise<TokenBudget> =>
+    ipcRenderer.invoke('tokens:budget', conversationId, draft),
 
   // DB Providers
-  getProviders: () => ipcRenderer.invoke('db:providers:list'),
-  saveProvider: (provider: any) => ipcRenderer.invoke('db:providers:upsert', provider),
-  deleteProvider: (id: string) => ipcRenderer.invoke('db:providers:delete', id),
+  getProviders: (): Promise<AIProviderConfig[]> => ipcRenderer.invoke('db:providers:list'),
+  saveProvider: (provider: AIProviderConfig): Promise<void> =>
+    ipcRenderer.invoke('db:providers:upsert', provider),
+  deleteProvider: (id: string): Promise<void> => ipcRenderer.invoke('db:providers:delete', id),
 
   // Settings
-  getSettings: () => ipcRenderer.invoke('settings:get'),
-  updateSettings: (settings: any) => ipcRenderer.invoke('settings:update', settings),
+  getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
+  updateSettings: (settings: Partial<Settings>): Promise<void> =>
+    ipcRenderer.invoke('settings:update', settings),
 
   // AI & Models
-  getModels: () => ipcRenderer.invoke('ai:models'),
-  sendMessage: (payload: any) => ipcRenderer.invoke('ai:chat', payload),
-  onStreamChunk: (callback: (chunk: any) => void) => {
-    const listener = (_: any, chunk: any) => callback(chunk)
+  getModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('ai:models'),
+  sendMessage: (
+    payload: SendMessagePayload
+  ): Promise<{ userMsgId?: string; assistantMsgId: string; generationId: string }> =>
+    ipcRenderer.invoke('ai:chat', payload),
+  cancelGeneration: (generationId: string): Promise<boolean> =>
+    ipcRenderer.invoke('ai:chat:cancel', generationId),
+  regenerateMessage: (
+    payload: SendMessagePayload & { messageId: string }
+  ): Promise<{ assistantMsgId: string; generationId: string }> =>
+    ipcRenderer.invoke('ai:chat:regenerate', payload),
+  onStreamChunk: (callback: (chunk: StreamChunkPayload) => void) => {
+    const listener = (_: unknown, chunk: StreamChunkPayload) => callback(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)
     return () => ipcRenderer.removeListener('ai:stream-chunk', listener)
   },
@@ -52,7 +129,8 @@ const api = {
   startEngine: () => ipcRenderer.invoke('engine:start'),
   stopEngine: () => ipcRenderer.invoke('engine:stop'),
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
-  downloadModel: (url: string, filename: string) => ipcRenderer.invoke('engine:download-model', url, filename),
+  downloadModel: (url: string, filename: string) =>
+    ipcRenderer.invoke('engine:download-model', url, filename),
   listLocalModels: () => ipcRenderer.invoke('engine:list-models'),
   deleteLocalModel: (filename: string) =>
     ipcRenderer.invoke('engine:delete-model', filename) as Promise<{ success: boolean; error?: string }>,

@@ -1,19 +1,25 @@
 import path from 'path'
-import { Message, AIProviderConfig } from '../../../shared/types'
+import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
 import { listLocalModels, getEngineState, loadModelInEngine, checkEngineHealth } from '../../engine'
+import {
+  applyGenerationDefaults,
+  doneEvent,
+  readLineStream,
+  textEvent,
+  usageEvent,
+  type ProviderChatRequest
+} from '../provider-types'
 
 export async function fetchGoltiEngineModels(endpoint: string = 'http://127.0.0.1:8391'): Promise<string[]> {
   const cleanEndpoint = endpoint.replace(/\/+$/, '')
   const modelsSet = new Set<string>()
 
-  // 1. Gather local downloaded GGUF models from disk
   const localModels = listLocalModels()
   for (const m of localModels) {
     const cleanName = path.basename(m.filename).replace(/\.gguf$/i, '')
     modelsSet.add(cleanName)
   }
 
-  // 2. Fetch models from HTTP endpoint if running
   try {
     const res = await fetch(`${cleanEndpoint}/v1/models`, { signal: AbortSignal.timeout(2000) })
     if (res.ok) {
@@ -27,9 +33,10 @@ export async function fetchGoltiEngineModels(endpoint: string = 'http://127.0.0.
         }
       }
     }
-  } catch {}
+  } catch {
+    // offline
+  }
 
-  // 3. Fallback to loadedModel from state
   const state = getEngineState()
   if (state.loadedModel) {
     const loadedName = path.basename(state.loadedModel).replace(/\.gguf$/i, '')
@@ -43,11 +50,12 @@ export async function* streamGoltiEngineChat(
   provider: AIProviderConfig,
   model: string,
   messages: Message[],
-  systemPrompt?: string
-): AsyncGenerator<string, void, unknown> {
+  systemPrompt?: string,
+  options?: ProviderChatRequest['options']
+): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const endpoint = (provider.endpoint || 'http://127.0.0.1:8391').replace(/\/+$/, '')
+  const gen = applyGenerationDefaults(options?.generationSettings)
 
-  // Auto-switch / load model if needed
   const localModels = listLocalModels()
   const cleanModelTarget = model.replace(/\.gguf$/, '').toLowerCase()
   const matchingLocal = localModels.find(
@@ -57,13 +65,14 @@ export async function* streamGoltiEngineChat(
   )
 
   const state = getEngineState()
-  const currentlyLoaded = state.loadedModel ? path.basename(state.loadedModel).replace(/\.gguf$/i, '').toLowerCase() : undefined
+  const currentlyLoaded = state.loadedModel
+    ? path.basename(state.loadedModel).replace(/\.gguf$/i, '').toLowerCase()
+    : undefined
 
   if (matchingLocal && (state.status !== 'running' || currentlyLoaded !== cleanModelTarget)) {
     console.log(`[GoltiEngine] Auto-loading model for chat: ${matchingLocal.filepath}`)
     await loadModelInEngine(matchingLocal.filepath)
 
-    // Wait for engine server to become healthy and ready
     let attempts = 0
     while (attempts < 15) {
       const healthy = await checkEngineHealth(8391)
@@ -86,47 +95,53 @@ export async function* streamGoltiEngineChat(
   try {
     response = await fetch(`${endpoint}/v1/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
         messages: formattedMessages,
-        stream: true
-      })
+        stream: true,
+        temperature: gen.temperature,
+        top_p: gen.topP,
+        max_tokens: gen.maxTokens,
+        stop: gen.stopSequences
+      }),
+      signal: options?.signal
     })
   } catch (err: any) {
-    throw new Error(`Cannot connect to Golti Engine. Make sure Golti Engine is running. (${err.message || String(err)})`)
+    if (err.name === 'AbortError') return
+    throw new Error(
+      `Cannot connect to Golti Engine. Make sure Golti Engine is running. (${err.message || String(err)})`
+    )
   }
 
   if (!response.ok || !response.body) {
     throw new Error(`Golti Engine error (${response.status}): ${await response.text()}`)
   }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed === 'data: [DONE]') continue
-      if (trimmed.startsWith('data: ')) {
-        try {
-          const parsed = JSON.parse(trimmed.slice(6))
-          const delta = parsed.choices?.[0]?.delta?.content
-          if (delta) yield delta
-        } catch (e) {
-          // ignore partial parse errors
-        }
+  for await (const line of readLineStream(response, options?.signal)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed === 'data: [DONE]') {
+      if (trimmed === 'data: [DONE]') yield doneEvent('stop')
+      continue
+    }
+    if (!trimmed.startsWith('data: ')) continue
+    try {
+      const parsed = JSON.parse(trimmed.slice(6))
+      const delta = parsed.choices?.[0]?.delta?.content
+      if (delta) yield textEvent(delta)
+      if (parsed.usage) {
+        yield usageEvent({
+          promptTokens: parsed.usage.prompt_tokens ?? 0,
+          completionTokens: parsed.usage.completion_tokens ?? 0,
+          totalTokens: parsed.usage.total_tokens ?? 0,
+          estimated: false
+        })
       }
+      if (parsed.choices?.[0]?.finish_reason) {
+        yield doneEvent(parsed.choices[0].finish_reason)
+      }
+    } catch {
+      // ignore
     }
   }
 }
-

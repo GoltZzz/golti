@@ -1,17 +1,20 @@
-import { AIProviderConfig, Message, ModelInfo } from '../../shared/types'
+import type {
+  ChatRequestOptions,
+  Message,
+  ModelInfo,
+  ProviderStreamEvent
+} from '../../shared/types'
 import { dbProviders } from '../db/database'
 import { fetchOllamaModels, streamOllamaChat } from './providers/ollama'
 import { fetchOpenAIModels, streamOpenAIChat } from './providers/openai'
 import { fetchAnthropicModels, streamAnthropicChat } from './providers/anthropic'
 import { fetchGoogleModels, streamGoogleChat } from './providers/google'
 import { fetchGoltiEngineModels, streamGoltiEngineChat } from './providers/golti-engine'
-
 import { isBinaryInstalled, listLocalModels } from '../engine'
 
 export async function getAllModels(): Promise<ModelInfo[]> {
   let providers = dbProviders.list()
 
-  // Ensure golti-engine is active if local models exist or binary is installed
   const engineProvider = providers.find((p) => p.type === 'golti-engine')
   if (engineProvider && !engineProvider.isActive) {
     if (isBinaryInstalled() || listLocalModels().length > 0) {
@@ -45,7 +48,8 @@ export async function getAllModels(): Promise<ModelInfo[]> {
           id: `${provider.id}:${m}`,
           name: m,
           providerId: provider.id,
-          providerType: provider.type
+          providerType: provider.type,
+          contextWindow: guessContextWindow(m)
         })
       }
     } catch (e: any) {
@@ -57,31 +61,43 @@ export async function getAllModels(): Promise<ModelInfo[]> {
   return allModels
 }
 
+function guessContextWindow(modelName: string): number {
+  const n = modelName.toLowerCase()
+  if (n.includes('128k') || n.includes('gpt-4o') || n.includes('claude-3-5') || n.includes('gemini')) {
+    return 128000
+  }
+  if (n.includes('32k')) return 32768
+  if (n.includes('16k')) return 16384
+  if (n.includes('8k')) return 8192
+  if (n.includes('1b') || n.includes('3b')) return 8192
+  return 8192
+}
+
 export async function* streamChatResponse(
   providerId: string,
   model: string,
   messages: Message[],
-  systemPrompt?: string
-): AsyncGenerator<string, void, unknown> {
+  systemPrompt?: string,
+  options?: ChatRequestOptions
+): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const providers = dbProviders.list()
-  const provider = providers.find(p => p.id === providerId)
+  const provider = providers.find((p) => p.id === providerId)
 
   if (!provider) {
     throw new Error(`Provider not found: ${providerId}`)
   }
 
   if (provider.type === 'ollama') {
-    yield* streamOllamaChat(provider, model, messages, systemPrompt)
+    yield* streamOllamaChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'openai') {
-    yield* streamOpenAIChat(provider, model, messages, systemPrompt)
+    yield* streamOpenAIChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'anthropic') {
-    yield* streamAnthropicChat(provider, model, messages, systemPrompt)
+    yield* streamAnthropicChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'google') {
-    yield* streamGoogleChat(provider, model, messages, systemPrompt)
+    yield* streamGoogleChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'golti-engine') {
-    yield* streamGoltiEngineChat(provider, model, messages, systemPrompt)
+    yield* streamGoltiEngineChat(provider, model, messages, systemPrompt, options)
   } else {
     throw new Error(`Unsupported provider type: ${provider.type}`)
   }
 }
-

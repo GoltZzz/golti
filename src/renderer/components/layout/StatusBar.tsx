@@ -5,7 +5,7 @@ import { useEngineStore } from '../../stores/engineStore'
 import { SystemInfo } from '../../../shared/types'
 
 export const StatusBar: React.FC = () => {
-  const { selectedModel, isGenerating } = useChatStore()
+  const { selectedModel, isGenerating, tokenBudget } = useChatStore()
   const { engineState } = useEngineStore()
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
 
@@ -35,6 +35,12 @@ export const StatusBar: React.FC = () => {
         {selectedModel && (
           <div style={{ color: 'var(--text-secondary)' }}>
             Model: <span style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>{selectedModel.name}</span> ({selectedModel.providerType})
+          </div>
+        )}
+
+        {tokenBudget && (
+          <div style={{ fontFamily: 'var(--font-mono)', color: tokenBudget.overflow ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
+            Tokens: {tokenBudget.usedTokens}/{tokenBudget.contextWindow}
           </div>
         )}
       </div>

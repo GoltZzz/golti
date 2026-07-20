@@ -39,6 +39,14 @@ export interface ModelInfo {
   providerType: ProviderType
   size?: string
   description?: string
+  contextWindow?: number
+}
+
+export interface GenerationSettings {
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+  stopSequences?: string[]
 }
 
 export interface Conversation {
@@ -50,19 +58,113 @@ export interface Conversation {
   updatedAt: number
   pinned: boolean
   archived: boolean
+  systemPrompt?: string
+  generationSettings?: GenerationSettings
+  activeLeafId?: string | null
+}
+
+export type MessageRole = 'user' | 'assistant' | 'system'
+
+export interface Citation {
+  id: string
+  messageId: string
+  url: string
+  title: string
+  snippet: string
+  retrievedAt: number
+  rank?: number
+}
+
+export interface MessagePart {
+  type: 'text' | 'context_ref' | 'citation_ref' | 'artifact_ref'
+  text?: string
+  contextItemId?: string
+  citationId?: string
+  artifactId?: string
 }
 
 export interface Message {
   id: string
   conversationId: string
-  role: 'user' | 'assistant' | 'system'
+  role: MessageRole
   content: string
   model?: string
   tokensIn?: number
   tokensOut?: number
   createdAt: number
+  updatedAt?: number
   isStreaming?: boolean
   error?: string
+  parentId?: string | null
+  variantGroupId?: string | null
+  variantIndex?: number
+  parts?: MessagePart[]
+  citations?: Citation[]
+  artifactIds?: string[]
+  generationId?: string
+}
+
+export interface MessageVersion {
+  id: string
+  messageId: string
+  content: string
+  editedAt: number
+  editSource: 'user' | 'system' | 'restore'
+}
+
+export type ContextItemType = 'file' | 'folder' | 'text' | 'url' | 'system'
+
+export interface ContextItem {
+  id: string
+  conversationId: string
+  type: ContextItemType
+  name: string
+  content: string
+  sourcePath?: string
+  mimeType?: string
+  tokenEstimate: number
+  createdAt: number
+  enabled: boolean
+  error?: string
+}
+
+export type ArtifactType = 'code' | 'markdown'
+
+export interface Artifact {
+  id: string
+  conversationId: string
+  messageId: string
+  type: ArtifactType
+  title: string
+  language?: string
+  content: string
+  version: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ArtifactVersion {
+  id: string
+  artifactId: string
+  content: string
+  version: number
+  createdAt: number
+}
+
+export interface TokenUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  estimated?: boolean
+}
+
+export interface TokenBudget {
+  contextWindow: number
+  usedTokens: number
+  reservedOutputTokens: number
+  availableTokens: number
+  overflow: boolean
+  items: Array<{ id: string; label: string; tokens: number; category: 'system' | 'context' | 'history' | 'draft' | 'reserve' }>
 }
 
 export interface SendMessagePayload {
@@ -71,15 +173,39 @@ export interface SendMessagePayload {
   model: string
   providerId: string
   systemPrompt?: string
+  parentId?: string | null
+  regenerateFromId?: string
+  editMessageId?: string
+  webSearch?: boolean
+  contextItemIds?: string[]
+  generationSettings?: GenerationSettings
 }
+
+export type StreamEventType = 'text' | 'usage' | 'citation' | 'artifact' | 'error' | 'done'
 
 export interface StreamChunkPayload {
   conversationId: string
   messageId: string
-  contentDelta: string
+  generationId?: string
+  contentDelta?: string
   done: boolean
   error?: string
+  usage?: TokenUsage
+  citation?: Citation
+  artifact?: Artifact
+  eventType?: StreamEventType
 }
+
+export interface ChatRequestOptions {
+  signal?: AbortSignal
+  generationSettings?: GenerationSettings
+}
+
+export type ProviderStreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'error'; error: string }
+  | { type: 'done'; finishReason?: string }
 
 export interface SystemInfo {
   platform: string
@@ -159,6 +285,21 @@ export interface PullProgress {
 
 export type PlatformType = 'darwin' | 'win32' | 'linux' | 'unknown'
 
+export type WebSearchProvider = 'brave' | 'tavily' | 'none'
+
+export interface WebSearchSettings {
+  provider: WebSearchProvider
+  apiKey?: string
+  maxResults: number
+  enabled: boolean
+}
+
+export interface WebSearchResult {
+  title: string
+  url: string
+  snippet: string
+}
+
 export interface Settings {
   theme: 'dark' | 'light' | 'system'
   accentColor: string
@@ -173,6 +314,35 @@ export interface Settings {
   engineModelDir?: string
   enginePort: number
   engineGpuLayers: number
+  webSearch?: WebSearchSettings
+  defaultGenerationSettings?: GenerationSettings
+  defaultContextWindow?: number
+  reservedOutputTokens?: number
 }
 
+export interface ConversationExportOptions {
+  conversationId: string
+  format: 'markdown' | 'json'
+}
 
+export interface ConversationSearchHit {
+  conversationId: string
+  title: string
+  snippet: string
+  updatedAt: number
+  pinned: boolean
+}
+
+export interface BranchSibling {
+  id: string
+  variantIndex: number
+  createdAt: number
+  preview: string
+}
+
+export interface UndoableAction {
+  id: string
+  type: string
+  label: string
+  timestamp: number
+}
