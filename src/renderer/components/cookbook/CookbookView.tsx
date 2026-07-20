@@ -1,0 +1,213 @@
+import React, { useEffect } from 'react'
+import { useCookbookStore } from '../../stores/cookbookStore'
+import { HardwareCard } from './HardwareCard'
+import { FilterBar } from './FilterBar'
+import { ModelCard } from './ModelCard'
+import { MODEL_CATALOG } from '../../../shared/model-catalog'
+import { getCompatibility } from '../../../shared/compatibility'
+import { AlertCircle, ExternalLink, Info, Terminal } from 'lucide-react'
+
+export const CookbookView: React.FC = () => {
+  const {
+    systemInfo,
+    loadingInfo,
+    scanError,
+    ollamaOnline,
+    installedModels,
+    filters,
+    sortBy,
+    searchQuery,
+    scanHardware,
+    checkOllama,
+    fetchInstalled
+  } = useCookbookStore()
+
+  useEffect(() => {
+    scanHardware()
+    checkOllama()
+    fetchInstalled()
+  }, [])
+
+  // Filter Catalog
+  const filteredModels = MODEL_CATALOG.filter(model => {
+    // 1. Search Query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      const matchName = model.name.toLowerCase().includes(q)
+      const matchDesc = model.description.toLowerCase().includes(q)
+      const matchFam = model.family.toLowerCase().includes(q)
+      const matchTag = model.ollamaTag.toLowerCase().includes(q)
+      if (!matchName && !matchDesc && !matchFam && !matchTag) return false
+    }
+
+    // 2. Use Cases Filter
+    if (filters.useCases.length > 0) {
+      const hasOverlap = model.useCases.some(uc => filters.useCases.includes(uc))
+      if (!hasOverlap) return false
+    }
+
+    // 3. Family Filter
+    if (filters.families.length > 0) {
+      if (!filters.families.includes(model.family)) return false
+    }
+
+    // 4. Size Tier Filter
+    if (filters.sizeTiers.length > 0) {
+      if (!filters.sizeTiers.includes(model.sizeTier)) return false
+    }
+
+    // 5. Quantization Filter
+    if (filters.quantizations.length > 0) {
+      if (!filters.quantizations.includes(model.quantization)) return false
+    }
+
+    // 6. Compatibility Filter
+    if (filters.compatibleOnly && systemInfo) {
+      const comp = getCompatibility(systemInfo, model)
+      if (comp === 'wont_fit') return false
+    }
+
+    return true
+  })
+
+  // Sort Catalog
+  const sortedModels = [...filteredModels].sort((a, b) => {
+    if (sortBy === 'name') {
+      return a.name.localeCompare(b.name)
+    }
+
+    if (sortBy === 'size') {
+      return a.parameterBillions - b.parameterBillions
+    }
+
+    if (sortBy === 'family') {
+      return a.family.localeCompare(b.family)
+    }
+
+    if (sortBy === 'compatibility') {
+      const aComp = getCompatibility(systemInfo, a)
+      const bComp = getCompatibility(systemInfo, b)
+
+      const weights = { great: 4, runs: 3, tight: 2, wont_fit: 1 }
+      const aWeight = weights[aComp] || 0
+      const bWeight = weights[bComp] || 0
+
+      if (aWeight !== bWeight) {
+        return bWeight - aWeight // Descending (better compatibility first)
+      }
+      // If weights match, smaller parameter size first (runs faster)
+      return a.parameterBillions - b.parameterBillions
+    }
+
+    return 0
+  })
+
+  // Helper to check if model tag is pulled
+  const checkIsInstalled = (tag: string) => {
+    // Ollama tags can be returned as "llama3.2:latest" or "llama3.2:1b"
+    // Let's normalize name check
+    const cleanTag = tag.toLowerCase().split(':')[0]
+    return installedModels.some(m => {
+      const cleanM = m.toLowerCase().split(':')[0]
+      return cleanM === cleanTag || m.toLowerCase() === tag.toLowerCase()
+    })
+  }
+
+  return (
+    <div className="cookbook-container animate-fade-in">
+      <div className="cookbook-scrollable">
+        {/* Top Header Section */}
+        <div className="cookbook-header-title">
+          <h1>Hardware Cookbook</h1>
+          <p>Scan your device specs, verify compatibility, and download optimized local LLMs directly to your system.</p>
+        </div>
+
+        {/* Hardware scan summary */}
+        <HardwareCard
+          systemInfo={systemInfo}
+          loading={loadingInfo}
+          scanError={scanError}
+          onRescan={scanHardware}
+        />
+
+        {/* Ollama Offline Banner */}
+        {!ollamaOnline && (
+          <div className="ollama-offline-banner">
+            <div className="banner-left">
+              <AlertCircle size={20} className="alert-icon" />
+              <div className="banner-text">
+                <h3>Local Ollama Server Offline</h3>
+                <p>We couldn't connect to Ollama on http://localhost:11434. Installing models requires Ollama to be running.</p>
+              </div>
+            </div>
+            <a
+              href="https://ollama.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ollama-download-link"
+            >
+              Get Ollama <ExternalLink size={14} />
+            </a>
+          </div>
+        )}
+
+        {/* Filtering Options */}
+        <FilterBar />
+
+        {/* Catalog grid */}
+        <div className="catalog-section">
+          <div className="catalog-header">
+            <h2>Recommended Local Models</h2>
+            <span className="results-count">
+              Showing {sortedModels.length} of {MODEL_CATALOG.length} models
+            </span>
+          </div>
+
+          {sortedModels.length > 0 ? (
+            <div className="catalog-grid">
+              {sortedModels.map(model => (
+                <ModelCard
+                  key={model.id}
+                  model={model}
+                  systemInfo={systemInfo}
+                  isInstalled={checkIsInstalled(model.ollamaTag)}
+                  isOllamaOnline={ollamaOnline}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="empty-catalog-state">
+              <Info size={36} className="empty-icon" />
+              <h3>No Models Found</h3>
+              <p>Try clearing some filters or searching for another term.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Ollama setup guides / tips */}
+        <div className="cookbook-tips-card">
+          <div className="tips-header">
+            <Terminal size={18} className="tips-icon" />
+            <h3>Ollama Cheat Sheet & Tips</h3>
+          </div>
+          <div className="tips-grid">
+            <div className="tip-box">
+              <h4>Start Ollama manually</h4>
+              <code>ollama serve</code>
+              <p>Run this command in your terminal if the application is not running in the background.</p>
+            </div>
+            <div className="tip-box">
+              <h4>Verify running models</h4>
+              <code>ollama list</code>
+              <p>Shows all downloaded models and their sizes on disk.</p>
+            </div>
+            <div className="tip-box">
+              <h4>Memory Headroom</h4>
+              <p>For Apple Silicon Macs, the OS shares memory between system and graphics. Close memory-intensive apps (like Photoshop or Chrome tabs) before launching 8B+ models to avoid swapping.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

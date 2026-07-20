@@ -1,0 +1,457 @@
+import { app, BrowserWindow, ipcMain } from 'electron'
+import path from 'path'
+import os from 'os'
+import { dbConversations, dbMessages, dbProviders, dbSettings } from './db/database'
+import { getAllModels, streamChatResponse } from './ai/provider-manager'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import fs from 'fs'
+import { SystemInfoFull } from '../shared/types'
+
+const execAsync = promisify(exec)
+
+async function getFullSystemInfo(): Promise<SystemInfoFull> {
+  const totalMem = os.totalmem()
+  const freeMem = os.freemem()
+  const cpus = os.cpus()
+  
+  const platform = os.platform()
+  const arch = os.arch()
+  
+  // CPU details
+  const cpuModel = cpus[0]?.model || 'Unknown CPU'
+  const cores = os.cpus().length
+  let physicalCores = cores
+  if (platform === 'darwin') {
+    try {
+      const { stdout } = await execAsync('sysctl -n hw.physicalcpu')
+      physicalCores = parseInt(stdout.trim(), 10) || cores
+    } catch {}
+  }
+  
+  const speedGHz = cpus[0]?.speed ? cpus[0].speed / 1000 : 0
+  
+  // RAM
+  const totalGB = totalMem / (1024 * 1024 * 1024)
+  const freeGB = freeMem / (1024 * 1024 * 1024)
+  const usedPercent = ((totalMem - freeMem) / totalMem) * 100
+  
+  // GPU details
+  let gpuName = 'Unknown GPU'
+  let vramGB: number | null = null
+  let isAppleSilicon = false
+  
+  if (platform === 'darwin') {
+    try {
+      const { stdout } = await execAsync('system_profiler SPDisplaysDataType')
+      const lines = stdout.split('\n')
+      let currentGpuName = ''
+      let currentVram = ''
+      
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('Chipset Model:')) {
+          currentGpuName = trimmed.replace('Chipset Model:', '').trim()
+        }
+        if (trimmed.startsWith('VRAM (Total):') || trimmed.startsWith('VRAM (Dynamic, Max):')) {
+          currentVram = trimmed.replace(/VRAM.*:/, '').trim()
+        }
+      }
+      
+      if (currentGpuName) {
+        gpuName = currentGpuName
+      } else {
+        if (cpuModel.includes('Apple')) {
+          gpuName = cpuModel.replace('Apple', '').trim() + ' GPU'
+        }
+      }
+      
+      isAppleSilicon = cpuModel.includes('Apple') || gpuName.includes('Apple')
+      
+      if (isAppleSilicon) {
+        vramGB = null
+      } else if (currentVram) {
+        const match = currentVram.match(/(\d+)\s*(MB|GB)/i)
+        if (match) {
+          const num = parseInt(match[1], 10)
+          const unit = match[2].toUpperCase()
+          if (unit === 'MB') {
+            vramGB = num / 1024
+          } else {
+            vramGB = num
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse GPU info:', e)
+      if (cpuModel.includes('Apple')) {
+        gpuName = 'Apple GPU'
+        isAppleSilicon = true
+      }
+    }
+  } else if (platform === 'win32' || platform === 'linux') {
+    try {
+      const { stdout } = await execAsync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits')
+      const [name, memStr] = stdout.trim().split(',')
+      gpuName = name.trim()
+      vramGB = parseInt(memStr.trim(), 10) / 1024
+    } catch {
+      gpuName = 'Generic GPU'
+    }
+  }
+  
+  // Disk speed benchmark
+  let diskRead: number | null = null
+  let diskWrite: number | null = null
+  try {
+    const tempFilePath = path.join(app.getPath('userData'), 'temp_disk_bench.tmp')
+    const size = 15 * 1024 * 1024 // 15MB
+    const buffer = Buffer.alloc(size, 'x')
+    
+    const writeStart = process.hrtime.bigint()
+    await fs.promises.writeFile(tempFilePath, buffer)
+    const writeEnd = process.hrtime.bigint()
+    const writeDuration = Number(writeEnd - writeStart) / 1e9
+    diskWrite = Math.round(size / (1024 * 1024) / writeDuration)
+
+    const readStart = process.hrtime.bigint()
+    await fs.promises.readFile(tempFilePath)
+    const readEnd = process.hrtime.bigint()
+    const readDuration = Number(readEnd - readStart) / 1e9
+    diskRead = Math.round(size / (1024 * 1024) / readDuration)
+
+    await fs.promises.unlink(tempFilePath)
+  } catch (err) {
+    console.error('Disk benchmark failed:', err)
+  }
+
+  // CPU Temperature
+  let cpuTempC: number | null = null
+  if (platform === 'linux') {
+    try {
+      const temp = await fs.promises.readFile('/sys/class/thermal/thermal_zone0/temp', 'utf8')
+      cpuTempC = parseInt(temp.trim(), 10) / 1000
+    } catch {}
+  }
+
+  return {
+    platform,
+    arch,
+    cpu: {
+      model: cpuModel,
+      cores: physicalCores,
+      threads: cores,
+      speedGHz: parseFloat(speedGHz.toFixed(2))
+    },
+    ram: {
+      totalGB: Math.round(totalGB * 10) / 10,
+      freeGB: Math.round(freeGB * 10) / 10,
+      usedPercent: Math.round(usedPercent)
+    },
+    gpu: {
+      name: gpuName,
+      vramGB: vramGB ? Math.round(vramGB * 10) / 10 : null,
+      isAppleSilicon,
+      unifiedMemoryGB: isAppleSilicon ? Math.round(totalGB) : undefined
+    },
+    disk: {
+      readMBps: diskRead,
+      writeMBps: diskWrite
+    },
+    thermals: {
+      cpuTempC
+    }
+  }
+}
+
+
+let mainWindow: BrowserWindow | null = null
+
+function createWindow(): void {
+  const isMac = process.platform === 'darwin'
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 830,
+    minWidth: 900,
+    minHeight: 600,
+    frame: false, // Custom title bar across platforms
+    titleBarStyle: isMac ? 'hiddenInset' : undefined,
+    trafficLightPosition: isMac ? { x: 14, y: 12 } : undefined,
+    backgroundColor: '#0b0c10',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  }
+}
+
+app.whenReady().then(() => {
+  setupIpcHandlers()
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
+
+function setupIpcHandlers(): void {
+  // System Platform
+  ipcMain.handle('system:platform', () => process.platform)
+
+  // Window Controls
+  ipcMain.on('window:control', (_, action: 'minimize' | 'maximize' | 'close') => {
+    if (!mainWindow) return
+    if (action === 'minimize') mainWindow.minimize()
+    else if (action === 'maximize') {
+      if (mainWindow.isMaximized()) mainWindow.unmaximize()
+      else mainWindow.maximize()
+    } else if (action === 'close') mainWindow.close()
+  })
+
+  // DB Conversations
+  ipcMain.handle('db:conversations:list', () => dbConversations.list())
+  ipcMain.handle('db:conversations:get', (_, id: string) => dbConversations.get(id))
+  ipcMain.handle('db:conversations:create', (_, conv: any) => dbConversations.create(conv))
+  ipcMain.handle('db:conversations:update', (_, id: string, updates: any) => dbConversations.update(id, updates))
+  ipcMain.handle('db:conversations:delete', (_, id: string) => dbConversations.delete(id))
+
+  // DB Messages
+  ipcMain.handle('db:messages:list', (_, conversationId: string) => dbMessages.listForConversation(conversationId))
+  ipcMain.handle('db:messages:create', (_, msg: any) => dbMessages.create(msg))
+
+  // DB Providers
+  ipcMain.handle('db:providers:list', () => dbProviders.list())
+  ipcMain.handle('db:providers:upsert', (_, provider: any) => dbProviders.upsert(provider))
+  ipcMain.handle('db:providers:delete', (_, id: string) => dbProviders.delete(id))
+
+  // Settings
+  ipcMain.handle('settings:get', () => dbSettings.get())
+  ipcMain.handle('settings:update', (_, settings: any) => dbSettings.update(settings))
+
+  // AI & Models
+  ipcMain.handle('ai:models', async () => {
+    return await getAllModels()
+  })
+
+  ipcMain.handle('ai:chat', async (_, payload: { conversationId: string; content: string; model: string; providerId: string; systemPrompt?: string }) => {
+    const { conversationId, content, model, providerId, systemPrompt } = payload
+
+    // Save User message
+    const userMsgId = `msg_${Date.now()}_u`
+    dbMessages.create({
+      id: userMsgId,
+      conversationId,
+      role: 'user',
+      content,
+      model,
+      createdAt: Date.now()
+    })
+
+    // Create placeholder Assistant message
+    const assistantMsgId = `msg_${Date.now()}_a`
+    dbMessages.create({
+      id: assistantMsgId,
+      conversationId,
+      role: 'assistant',
+      content: '',
+      model,
+      createdAt: Date.now() + 1
+    })
+
+    // Get message history for context
+    const history = dbMessages.listForConversation(conversationId)
+
+    // Stream response asynchronously
+    ;(async () => {
+      let accumulated = ''
+      try {
+        for await (const chunk of streamChatResponse(providerId, model, history, systemPrompt)) {
+          accumulated += chunk
+          mainWindow?.webContents.send('ai:stream-chunk', {
+            conversationId,
+            messageId: assistantMsgId,
+            contentDelta: chunk,
+            done: false
+          })
+        }
+        dbMessages.updateContent(assistantMsgId, accumulated)
+        mainWindow?.webContents.send('ai:stream-chunk', {
+          conversationId,
+          messageId: assistantMsgId,
+          contentDelta: '',
+          done: true
+        })
+      } catch (err: any) {
+        console.error('[AI Chat Error]', err)
+        const errorText = accumulated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
+        dbMessages.updateContent(assistantMsgId, errorText)
+        mainWindow?.webContents.send('ai:stream-chunk', {
+          conversationId,
+          messageId: assistantMsgId,
+          contentDelta: '',
+          done: true,
+          error: err.message
+        })
+      }
+    })()
+
+    return { userMsgId, assistantMsgId }
+  })
+
+  // System Info
+  ipcMain.handle('system:info', () => {
+    const totalMem = os.totalmem()
+    const freeMem = os.freemem()
+    const cpus = os.cpus()
+    return {
+      platform: os.platform(),
+      arch: os.arch(),
+      cpuModel: cpus[0]?.model || 'Unknown CPU',
+      totalRamGB: Math.round(totalMem / (1024 * 1024 * 1024)),
+      freeRamGB: Math.round(freeMem / (1024 * 1024 * 1024))
+    }
+  })
+
+  // Enhanced System Info for Cookbook
+  ipcMain.handle('system:info:full', async () => {
+    return await getFullSystemInfo()
+  })
+
+  // Cookbook Ollama Status check
+  ipcMain.handle('cookbook:ollama-status', async () => {
+    const providers = dbProviders.list()
+    const ollamaProvider = providers.find(p => p.type === 'ollama')
+    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 2000)
+      const res = await fetch(`${endpoint}/api/tags`, { signal: controller.signal })
+      clearTimeout(timeoutId)
+      return { online: res.ok }
+    } catch (e) {
+      return { online: false }
+    }
+  })
+
+  // Cookbook Installed Models check
+  ipcMain.handle('cookbook:installed-models', async () => {
+    const providers = dbProviders.list()
+    const ollamaProvider = providers.find(p => p.type === 'ollama')
+    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+    try {
+      const res = await fetch(`${endpoint}/api/tags`)
+      if (!res.ok) return []
+      const data = (await res.json()) as any
+      if (Array.isArray(data.models)) {
+        return data.models.map((m: any) => m.name || m.model)
+      }
+      return []
+    } catch (e) {
+      console.warn('Failed to fetch installed Ollama models:', e)
+      return []
+    }
+  })
+
+  // Cookbook Ollama Model Pull
+  ipcMain.handle('cookbook:ollama-pull', async (_, modelTag: string) => {
+    const providers = dbProviders.list()
+    const ollamaProvider = providers.find(p => p.type === 'ollama')
+    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+
+    try {
+      const response = await fetch(`${endpoint}/api/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: modelTag,
+          stream: true
+        })
+      })
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Ollama error (${response.status}): ${await response.text()}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      // Process stream asynchronously
+      ;(async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              if (!line.trim()) continue
+              try {
+                const parsed = JSON.parse(line)
+                const completed = parsed.completed || 0
+                const total = parsed.total || 0
+                const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+                
+                mainWindow?.webContents.send('cookbook:pull-progress', {
+                  modelTag,
+                  status: parsed.status || 'pulling',
+                  completed,
+                  total,
+                  percent
+                })
+              } catch (e) {
+                // Ignore partial JSON
+              }
+            }
+          }
+
+          // Done pulling, notify completion
+          mainWindow?.webContents.send('cookbook:pull-progress', {
+            modelTag,
+            status: 'success',
+            completed: 100,
+            total: 100,
+            percent: 100
+          })
+
+          // Trigger model scan refresh in provider manager
+          setTimeout(async () => {
+            try {
+              await getAllModels()
+            } catch (err) {}
+          }, 1000)
+
+        } catch (streamErr: any) {
+          console.error('[Ollama Pull Stream Error]', streamErr)
+          mainWindow?.webContents.send('cookbook:pull-progress', {
+            modelTag,
+            status: 'error',
+            completed: 0,
+            total: 0,
+            percent: 0,
+            error: streamErr.message
+          })
+        }
+      })()
+
+      return { success: true }
+    } catch (err: any) {
+      console.error('[Ollama Pull Error]', err)
+      return { success: false, error: err.message }
+    }
+  })
+}
