@@ -24,6 +24,9 @@ import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
 import { getSiblings } from '../../../shared/chat-utils'
 
+import { useSettingsStore } from '../../stores/settingsStore'
+import { ThinkingBlock } from './ThinkingBlock'
+
 interface MessageBubbleProps {
   message: Message
 }
@@ -34,8 +37,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(message.content)
 
+  const showThinkingProcess = useSettingsStore((s) => s.settings?.showThinkingProcess ?? true)
+
   const regenerate = useChatStore((s) => s.regenerate)
   const editAndResend = useChatStore((s) => s.editAndResend)
+  const sendMessage = useChatStore((s) => s.sendMessage)
   const selectBranch = useChatStore((s) => s.selectBranch)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const isGenerating = useChatStore((s) => s.isGenerating)
@@ -43,7 +49,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const messageCitations = useChatStore(
     useShallow((s) => s.citations.filter((c) => c.messageId === message.id))
   )
-  const messageArtifacts = useChatStore(
+  const messageShells = useChatStore(
     useShallow((s) => s.artifacts.filter((a) => a.messageId === message.id))
   )
   const siblings = useChatStore(
@@ -52,7 +58,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const searchStatus = useChatStore((s) => s.searchStatusByMessageId[message.id])
   const researchProgress = useChatStore((s) => s.researchProgressByMessageId[message.id])
 
-  const { selectArtifact } = useInspectorStore()
+  const { selectShell } = useInspectorStore()
 
   const siblingIndex = Math.max(0, siblings.findIndex((s) => s.id === message.id))
   const isDeepResearchMsg = message.isDeepResearch || Boolean(researchProgress)
@@ -61,6 +67,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
     navigator.clipboard.writeText(text)
     setCopiedCodeIndex(index)
     setTimeout(() => setCopiedCodeIndex(null), 2000)
+  }
+
+  const handleRethink = () => {
+    sendMessage('Please expand on your reasoning process step-by-step.')
   }
 
   return (
@@ -73,6 +83,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
         )}
 
         <div className="msg-body">
+          {!isUser && message.reasoningContent && showThinkingProcess && (
+            <ThinkingBlock
+              reasoningContent={message.reasoningContent}
+              isStreaming={message.isStreaming}
+              durationMs={message.thinkingDurationMs}
+              onRethink={handleRethink}
+            />
+          )}
+
           {editing ? (
             <div className="msg-edit-box">
               <textarea
@@ -122,14 +141,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                               <div style={{ display: 'flex', gap: 6 }}>
                                 <button
                                   onClick={() => {
-                                    const art = messageArtifacts.find(
+                                    const sh = messageShells.find(
                                       (a) => a.content === codeText || a.language === lang
                                     )
-                                    if (art) selectArtifact(art.id)
+                                    if (sh) selectShell(sh.id)
                                   }}
-                                  title="Open as artifact"
+                                  title="Open in Shell"
                                 >
-                                  <FileCode2 size={12} /> Artifact
+                                  <FileCode2 size={12} /> Shell
                                 </button>
                                 <button onClick={() => handleCopyCode(codeText, index)}>
                                   {copiedCodeIndex === index ? (

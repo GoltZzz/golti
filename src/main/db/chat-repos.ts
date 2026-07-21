@@ -51,7 +51,9 @@ function mapMessage(row: any): Message {
     variantGroupId: row.variant_group_id ?? null,
     variantIndex: row.variant_index ?? 0,
     error: row.error ?? undefined,
-    generationId: row.generation_id ?? undefined
+    generationId: row.generation_id ?? undefined,
+    reasoningContent: row.reasoning_content ?? undefined,
+    thinkingDurationMs: row.thinking_duration_ms ?? undefined
   }
 }
 
@@ -317,8 +319,8 @@ export const chatMessages = {
     db.prepare(
       `INSERT INTO messages
         (id, conversation_id, role, content, model, tokens_in, tokens_out, created_at, updated_at,
-         parent_id, variant_group_id, variant_index, error, generation_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       msg.id,
       msg.conversationId,
@@ -333,7 +335,9 @@ export const chatMessages = {
       msg.variantGroupId ?? null,
       msg.variantIndex ?? 0,
       msg.error ?? null,
-      msg.generationId ?? null
+      msg.generationId ?? null,
+      msg.reasoningContent ?? null,
+      msg.thinkingDurationMs ?? null
     )
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversationId)
     syncMessageFts(msg.id, msg.conversationId, msg.content)
@@ -349,7 +353,8 @@ export const chatMessages = {
     db.prepare(
       `UPDATE messages SET
         content = ?, model = ?, tokens_in = ?, tokens_out = ?, updated_at = ?,
-        parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?
+        parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?,
+        reasoning_content = ?, thinking_duration_ms = ?
        WHERE id = ?`
     ).run(
       next.content,
@@ -362,6 +367,8 @@ export const chatMessages = {
       next.variantIndex ?? 0,
       next.error ?? null,
       next.generationId ?? null,
+      next.reasoningContent ?? null,
+      next.thinkingDurationMs ?? null,
       id
     )
     syncMessageFts(id, next.conversationId, next.content)
@@ -536,12 +543,14 @@ export const chatArtifacts = {
     return rows.map((r) => ({
       id: r.id,
       artifactId: r.artifact_id,
+      shellId: r.artifact_id,
       content: r.content,
       version: r.version,
       createdAt: r.created_at
     }))
   }
 }
+export const chatShells = chatArtifacts
 
 export const chatCitations = {
   listForMessage: (messageId: string): Citation[] => {

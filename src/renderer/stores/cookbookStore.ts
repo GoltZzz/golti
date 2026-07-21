@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, PullProgress } from '../../shared/types'
+import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, PullProgress, InstalledLocalModelInfo } from '../../shared/types'
 import { useChatStore } from './chatStore'
+import { useEngineStore } from './engineStore'
 
 interface CookbookFilters {
   useCases: ModelUseCase[]
@@ -17,6 +18,7 @@ interface CookbookState {
   ollamaOnline: boolean
   checkingOllama: boolean
   installedModels: string[]
+  detailedInstalledModels: InstalledLocalModelInfo[]
   fetchingInstalled: boolean
   filters: CookbookFilters
   sortBy: 'name' | 'size' | 'compatibility' | 'family'
@@ -32,6 +34,7 @@ interface CookbookState {
   fetchInstalled: () => Promise<void>
   pullModel: (ollamaTag: string) => Promise<void>
   deleteOllamaModel: (ollamaTag: string) => Promise<{ success: boolean; error?: string }>
+  deleteLocalEngineModel: (filename: string) => Promise<{ success: boolean; error?: string }>
   setFilter: <K extends keyof CookbookFilters>(key: K, value: CookbookFilters[K]) => void
   resetFilters: () => void
   isHardwareCardCollapsed: boolean
@@ -54,6 +57,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     ollamaOnline: false,
     checkingOllama: false,
     installedModels: [],
+    detailedInstalledModels: [],
     fetchingInstalled: false,
     isHardwareCardCollapsed: false,
     filters: {
@@ -98,7 +102,8 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
       set({ fetchingInstalled: true })
       try {
         const list = await window.goltiAPI.getInstalledModels()
-        set({ installedModels: list, fetchingInstalled: false })
+        const detailed = (await window.goltiAPI.getDetailedInstalledModels?.()) || []
+        set({ installedModels: list, detailedInstalledModels: detailed, fetchingInstalled: false })
       } catch (err) {
         console.error('Failed to get installed models:', err)
         set({ fetchingInstalled: false })
@@ -195,6 +200,27 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
         return { success: false, error }
       } catch (err: any) {
         const error = err.message || 'Failed to delete Ollama model'
+        set({ deletingOllamaTag: null, deleteError: error })
+        return { success: false, error }
+      }
+    },
+
+    deleteLocalEngineModel: async (filename: string) => {
+      set({ deletingOllamaTag: filename, deleteError: null })
+      try {
+        const result = await window.goltiAPI.deleteLocalModel(filename)
+        if (result?.success) {
+          await get().fetchInstalled()
+          useChatStore.getState().fetchModels()
+          useEngineStore.getState().setupListeners()
+          set({ deletingOllamaTag: null, deleteError: null })
+          return { success: true }
+        }
+        const error = result?.error || 'Failed to delete Golti Engine model'
+        set({ deletingOllamaTag: null, deleteError: error })
+        return { success: false, error }
+      } catch (err: any) {
+        const error = err.message || 'Failed to delete Golti Engine model'
         set({ deletingOllamaTag: null, deleteError: error })
         return { success: false, error }
       }

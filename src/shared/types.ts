@@ -76,10 +76,11 @@ export interface Citation {
 }
 
 export interface MessagePart {
-  type: 'text' | 'context_ref' | 'citation_ref' | 'artifact_ref'
+  type: 'text' | 'context_ref' | 'citation_ref' | 'shell_ref' | 'artifact_ref'
   text?: string
   contextItemId?: string
   citationId?: string
+  shellId?: string
   artifactId?: string
 }
 
@@ -115,9 +116,12 @@ export interface Message {
   variantIndex?: number
   parts?: MessagePart[]
   citations?: Citation[]
+  shellIds?: string[]
   artifactIds?: string[]
   generationId?: string
   isDeepResearch?: boolean
+  reasoningContent?: string
+  thinkingDurationMs?: number
 }
 
 export interface MessageVersion {
@@ -144,13 +148,14 @@ export interface ContextItem {
   error?: string
 }
 
-export type ArtifactType = 'code' | 'markdown'
+export type ShellType = 'code' | 'markdown'
+export type ArtifactType = ShellType
 
-export interface Artifact {
+export interface Shell {
   id: string
   conversationId: string
   messageId: string
-  type: ArtifactType
+  type: ShellType
   title: string
   language?: string
   content: string
@@ -158,14 +163,17 @@ export interface Artifact {
   createdAt: number
   updatedAt: number
 }
+export type Artifact = Shell
 
-export interface ArtifactVersion {
+export interface ShellVersion {
   id: string
-  artifactId: string
+  shellId: string
+  artifactId?: string
   content: string
   version: number
   createdAt: number
 }
+export type ArtifactVersion = ShellVersion
 
 export interface TokenUsage {
   promptTokens: number
@@ -219,8 +227,10 @@ export interface SendMessagePayload {
 
 export type StreamEventType =
   | 'text'
+  | 'thinking'
   | 'usage'
   | 'citation'
+  | 'shell'
   | 'artifact'
   | 'error'
   | 'done'
@@ -234,10 +244,13 @@ export interface StreamChunkPayload {
   messageId: string
   generationId?: string
   contentDelta?: string
+  thinkingDelta?: string
+  thinkingDurationMs?: number
   done: boolean
   error?: string
   usage?: TokenUsage
   citation?: Citation
+  shell?: Shell
   artifact?: Artifact
   searchStatus?: WebSearchStatus
   researchPlan?: ResearchPlan
@@ -252,6 +265,7 @@ export interface ChatRequestOptions {
 
 export type ProviderStreamEvent =
   | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
   | { type: 'usage'; usage: TokenUsage }
   | { type: 'error'; error: string }
   | { type: 'done'; finishReason?: string }
@@ -297,11 +311,11 @@ export interface SystemInfoFull {
 
 export type ModelCompatibility = 'great' | 'runs' | 'tight' | 'wont_fit'
 
-export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative'
+export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative' | 'agentic'
 
-export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'other'
+export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'glm' | 'falcon' | 'smollm' | 'internlm' | 'command-r' | 'devstral' | 'kimi' | 'other'
 
-export type ModelSizeTier = 'tiny' | 'small' | 'medium' | 'large' | 'xl'
+export type ModelSizeTier = 'tiny' | 'small' | 'medium' | 'large' | 'xl' | 'xxl' | 'datacenter'
 
 export type QuantizationType = 'Q4_0' | 'Q4_K_M' | 'Q5_K_M' | 'Q6_K' | 'Q8_0' | 'FP16'
 
@@ -330,6 +344,26 @@ export interface PullProgress {
   completed: number
   total: number
   percent: number
+}
+
+export interface InstalledLocalModelInfo {
+  id: string
+  name: string
+  tag: string
+  providerType: ProviderType
+  providerId: string
+  providerName: string
+  sizeBytes?: number
+  sizeFormatted?: string
+  parameterSize?: string
+  quantizationLevel?: string
+  family?: string
+  modifiedAt?: string
+  modifiedAtFormatted?: string
+  isGoltiEngine?: boolean
+  isOllama?: boolean
+  isCatalogModel?: boolean
+  catalogModelId?: string
 }
 
 export type PlatformType = 'darwin' | 'win32' | 'linux' | 'unknown'
@@ -412,6 +446,7 @@ export interface Settings {
   defaultGenerationSettings?: GenerationSettings
   defaultContextWindow?: number
   reservedOutputTokens?: number
+  showThinkingProcess?: boolean
 }
 
 export interface ConversationExportOptions {

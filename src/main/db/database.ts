@@ -5,6 +5,7 @@ import { AIProviderConfig, Conversation, Message, Settings } from '../../shared/
 import { backupJsonStore, getSqlite } from './sqlite'
 import {
   chatArtifacts,
+  chatShells,
   chatCitations,
   chatContext,
   chatConversations,
@@ -56,6 +57,7 @@ const defaultSettings: Settings = {
   searchRuntimeSearxPort: 8742,
   defaultContextWindow: 8192,
   reservedOutputTokens: 1024,
+  showThinkingProcess: true,
   defaultGenerationSettings: {
     temperature: 0.7,
     topP: 0.9,
@@ -216,6 +218,7 @@ export const dbMessages = {
 
 export const dbContext = chatContext
 export const dbArtifacts = chatArtifacts
+export const dbShells = chatShells
 export const dbCitations = chatCitations
 
 // Provider DB Helper Methods — JSON

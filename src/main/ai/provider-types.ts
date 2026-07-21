@@ -32,6 +32,10 @@ export function textEvent(text: string): ProviderStreamEvent {
   return { type: 'text', text }
 }
 
+export function thinkingEvent(text: string): ProviderStreamEvent {
+  return { type: 'thinking', text }
+}
+
 export function usageEvent(usage: TokenUsage): ProviderStreamEvent {
   return { type: 'usage', usage }
 }

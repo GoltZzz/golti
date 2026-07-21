@@ -18,6 +18,7 @@ export const FilterBar: React.FC = () => {
     { id: 'chat', label: 'Conversational' },
     { id: 'code', label: 'Coding' },
     { id: 'reasoning', label: 'Reasoning' },
+    { id: 'agentic', label: 'Agentic' },
     { id: 'vision', label: 'Vision' },
     { id: 'embedding', label: 'Embedding' },
     { id: 'creative', label: 'Creative' }
@@ -29,7 +30,14 @@ export const FilterBar: React.FC = () => {
     { id: 'qwen', label: 'Qwen' },
     { id: 'gemma', label: 'Gemma' },
     { id: 'mistral', label: 'Mistral' },
-    { id: 'phi', label: 'Phi' }
+    { id: 'phi', label: 'Phi' },
+    { id: 'glm', label: 'GLM' },
+    { id: 'devstral', label: 'Devstral' },
+    { id: 'falcon', label: 'Falcon' },
+    { id: 'smollm', label: 'SmolLM' },
+    { id: 'internlm', label: 'InternLM' },
+    { id: 'command-r', label: 'Command-R' },
+    { id: 'kimi', label: 'Kimi' }
   ]
 
   const sizeTiers: { id: ModelSizeTier; label: string }[] = [
@@ -37,7 +45,9 @@ export const FilterBar: React.FC = () => {
     { id: 'small', label: 'Small (3B-9B)' },
     { id: 'medium', label: 'Medium (10B-15B)' },
     { id: 'large', label: 'Large (16B-35B)' },
-    { id: 'xl', label: 'XL (36B+)' }
+    { id: 'xl', label: 'XL (36B-99B)' },
+    { id: 'xxl', label: 'XXL (100B-499B)' },
+    { id: 'datacenter', label: 'Datacenter (500B+)' }
   ]
 
   const quantizations: QuantizationType[] = ['Q4_0', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'FP16']

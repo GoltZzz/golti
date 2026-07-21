@@ -17,7 +17,8 @@ import type {
   ArtifactVersion,
   WebSearchTestResult,
   SearchRuntimeState,
-  SearchRuntimeProgress
+  SearchRuntimeProgress,
+  InstalledLocalModelInfo
 } from '../shared/types'
 
 const api = {
@@ -137,6 +138,8 @@ const api = {
   getSystemInfoFull: () => ipcRenderer.invoke('system:info:full'),
   getOllamaStatus: () => ipcRenderer.invoke('cookbook:ollama-status'),
   getInstalledModels: () => ipcRenderer.invoke('cookbook:installed-models'),
+  getDetailedInstalledModels: (): Promise<InstalledLocalModelInfo[]> =>
+    ipcRenderer.invoke('cookbook:detailed-installed-models'),
   pullOllamaModel: (modelTag: string) => ipcRenderer.invoke('cookbook:ollama-pull', modelTag),
   deleteOllamaModel: (modelTag: string) =>
     ipcRenderer.invoke('cookbook:ollama-delete', modelTag) as Promise<{ success: boolean; error?: string }>,

@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import type {
   Artifact,
+  Shell,
   Citation,
   Message,
   SendMessagePayload,
@@ -15,6 +16,8 @@ import {
   computeTokenBudget,
   estimateTokens,
   extractArtifacts,
+  extractShells,
+  extractThinkingTags,
   getBranchPath
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
@@ -332,6 +335,9 @@ export async function startChatGeneration(
 
   ;(async () => {
     let accumulated = ''
+    let reasoningAccumulated = ''
+    let thinkingStartTime: number | null = null
+    let thinkingEndTime: number | null = null
     let usage: TokenUsage | undefined
 
     try {
@@ -339,7 +345,24 @@ export async function startChatGeneration(
         signal: controller.signal,
         generationSettings: mergedSettings
       })) {
-        if (event.type === 'text') {
+        if (event.type === 'thinking') {
+          if (!thinkingStartTime) thinkingStartTime = Date.now()
+          thinkingEndTime = Date.now()
+          reasoningAccumulated += event.text
+          const duration = thinkingEndTime - thinkingStartTime
+          sendChunk(win, {
+            conversationId,
+            messageId: assistantMsgId,
+            generationId,
+            thinkingDelta: event.text,
+            thinkingDurationMs: duration,
+            done: false,
+            eventType: 'thinking'
+          })
+        } else if (event.type === 'text') {
+          if (thinkingStartTime && !thinkingEndTime) {
+            thinkingEndTime = Date.now()
+          }
           accumulated += event.text
           sendChunk(win, {
             conversationId,
@@ -356,27 +379,33 @@ export async function startChatGeneration(
         }
       }
 
+      // Check if <think> tags exist in accumulated text (fallback parsing)
+      if (!reasoningAccumulated && accumulated.includes('<think>')) {
+        const { reasoningText, cleanContent } = extractThinkingTags(accumulated)
+        if (reasoningText) {
+          reasoningAccumulated = reasoningText
+          accumulated = cleanContent
+        }
+      }
+
+      const totalThinkingDurationMs =
+        thinkingStartTime && thinkingEndTime ? thinkingEndTime - thinkingStartTime : undefined
+
       if (!usage) {
         const promptText = historyForModel.map((m) => m.content).join('\n') + (effectiveSystem || '')
         usage = {
           promptTokens: estimateTokens(promptText),
-          completionTokens: estimateTokens(accumulated),
-          totalTokens: estimateTokens(promptText) + estimateTokens(accumulated),
+          completionTokens: estimateTokens(accumulated + reasoningAccumulated),
+          totalTokens: estimateTokens(promptText) + estimateTokens(accumulated + reasoningAccumulated),
           estimated: true
         }
       }
 
-      dbMessages.update(assistantMsgId, {
-        content: accumulated,
-        tokensIn: usage.promptTokens,
-        tokensOut: usage.completionTokens,
-        error: undefined
-      })
-
-      // Extract artifacts
-      const extracted = extractArtifacts(accumulated)
+      // Extract shells
+      const extracted = extractShells(accumulated)
+      const createdShells: Shell[] = []
       for (const [idx, ex] of extracted.entries()) {
-        const artifact: Artifact = {
+        const shell: Shell = {
           id: newId('art'),
           conversationId,
           messageId: assistantMsgId,
@@ -388,37 +417,56 @@ export async function startChatGeneration(
           createdAt: Date.now() + idx,
           updatedAt: Date.now() + idx
         }
-        dbArtifacts.create(artifact)
+        dbArtifacts.create(shell)
+        createdShells.push(shell)
         sendChunk(win, {
           conversationId,
           messageId: assistantMsgId,
           generationId,
           done: false,
-          artifact,
-          eventType: 'artifact'
+          shell,
+          artifact: shell,
+          eventType: 'shell'
         })
       }
+
+      dbMessages.update(assistantMsgId, {
+        content: accumulated,
+        reasoningContent: reasoningAccumulated || undefined,
+        thinkingDurationMs: totalThinkingDurationMs,
+        shellIds: createdShells.map((s) => s.id),
+        artifactIds: createdShells.map((s) => s.id),
+        tokensIn: usage.promptTokens,
+        tokensOut: usage.completionTokens,
+        error: undefined
+      })
 
       sendChunk(win, {
         conversationId,
         messageId: assistantMsgId,
         generationId,
         contentDelta: '',
+        thinkingDurationMs: totalThinkingDurationMs,
         done: true,
         usage,
         eventType: 'done'
       })
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
+        const totalThinkingDurationMs =
+          thinkingStartTime ? (thinkingEndTime || Date.now()) - thinkingStartTime : undefined
         dbMessages.update(assistantMsgId, {
           content: accumulated || '(generation stopped)',
-          tokensOut: estimateTokens(accumulated)
+          reasoningContent: reasoningAccumulated || undefined,
+          thinkingDurationMs: totalThinkingDurationMs,
+          tokensOut: estimateTokens(accumulated + reasoningAccumulated)
         })
         sendChunk(win, {
           conversationId,
           messageId: assistantMsgId,
           generationId,
           contentDelta: '',
+          thinkingDurationMs: totalThinkingDurationMs,
           done: true,
           eventType: 'done'
         })

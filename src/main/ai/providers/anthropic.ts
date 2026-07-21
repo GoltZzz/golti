@@ -4,6 +4,7 @@ import {
   doneEvent,
   readLineStream,
   textEvent,
+  thinkingEvent,
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
@@ -62,8 +63,12 @@ export async function* streamAnthropicChat(
     if (!trimmed.startsWith('data: ')) continue
     try {
       const parsed = JSON.parse(trimmed.slice(6))
-      if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-        yield textEvent(parsed.delta.text)
+      if (parsed.type === 'content_block_delta') {
+        if (parsed.delta?.type === 'thinking_delta' && parsed.delta?.thinking) {
+          yield thinkingEvent(parsed.delta.thinking)
+        } else if (parsed.delta?.text) {
+          yield textEvent(parsed.delta.text)
+        }
       }
       if (parsed.type === 'message_delta' && parsed.usage) {
         yield usageEvent({

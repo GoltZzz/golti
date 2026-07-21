@@ -3,6 +3,7 @@ import type {
   Citation,
   ContextItem,
   Message,
+  Shell,
   TokenBudget,
   TokenUsage
 } from './types'
@@ -70,7 +71,7 @@ export function getChildren(messages: Message[], parentId: string | null): Messa
     .sort((a, b) => (a.variantIndex ?? 0) - (b.variantIndex ?? 0) || a.createdAt - b.createdAt)
 }
 
-export interface ExtractedArtifact {
+export interface ExtractedShell {
   title: string
   language?: string
   type: 'code' | 'markdown'
@@ -78,25 +79,26 @@ export interface ExtractedArtifact {
   fenceStart: number
   fenceEnd: number
 }
+export type ExtractedArtifact = ExtractedShell
 
-const ARTIFACT_FENCE =
-  /```(?:artifact(?::(\w+))?|([\w+-]+))\s*(?:\n|$)([\s\S]*?)```/g
+const SHELL_FENCE =
+  /```(?:shell(?::(\w+))?|artifact(?::(\w+))?|([\w+-]+))\s*(?:\n|$)([\s\S]*?)```/g
 
 /**
- * Detect fenced code/markdown blocks. Prefer ```artifact:lang or ```lang
+ * Detect fenced code/markdown blocks. Prefer ```shell:lang, ```artifact:lang or ```lang
  * blocks longer than a short inline snippet threshold.
  */
-export function extractArtifacts(content: string, minLines = 3): ExtractedArtifact[] {
-  const results: ExtractedArtifact[] = []
+export function extractShells(content: string, minLines = 3): ExtractedShell[] {
+  const results: ExtractedShell[] = []
   let match: RegExpExecArray | null
-  const re = new RegExp(ARTIFACT_FENCE.source, 'g')
+  const re = new RegExp(SHELL_FENCE.source, 'g')
 
   while ((match = re.exec(content)) !== null) {
-    const artifactLang = match[1]
-    const language = (artifactLang || match[2] || 'text').toLowerCase()
-    const body = (match[3] || '').replace(/\n$/, '')
+    const shellLang = match[1] || match[2]
+    const language = (shellLang || match[3] || 'text').toLowerCase()
+    const body = (match[4] || '').replace(/\n$/, '')
     const lineCount = body.split('\n').length
-    const isExplicit = Boolean(artifactLang) || language === 'markdown' || language === 'md'
+    const isExplicit = Boolean(shellLang) || language === 'markdown' || language === 'md'
     if (!isExplicit && lineCount < minLines) continue
 
     const type = language === 'markdown' || language === 'md' ? 'markdown' : 'code'
@@ -118,6 +120,25 @@ export function extractArtifacts(content: string, minLines = 3): ExtractedArtifa
   }
 
   return results
+}
+export const extractArtifacts = extractShells
+
+/**
+ * Parses inline <think>...</think> tags out of content text.
+ */
+export function extractThinkingTags(text: string): { reasoningText: string; cleanContent: string } {
+  if (!text) return { reasoningText: '', cleanContent: '' }
+  
+  let reasoningText = ''
+  let cleanContent = text
+
+  const thinkMatch = /<think>([\s\S]*?)(?:<\/think>|$)/gi.exec(text)
+  if (thinkMatch) {
+    reasoningText = thinkMatch[1].trim()
+    cleanContent = text.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '').trimStart()
+  }
+
+  return { reasoningText, cleanContent }
 }
 
 export function computeTokenBudget(params: {
@@ -190,12 +211,16 @@ export function formatConversationMarkdown(
   title: string,
   messages: Message[],
   citations: Citation[] = [],
-  artifacts: Artifact[] = []
+  shells: Shell[] = []
 ): string {
   const lines: string[] = [`# ${title}`, '']
   for (const msg of messages) {
     const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : 'System'
-    lines.push(`## ${role}`, '', msg.content, '')
+    lines.push(`## ${role}`, '')
+    if (msg.reasoningContent) {
+      lines.push('<details>', '<summary>Thought Process</summary>', '', msg.reasoningContent, '', '</details>', '')
+    }
+    lines.push(msg.content, '')
   }
   if (citations.length > 0) {
     lines.push('## Sources', '')
@@ -204,14 +229,14 @@ export function formatConversationMarkdown(
     }
     lines.push('')
   }
-  if (artifacts.length > 0) {
-    lines.push('## Artifacts', '')
-    for (const a of artifacts) {
-      lines.push(`### ${a.title}`, '')
-      if (a.type === 'code') {
-        lines.push('```' + (a.language || ''), a.content, '```', '')
+  if (shells.length > 0) {
+    lines.push('## Shells', '')
+    for (const s of shells) {
+      lines.push(`### ${s.title}`, '')
+      if (s.type === 'code') {
+        lines.push('```' + (s.language || ''), s.content, '```', '')
       } else {
-        lines.push(a.content, '')
+        lines.push(s.content, '')
       }
     }
   }

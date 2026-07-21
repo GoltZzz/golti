@@ -659,10 +659,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationId,
         messageId,
         contentDelta,
+        thinkingDelta,
+        thinkingDurationMs,
         done,
         error,
         usage,
         citation,
+        shell,
         artifact,
         searchStatus,
         researchPlan,
@@ -673,9 +676,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => {
         const messages = state.messages.map((msg) => {
           if (msg.id === messageId) {
+            const reasoningContent = (msg.reasoningContent || '') + (thinkingDelta || '')
             return {
               ...msg,
               content: msg.content + (contentDelta || ''),
+              reasoningContent: reasoningContent || msg.reasoningContent,
+              thinkingDurationMs: thinkingDurationMs ?? msg.thinkingDurationMs,
               isStreaming: !done,
               error: error || msg.error,
               tokensIn: usage?.promptTokens ?? msg.tokensIn,
@@ -686,8 +692,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
 
         const citations = citation ? [...state.citations, citation] : state.citations
-        const artifacts = artifact
-          ? [...state.artifacts.filter((a) => a.id !== artifact.id), artifact]
+        const activeShell = shell || artifact
+        const artifacts = activeShell
+          ? [...state.artifacts.filter((a) => a.id !== activeShell.id), activeShell]
           : state.artifacts
 
         const searchStatusByMessageId = searchStatus
@@ -983,6 +990,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   restoreArtifactVersion: async (id, version) => {
+    await window.goltiAPI.restoreArtifactVersion(id, version)
+    await get().refreshArtifacts()
+  },
+
+  updateShellContent: async (id: string, content: string) => {
+    await window.goltiAPI.updateArtifact(id, content)
+    await get().refreshArtifacts()
+  },
+
+  restoreShellVersion: async (id: string, version: number) => {
     await window.goltiAPI.restoreArtifactVersion(id, version)
     await get().refreshArtifacts()
   },

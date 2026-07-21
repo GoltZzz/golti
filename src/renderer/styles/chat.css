@@ -1305,3 +1305,107 @@
   overflow: hidden;
 }
 
+/* Thinking Block — Collapsible AI Reasoning */
+.thinking-block {
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  overflow: hidden;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.thinking-block.is-expanded {
+  border-color: rgba(97, 175, 239, 0.3);
+  background: rgba(97, 175, 239, 0.03);
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.thinking-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+}
+
+.thinking-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.thinking-icon {
+  color: #61afef;
+}
+
+.thinking-icon.pulse {
+  animation: pulse-ring 1.5s infinite;
+}
+
+.thinking-timer {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(97, 175, 239, 0.15);
+  color: #61afef;
+  font-weight: 600;
+}
+
+.thinking-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.thinking-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.thinking-action-btn,
+.thinking-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.thinking-action-btn:hover,
+.thinking-toggle-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.thinking-body {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.thinking-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+

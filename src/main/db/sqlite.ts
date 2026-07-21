@@ -184,6 +184,13 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
         content=''
       );
     `
+  },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE messages ADD COLUMN reasoning_content TEXT;
+      ALTER TABLE messages ADD COLUMN thinking_duration_ms INTEGER;
+    `
   }
 ]
 

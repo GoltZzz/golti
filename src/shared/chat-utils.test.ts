@@ -3,6 +3,8 @@ import {
   computeTokenBudget,
   estimateTokens,
   extractArtifacts,
+  extractShells,
+  extractThinkingTags,
   formatConversationMarkdown,
   getBranchPath,
   getChildren,
@@ -183,14 +185,42 @@ describe('computeTokenBudget', () => {
   })
 })
 
+describe('extractThinkingTags', () => {
+  it('extracts reasoning text inside think tags', () => {
+    const raw = '<think>\nFirst step: analyze user input.\nSecond step: formulate answer.\n</think>\nHere is the answer.'
+    const { reasoningText, cleanContent } = extractThinkingTags(raw)
+    expect(reasoningText).toContain('First step: analyze user input.')
+    expect(cleanContent).toBe('Here is the answer.')
+  })
+
+  it('handles unclosed think tag during streaming', () => {
+    const raw = '<think>\nThinking in progress...'
+    const { reasoningText, cleanContent } = extractThinkingTags(raw)
+    expect(reasoningText).toBe('Thinking in progress...')
+    expect(cleanContent).toBe('')
+  })
+})
+
+describe('extractShells', () => {
+  it('extracts shell code block', () => {
+    const content = '```shell:python\nprint("hello")\nprint("world")\n```'
+    const shells = extractShells(content)
+    expect(shells.length).toBe(1)
+    expect(shells[0].language).toBe('python')
+    expect(shells[0].content).toContain('print("hello")')
+  })
+})
+
 describe('formatConversationMarkdown', () => {
   it('renders title and roles', () => {
     const md = formatConversationMarkdown('Test', [
       { id: '1', conversationId: 'c', role: 'user', content: 'Q', createdAt: 1 },
-      { id: '2', conversationId: 'c', role: 'assistant', content: 'A', createdAt: 2 }
+      { id: '2', conversationId: 'c', role: 'assistant', content: 'A', reasoningContent: 'Reasoning here', createdAt: 2 }
     ])
     expect(md).toContain('# Test')
     expect(md).toContain('## User')
     expect(md).toContain('## Assistant')
+    expect(md).toContain('<summary>Thought Process</summary>')
+    expect(md).toContain('Reasoning here')
   })
 })

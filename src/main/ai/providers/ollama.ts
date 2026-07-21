@@ -4,6 +4,7 @@ import {
   doneEvent,
   readLineStream,
   textEvent,
+  thinkingEvent,
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
@@ -83,6 +84,10 @@ export async function* streamOllamaChat(
     if (!line.trim()) continue
     try {
       const parsed = JSON.parse(line)
+      const thinkingText = parsed.message?.thinking || parsed.message?.reasoning || parsed.message?.reasoning_content
+      if (thinkingText) {
+        yield thinkingEvent(thinkingText)
+      }
       if (parsed.message?.content) {
         yield textEvent(parsed.message.content)
       }

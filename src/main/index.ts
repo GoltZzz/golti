@@ -26,7 +26,9 @@ import {
   pickContextFolder
 } from './services/context-ingest'
 import { exportConversation } from './services/export'
-import type { SendMessagePayload } from '../shared/types'
+import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/types'
+import { MODEL_CATALOG } from '../shared/model-catalog'
+import { normalizeOllamaTag } from '../shared/ollama-tags'
 import { testWebSearch } from './services/web-search'
 import {
   initEngine,
@@ -461,6 +463,87 @@ function setupIpcHandlers(): void {
       console.warn('Failed to fetch installed Ollama models:', e)
       return []
     }
+  })
+
+  // Detailed Local Models list (Ollama + Golti Engine)
+  ipcMain.handle('cookbook:detailed-installed-models', async (): Promise<InstalledLocalModelInfo[]> => {
+    const installedList: InstalledLocalModelInfo[] = []
+    const providers = dbProviders.list()
+
+    // 1. Ollama Models
+    const ollamaProvider = providers.find(p => p.type === 'ollama')
+    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+    try {
+      const res = await fetch(`${endpoint}/api/tags`)
+      if (res.ok) {
+        const data = (await res.json()) as any
+        if (Array.isArray(data.models)) {
+          for (const m of data.models) {
+            const tagName = m.name || m.model || ''
+            if (!tagName) continue
+            const details = m.details || {}
+            const normalized = normalizeOllamaTag(tagName)
+            const catalogMatch = MODEL_CATALOG.find(cat => normalizeOllamaTag(cat.ollamaTag) === normalized)
+
+            let formattedSize: string | undefined
+            if (m.size) {
+              const gb = m.size / (1024 * 1024 * 1024)
+              formattedSize = gb >= 1 ? `${gb.toFixed(2)} GB` : `${(m.size / (1024 * 1024)).toFixed(0)} MB`
+            }
+
+            installedList.push({
+              id: `ollama:${tagName}`,
+              name: catalogMatch ? catalogMatch.name : tagName,
+              tag: tagName,
+              providerType: 'ollama',
+              providerId: ollamaProvider?.id || 'ollama-default',
+              providerName: ollamaProvider?.name || 'Ollama',
+              sizeBytes: m.size,
+              sizeFormatted: formattedSize || (catalogMatch ? `${catalogMatch.diskSizeGB} GB` : undefined),
+              parameterSize: details.parameter_size || (catalogMatch ? `${catalogMatch.parameterBillions}B` : undefined),
+              quantizationLevel: details.quantization_level || (catalogMatch ? catalogMatch.quantization : undefined),
+              family: details.family || (catalogMatch ? catalogMatch.family : undefined),
+              modifiedAt: m.modified_at,
+              modifiedAtFormatted: m.modified_at ? new Date(m.modified_at).toLocaleDateString() : undefined,
+              isOllama: true,
+              isCatalogModel: !!catalogMatch,
+              catalogModelId: catalogMatch?.id
+            })
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Cookbook] Failed to fetch Ollama detailed models:', e)
+    }
+
+    // 2. Golti Engine Models (.gguf files)
+    try {
+      const engineProvider = providers.find(p => p.type === 'golti-engine')
+      const localEngineFiles = listLocalModels()
+      for (const file of localEngineFiles) {
+        const catalogMatch = MODEL_CATALOG.find(cat => cat.ggufFilename === file.filename)
+        installedList.push({
+          id: `golti-engine:${file.filename}`,
+          name: catalogMatch ? catalogMatch.name : file.filename.replace(/\.gguf$/i, ''),
+          tag: file.filename,
+          providerType: 'golti-engine',
+          providerId: engineProvider?.id || 'golti-engine-default',
+          providerName: 'Golti Engine',
+          sizeBytes: file.sizeBytes,
+          sizeFormatted: `${file.sizeGB} GB`,
+          isGoltiEngine: true,
+          isCatalogModel: !!catalogMatch,
+          catalogModelId: catalogMatch?.id,
+          parameterSize: catalogMatch ? `${catalogMatch.parameterBillions}B` : undefined,
+          quantizationLevel: catalogMatch ? catalogMatch.quantization : undefined,
+          family: catalogMatch ? catalogMatch.family : undefined
+        })
+      }
+    } catch (e) {
+      console.warn('[Cookbook] Failed to list Golti Engine local models:', e)
+    }
+
+    return installedList
   })
 
   // Cookbook Ollama Model Pull

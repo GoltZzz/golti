@@ -1476,3 +1476,160 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Installed Local Models Section */
+.installed-models-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-bottom: var(--space-4);
+}
+
+.installed-models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.installed-model-card {
+  background: var(--bg-surface-elevated, #181a24);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  transition: all 0.2s ease;
+}
+
+.installed-model-card:hover {
+  border-color: rgba(152, 195, 121, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transform: translateY(-1px);
+}
+
+.installed-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.installed-card-title h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.installed-tag-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.provider-badge.provider-ollama {
+  background: rgba(97, 175, 239, 0.15);
+  color: #61afef;
+  border: 1px solid rgba(97, 175, 239, 0.3);
+}
+
+.provider-badge.provider-golti-engine {
+  background: rgba(229, 192, 123, 0.15);
+  color: #e5c07b;
+  border: 1px solid rgba(229, 192, 123, 0.3);
+}
+
+.installed-card-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.spec-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  padding: 3px 7px;
+  border-radius: 4px;
+}
+
+.installed-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn-chat-installed {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(152, 195, 121, 0.15);
+  color: #98c379;
+  border: 1px solid rgba(152, 195, 121, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-chat-installed:hover {
+  background: rgba(152, 195, 121, 0.25);
+  border-color: rgba(152, 195, 121, 0.5);
+}
+
+.btn-delete-installed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: rgba(224, 108, 117, 0.1);
+  color: #e06c75;
+  border: 1px solid rgba(224, 108, 117, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-delete-installed:hover:not(:disabled) {
+  background: rgba(224, 108, 117, 0.2);
+  border-color: rgba(224, 108, 117, 0.4);
+}
+
+.btn-delete-installed.confirming {
+  background: rgba(224, 108, 117, 0.85);
+  color: #fff;
+}

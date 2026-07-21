@@ -434,6 +434,36 @@ export const SettingsView: React.FC = () => {
                   fontSize: "15px",
                   fontWeight: 600,
                   color: "var(--text-primary)",
+                  marginBottom: 8
+                }}
+              >
+                AI Thinking & Reasoning
+              </h3>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "var(--text-muted)",
+                  marginBottom: "var(--space-3)",
+                }}
+              >
+                Display the model's reasoning chain and duration timer in collapsible blocks for reasoning models (e.g. DeepSeek-R1, Qwen 2.5 Thought, o1/o3).
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings?.showThinkingProcess ?? true}
+                  onChange={(e) => updateSettings({ showThinkingProcess: e.target.checked })}
+                />
+                <span>Show AI thinking process in chat bubbles</span>
+              </label>
+            </div>
+
+            <div style={{ paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+              <h3
+                style={{
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
                   marginBottom: 8,
                   display: 'flex',
                   alignItems: 'center',

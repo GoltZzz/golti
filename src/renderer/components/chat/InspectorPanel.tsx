@@ -3,20 +3,20 @@ import { X, Download } from 'lucide-react'
 import { useInspectorStore, InspectorTab } from '../../stores/inspectorStore'
 import { useChatStore } from '../../stores/chatStore'
 import { UsageMeter } from './UsageMeter'
-import { ArtifactEditor } from './ArtifactEditor'
+import { ShellEditor } from './ShellEditor'
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'context', label: 'Context' },
   { id: 'thread', label: 'Thread' },
-  { id: 'artifacts', label: 'Artifacts' },
+  { id: 'shells', label: 'Shells' },
   { id: 'usage', label: 'Usage' }
 ]
 
 export const InspectorPanel: React.FC = () => {
-  const { isOpen, activeTab, setTab, setOpen, selectedArtifactId, selectArtifact } = useInspectorStore()
+  const { isOpen, activeTab, setTab, setOpen, selectedShellId, selectShell } = useInspectorStore()
   const {
     contextItems,
-    artifacts,
+    artifacts: shells,
     citations,
     visibleMessages,
     currentConversationId,
@@ -178,33 +178,33 @@ export const InspectorPanel: React.FC = () => {
           </>
         )}
 
-        {activeTab === 'artifacts' && (
+        {(activeTab === 'shells' || activeTab === 'artifacts') && (
           <>
-            {selectedArtifactId ? (
-              <ArtifactEditor
-                artifactId={selectedArtifactId}
-                onBack={() => selectArtifact(null)}
+            {selectedShellId ? (
+              <ShellEditor
+                shellId={selectedShellId}
+                onBack={() => selectShell(null)}
               />
-            ) : artifacts.length === 0 ? (
+            ) : shells.length === 0 ? (
               <p className="inspector-empty">
-                Code and Markdown blocks from assistant replies will show up here for editing and
+                Code and Markdown documents from assistant replies will show up here for editing and
                 versioning.
               </p>
             ) : (
               <div className="inspector-list">
-                {artifacts.map((a) => (
+                {shells.map((s) => (
                   <button
-                    key={a.id}
+                    key={s.id}
                     className="inspector-item"
-                    onClick={() => selectArtifact(a.id)}
+                    onClick={() => selectShell(s.id)}
                     style={{ textAlign: 'left', cursor: 'pointer' }}
                   >
                     <div className="inspector-item-row">
-                      <span className="inspector-item-name">{a.title}</span>
-                      <span className="inspector-item-meta">v{a.version}</span>
+                      <span className="inspector-item-name">{s.title}</span>
+                      <span className="inspector-item-meta">v{s.version}</span>
                     </div>
                     <span className="inspector-item-meta">
-                      {a.language || a.type} · {a.content.split('\n').length} lines
+                      {s.language || s.type} · {s.content.split('\n').length} lines
                     </span>
                   </button>
                 ))}

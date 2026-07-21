@@ -26,6 +26,7 @@ export async function exportConversation(
         conversation: conv,
         messages: pathMessages,
         citations,
+        shells: artifacts,
         artifacts
       },
       null,
