@@ -93,6 +93,94 @@ describe('computeTokenBudget', () => {
     expect(budget.items.some((i) => i.category === 'context')).toBe(true)
     expect(budget.usedTokens).toBeGreaterThan(0)
   })
+
+  it('isolates budgets for two conversations with different history and context', () => {
+    const emptyish = computeTokenBudget({
+      contextWindow: 8000,
+      reservedOutputTokens: 1000,
+      systemPrompt: 'You are helpful.',
+      contextItems: [],
+      history: [],
+      draft: ''
+    })
+
+    const heavy = computeTokenBudget({
+      contextWindow: 8000,
+      reservedOutputTokens: 1000,
+      systemPrompt: 'You are helpful.',
+      contextItems: [
+        {
+          id: 'ctx-a',
+          conversationId: 'c2',
+          type: 'text',
+          name: 'big note',
+          content: 'x'.repeat(400),
+          tokenEstimate: 100,
+          createdAt: 1,
+          enabled: true
+        }
+      ],
+      history: [
+        {
+          id: 'm1',
+          conversationId: 'c2',
+          role: 'user',
+          content: 'y'.repeat(200),
+          createdAt: 1
+        },
+        {
+          id: 'm2',
+          conversationId: 'c2',
+          role: 'assistant',
+          content: 'z'.repeat(200),
+          createdAt: 2
+        }
+      ],
+      draft: 'draft text'
+    })
+
+    expect(heavy.usedTokens).toBeGreaterThan(emptyish.usedTokens)
+    expect(emptyish.items.some((i) => i.category === 'history')).toBe(false)
+    expect(heavy.items.some((i) => i.category === 'history')).toBe(true)
+    expect(heavy.items.some((i) => i.category === 'context')).toBe(true)
+  })
+
+  it('uses only the active branch for history tokens', () => {
+    const messages: Message[] = [
+      { id: 'u1', conversationId: 'c', role: 'user', content: 'a'.repeat(40), createdAt: 1, parentId: null },
+      {
+        id: 'a1',
+        conversationId: 'c',
+        role: 'assistant',
+        content: 'b'.repeat(40),
+        createdAt: 2,
+        parentId: 'u1'
+      },
+      {
+        id: 'a2',
+        conversationId: 'c',
+        role: 'assistant',
+        content: 'c'.repeat(400),
+        createdAt: 3,
+        parentId: 'u1'
+      }
+    ]
+    const branchA1 = getBranchPath(messages, 'a1')
+    const branchA2 = getBranchPath(messages, 'a2')
+    const budgetA1 = computeTokenBudget({
+      contextWindow: 8000,
+      reservedOutputTokens: 100,
+      history: branchA1,
+      contextItems: []
+    })
+    const budgetA2 = computeTokenBudget({
+      contextWindow: 8000,
+      reservedOutputTokens: 100,
+      history: branchA2,
+      contextItems: []
+    })
+    expect(budgetA2.usedTokens).toBeGreaterThan(budgetA1.usedTokens)
+  })
 })
 
 describe('formatConversationMarkdown', () => {

@@ -11,6 +11,7 @@ import {
   Redo2
 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
+import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
 import { ContextTray } from './ContextTray'
 import { UsageMeter } from './UsageMeter'
 
@@ -23,6 +24,9 @@ export const ChatInput: React.FC = () => {
     stopGeneration,
     webSearchEnabled,
     setWebSearchEnabled,
+    forceWebSearchNext,
+    setForceWebSearchNext,
+    searchSetupError,
     addContextFiles,
     addContextFolder,
     addContextPaths,
@@ -36,6 +40,7 @@ export const ChatInput: React.FC = () => {
     setGenerationSettings,
     tokenBudget
   } = useChatStore()
+  const { runtimeState, progress, setupListeners } = useSearchRuntimeStore()
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [showSettings, setShowSettings] = useState(false)
@@ -49,6 +54,8 @@ export const ChatInput: React.FC = () => {
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`
     }
   }, [draft])
+
+  useEffect(() => setupListeners(), [setupListeners])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const meta = e.metaKey || e.ctrlKey
@@ -78,13 +85,18 @@ export const ChatInput: React.FC = () => {
     if (paths.length) {
       await addContextPaths(paths)
     } else if (files.length) {
-      // Fallback: read as text in renderer when path unavailable
       for (const file of files) {
         const text = await file.text()
         await addContextText(file.name, text)
       }
     }
   }
+
+  const showRuntimeBusy =
+    webSearchEnabled &&
+    (runtimeState.status === 'downloading' ||
+      runtimeState.status === 'starting' ||
+      Boolean(progress && progress.percent < 100))
 
   return (
     <div className="composer">
@@ -118,12 +130,26 @@ export const ChatInput: React.FC = () => {
             <button
               className={`chat-icon-btn ${webSearchEnabled ? 'is-active' : ''}`}
               onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-              title="Web search"
+              title={webSearchEnabled ? 'Web Search on' : 'Web Search off'}
               aria-label="Toggle web search"
               aria-pressed={webSearchEnabled}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
             >
               <Globe size={16} />
+              <span style={{ fontSize: 11 }}>Web Search</span>
             </button>
+            {webSearchEnabled && (
+              <button
+                className={`chat-icon-btn ${forceWebSearchNext ? 'is-active' : ''}`}
+                onClick={() => setForceWebSearchNext(!forceWebSearchNext)}
+                title="Search this message anyway"
+                aria-label="Force web search for next message"
+                aria-pressed={forceWebSearchNext}
+                style={{ fontSize: 11 }}
+              >
+                Force
+              </button>
+            )}
             <button
               className={`chat-icon-btn ${showSettings ? 'is-active' : ''}`}
               onClick={() => setShowSettings((v) => !v)}
@@ -184,6 +210,39 @@ export const ChatInput: React.FC = () => {
             </div>
           )}
 
+          {(showRuntimeBusy || searchSetupError) && (
+            <div
+              style={{
+                margin: '8px 12px 0',
+                padding: '8px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: searchSetupError
+                  ? 'rgba(224, 108, 117, 0.12)'
+                  : 'rgba(97, 175, 239, 0.12)',
+                color: searchSetupError ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                fontSize: 12
+              }}
+            >
+              {searchSetupError ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                  <span>{searchSetupError}</span>
+                  <button
+                    className="chat-ghost-btn"
+                    onClick={() => setWebSearchEnabled(true)}
+                    style={{ fontSize: 11 }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <span>
+                  Setting up Web Search
+                  {progress ? `… ${progress.percent}%` : '…'}
+                </span>
+              )}
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             className="composer-textarea"
@@ -238,7 +297,9 @@ export const ChatInput: React.FC = () => {
             <div className="composer-footer-left">
               <UsageMeter compact />
               {webSearchEnabled && (
-                <span style={{ fontSize: 11, color: 'var(--accent-cyan)' }}>Web search on</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-cyan)' }}>
+                  {forceWebSearchNext ? 'Will search this message' : 'Web Search on'}
+                </span>
               )}
               {tokenBudget?.overflow && (
                 <span style={{ fontSize: 11, color: 'var(--accent-yellow)' }}>

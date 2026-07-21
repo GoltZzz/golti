@@ -45,10 +45,15 @@ const defaultSettings: Settings = {
   enginePort: 8391,
   engineGpuLayers: -1,
   webSearch: {
-    provider: 'none',
+    provider: 'local',
     maxResults: 5,
-    enabled: false
+    enabled: true,
+    endpoint: 'http://127.0.0.1:8741'
   },
+  webSearchEnabled: false,
+  defaultWebSearchMode: 'off',
+  searchRuntimePort: 8741,
+  searchRuntimeSearxPort: 8742,
   defaultContextWindow: 8192,
   reservedOutputTokens: 1024,
   defaultGenerationSettings: {

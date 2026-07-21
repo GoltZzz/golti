@@ -35,7 +35,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     isGenerating,
     citations,
     artifacts,
-    messages
+    messages,
+    searchStatusByMessageId
   } = useChatStore()
   const { selectArtifact } = useInspectorStore()
 
@@ -43,6 +44,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const siblingIndex = Math.max(0, siblings.findIndex((s) => s.id === message.id))
   const messageCitations = citations.filter((c) => c.messageId === message.id)
   const messageArtifacts = artifacts.filter((a) => a.messageId === message.id)
+  const searchStatus = searchStatusByMessageId[message.id]
 
   const handleCopyCode = (text: string, index: number) => {
     navigator.clipboard.writeText(text)
@@ -148,6 +150,30 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                   {message.content}
                 </ReactMarkdown>
               )}
+            </div>
+          )}
+
+          {!isUser && searchStatus && (
+            <div
+              className={`search-status is-${searchStatus.state}`}
+              role="status"
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color:
+                  searchStatus.state === 'error'
+                    ? 'var(--accent-primary)'
+                    : searchStatus.state === 'success'
+                      ? 'var(--accent-cyan)'
+                      : 'var(--text-muted)'
+              }}
+            >
+              {searchStatus.state === 'searching' && (searchStatus.message || 'Searching the web…')}
+              {searchStatus.state === 'success' && (searchStatus.message || 'Sources found')}
+              {searchStatus.state === 'no-results' && (searchStatus.message || 'No sources found')}
+              {searchStatus.state === 'skipped' && (searchStatus.message || 'No live lookup needed')}
+              {searchStatus.state === 'error' &&
+                (searchStatus.message || 'Search is temporarily unavailable')}
             </div>
           )}
 

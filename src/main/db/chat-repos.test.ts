@@ -127,6 +127,56 @@ describe('sqlite chat repos', () => {
     expect(chatContext.list('c3')[0].enabled).toBe(false)
   })
 
+  it('keeps context and messages isolated per conversation', () => {
+    chatConversations.create({
+      id: 'iso-a',
+      title: 'A',
+      model: 'm',
+      providerId: 'p',
+      createdAt: 1,
+      updatedAt: 1,
+      pinned: false,
+      archived: false
+    })
+    chatConversations.create({
+      id: 'iso-b',
+      title: 'B',
+      model: 'm',
+      providerId: 'p',
+      createdAt: 2,
+      updatedAt: 2,
+      pinned: false,
+      archived: false
+    })
+
+    chatMessages.create({
+      id: 'ma1',
+      conversationId: 'iso-a',
+      role: 'user',
+      content: 'only in A',
+      createdAt: 1,
+      parentId: null
+    })
+    chatContext.create({
+      id: 'ctx-a',
+      conversationId: 'iso-a',
+      type: 'text',
+      name: 'file-a',
+      content: 'context A',
+      tokenEstimate: 3,
+      createdAt: 1,
+      enabled: true
+    })
+
+    expect(chatMessages.listForConversation('iso-b')).toHaveLength(0)
+    expect(chatContext.list('iso-b')).toHaveLength(0)
+    expect(chatMessages.listForConversation('iso-a')).toHaveLength(1)
+    expect(chatContext.list('iso-a')[0].name).toBe('file-a')
+
+    const listed = chatConversations.list()
+    expect(listed.map((c) => c.id).sort()).toEqual(['iso-a', 'iso-b'])
+  })
+
   it('runs migrations idempotently', () => {
     const db = new Database(path.join(dir, 'mig.sqlite'))
     migrate(db)

@@ -14,7 +14,10 @@ import type {
   StreamChunkPayload,
   TokenBudget,
   AIProviderConfig,
-  ArtifactVersion
+  ArtifactVersion,
+  WebSearchTestResult,
+  SearchRuntimeState,
+  SearchRuntimeProgress
 } from '../shared/types'
 
 const api = {
@@ -88,6 +91,26 @@ const api = {
   getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (settings: Partial<Settings>): Promise<void> =>
     ipcRenderer.invoke('settings:update', settings),
+  testWebSearch: (query?: string): Promise<WebSearchTestResult> =>
+    ipcRenderer.invoke('web-search:test', query),
+  getSearchRuntimeStatus: (): Promise<SearchRuntimeState> =>
+    ipcRenderer.invoke('search-runtime:status'),
+  installSearchRuntime: (): Promise<SearchRuntimeState> =>
+    ipcRenderer.invoke('search-runtime:install'),
+  startSearchRuntime: (): Promise<SearchRuntimeState> => ipcRenderer.invoke('search-runtime:start'),
+  stopSearchRuntime: (): Promise<SearchRuntimeState> => ipcRenderer.invoke('search-runtime:stop'),
+  repairSearchRuntime: (): Promise<SearchRuntimeState> =>
+    ipcRenderer.invoke('search-runtime:repair'),
+  onSearchRuntimeProgress: (callback: (progress: SearchRuntimeProgress) => void) => {
+    const listener = (_: unknown, progress: SearchRuntimeProgress) => callback(progress)
+    ipcRenderer.on('search-runtime:progress', listener)
+    return () => ipcRenderer.removeListener('search-runtime:progress', listener)
+  },
+  onSearchRuntimeStatusChange: (callback: (state: SearchRuntimeState) => void) => {
+    const listener = (_: unknown, state: SearchRuntimeState) => callback(state)
+    ipcRenderer.on('search-runtime:status-change', listener)
+    return () => ipcRenderer.removeListener('search-runtime:status-change', listener)
+  },
 
   // AI & Models
   getModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('ai:models'),

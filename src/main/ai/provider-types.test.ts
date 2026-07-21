@@ -36,7 +36,7 @@ describe('web search adapters', () => {
     const { runWebSearch } = await import('../services/web-search')
     await expect(
       runWebSearch('query', { provider: 'brave', enabled: true, maxResults: 3 })
-    ).rejects.toThrow(/API key/)
+    ).rejects.toThrow(/not configured/)
   })
 
   it('parses brave response', async () => {
@@ -59,6 +59,54 @@ describe('web search adapters', () => {
       maxResults: 5
     })
     expect(results[0].title).toBe('T')
+    expect(results[0].snippet).toBe('S')
+    vi.unstubAllGlobals()
+  })
+
+  it('parses tavily response', async () => {
+    const { runWebSearch } = await import('../services/web-search')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          results: [{ title: 'Tavily Hit', url: 'https://tavily.example', content: 'Snippet body' }]
+        })
+      }))
+    )
+    const results = await runWebSearch('q', {
+      provider: 'tavily',
+      enabled: true,
+      apiKey: 'key',
+      maxResults: 5
+    })
+    expect(results).toHaveLength(1)
+    expect(results[0]).toMatchObject({
+      title: 'Tavily Hit',
+      url: 'https://tavily.example',
+      snippet: 'Snippet body'
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('surfaces provider HTTP errors', async () => {
+    const { runWebSearch } = await import('../services/web-search')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 401,
+        text: async () => 'unauthorized'
+      }))
+    )
+    await expect(
+      runWebSearch('q', {
+        provider: 'brave',
+        enabled: true,
+        apiKey: 'bad',
+        maxResults: 3
+      })
+    ).rejects.toThrow(/Search failed/)
     vi.unstubAllGlobals()
   })
 })

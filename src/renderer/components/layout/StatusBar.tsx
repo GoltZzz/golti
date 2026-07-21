@@ -1,17 +1,28 @@
 import React, { useEffect, useState } from 'react'
-import { Cpu, HardDrive, Circle, Zap } from 'lucide-react'
+import { Cpu, HardDrive, Circle, Zap, Globe } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useEngineStore } from '../../stores/engineStore'
+import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
 import { SystemInfo } from '../../../shared/types'
 
 export const StatusBar: React.FC = () => {
-  const { selectedModel, isGenerating, tokenBudget } = useChatStore()
+  const { selectedModel, isGenerating, tokenBudget, webSearchEnabled } = useChatStore()
   const { engineState } = useEngineStore()
+  const { runtimeState, progress, setupListeners } = useSearchRuntimeStore()
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
 
   useEffect(() => {
     window.goltiAPI.getSystemInfo().then(setSysInfo).catch(console.error)
   }, [])
+
+  useEffect(() => setupListeners(), [setupListeners])
+
+  const showSearchStatus =
+    webSearchEnabled &&
+    (runtimeState.status === 'downloading' ||
+      runtimeState.status === 'starting' ||
+      runtimeState.status === 'error' ||
+      (progress && progress.percent < 100))
 
   return (
     <footer style={{
@@ -50,6 +61,29 @@ export const StatusBar: React.FC = () => {
           <Zap size={12} />
           <span>Engine: {engineState.status}</span>
         </div>
+
+        {showSearchStatus && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              color: runtimeState.status === 'error' ? 'var(--accent-primary)' : '#61afef'
+            }}
+          >
+            <Globe size={12} />
+            <span>
+              Web Search:{' '}
+              {runtimeState.status === 'downloading'
+                ? `setup ${progress?.percent ?? 0}%`
+                : runtimeState.status === 'starting'
+                  ? 'starting'
+                  : runtimeState.status === 'error'
+                    ? 'needs attention'
+                    : runtimeState.status}
+            </span>
+          </div>
+        )}
 
         {sysInfo && (
           <>

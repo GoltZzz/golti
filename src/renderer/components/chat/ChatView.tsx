@@ -19,13 +19,17 @@ export const ChatView: React.FC = () => {
     redoAction,
     actionUndoStack,
     actionRedoStack,
-    fetchModels
+    fetchModels,
+    hydrateWebSearchPreference,
+    isLoadingConversation,
+    conversationError
   } = useChatStore()
   const { isOpen, toggle } = useInspectorStore()
 
   useEffect(() => {
     fetchConversations()
     fetchModels()
+    hydrateWebSearchPreference()
     const cleanup = setupStreamListener()
     return () => cleanup()
   }, [])
@@ -85,7 +89,25 @@ export const ChatView: React.FC = () => {
           </div>
         </div>
 
-        {visibleMessages.length === 0 ? (
+        {conversationError && (
+          <div
+            role="alert"
+            style={{
+              padding: '8px 16px',
+              fontSize: 12,
+              color: 'var(--accent-primary)',
+              borderBottom: '1px solid var(--border-subtle)'
+            }}
+          >
+            {conversationError}
+          </div>
+        )}
+
+        {isLoadingConversation ? (
+          <div className="chat-empty animate-fade-in">
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading conversation…</p>
+          </div>
+        ) : visibleMessages.length === 0 ? (
           <div className="chat-empty animate-fade-in">
             <div className="chat-empty-icon">
               <Sparkles size={28} />

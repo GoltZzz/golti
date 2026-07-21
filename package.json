@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "npm rebuild better-sqlite3 && vitest run",
     "test:watch": "vitest",
+    "test:go": "cd services/search-api && go test ./...",
+    "build:search-runtime": "bash scripts/search-runtime/build.sh",
     "preview": "electron-vite preview",
     "build:mac": "npm run build && electron-builder --mac",
     "build:win": "npm run build && electron-builder --win",

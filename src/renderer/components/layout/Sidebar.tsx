@@ -32,7 +32,8 @@ export const Sidebar: React.FC = () => {
     archiveConversation,
     exportConversation,
     searchConversations,
-    searchHits
+    searchHits,
+    conversationError
   } = useChatStore()
 
   const [localQuery, setLocalQuery] = useState('')
@@ -280,6 +281,11 @@ export const Sidebar: React.FC = () => {
               {displayedConversations.length === 0 && (
                 <div style={{ padding: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   {localQuery.trim() ? 'No matching chats.' : 'No conversations yet.'}
+                </div>
+              )}
+              {conversationError && (
+                <div style={{ padding: 8, fontSize: 11, color: 'var(--accent-primary)' }}>
+                  {conversationError}
                 </div>
               )}
             </div>

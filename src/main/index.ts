@@ -26,6 +26,7 @@ import {
 } from './services/context-ingest'
 import { exportConversation } from './services/export'
 import type { SendMessagePayload } from '../shared/types'
+import { testWebSearch } from './services/web-search'
 import {
   initEngine,
   stopEngine,
@@ -38,6 +39,15 @@ import {
   deleteLocalModel,
   loadModelInEngine
 } from './engine'
+import {
+  getSearchRuntimeState,
+  initSearchRuntime,
+  installAndStartSearchRuntime,
+  onSearchRuntimeStatusChange,
+  repairSearchRuntime,
+  startSearchRuntime,
+  stopSearchRuntime
+} from './search-runtime'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
@@ -237,8 +247,13 @@ app.whenReady().then(() => {
     mainWindow?.webContents.send('engine:status-change', state)
   })
 
+  onSearchRuntimeStatusChange((state) => {
+    mainWindow?.webContents.send('search-runtime:status-change', state)
+  })
+
   // Auto-init engine if enabled
   initEngine().catch((err) => console.warn('[Engine Init Warning]', err))
+  initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -250,7 +265,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
-  await stopEngine()
+  await Promise.all([stopEngine(), stopSearchRuntime()])
 })
 
 function setupIpcHandlers(): void {
@@ -346,6 +361,32 @@ function setupIpcHandlers(): void {
   // Settings
   ipcMain.handle('settings:get', () => dbSettings.get())
   ipcMain.handle('settings:update', (_, settings: any) => dbSettings.update(settings))
+
+  // Local web search runtime
+  ipcMain.handle('web-search:test', async (_, query?: string) => testWebSearch(query))
+  ipcMain.handle('search-runtime:status', () => getSearchRuntimeState())
+  ipcMain.handle('search-runtime:install', async () => {
+    const settings = dbSettings.get()
+    return installAndStartSearchRuntime(
+      (progress) => mainWindow?.webContents.send('search-runtime:progress', progress),
+      { apiPort: settings.searchRuntimePort, searxPort: settings.searchRuntimeSearxPort }
+    )
+  })
+  ipcMain.handle('search-runtime:start', async () => {
+    const settings = dbSettings.get()
+    return startSearchRuntime({
+      apiPort: settings.searchRuntimePort,
+      searxPort: settings.searchRuntimeSearxPort
+    })
+  })
+  ipcMain.handle('search-runtime:stop', async () => stopSearchRuntime())
+  ipcMain.handle('search-runtime:repair', async () => {
+    const settings = dbSettings.get()
+    return repairSearchRuntime(
+      (progress) => mainWindow?.webContents.send('search-runtime:progress', progress),
+      { apiPort: settings.searchRuntimePort, searxPort: settings.searchRuntimeSearxPort }
+    )
+  })
 
   // AI & Models
   ipcMain.handle('ai:models', async () => {

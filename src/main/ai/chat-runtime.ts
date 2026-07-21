@@ -5,7 +5,9 @@ import type {
   Message,
   SendMessagePayload,
   StreamChunkPayload,
-  TokenUsage
+  TokenUsage,
+  WebSearchMode,
+  WebSearchStatus
 } from '../../shared/types'
 import {
   DEFAULT_CONTEXT_WINDOW,
@@ -15,6 +17,7 @@ import {
   extractArtifacts,
   getBranchPath
 } from '../../shared/chat-utils'
+import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
 import {
   dbArtifacts,
   dbCitations,
@@ -24,7 +27,7 @@ import {
   dbSettings
 } from '../db/database'
 import { streamChatResponse } from './provider-manager'
-import { runWebSearch } from '../services/web-search'
+import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 
 interface ActiveGeneration {
   generationId: string
@@ -89,6 +92,9 @@ export async function startChatGeneration(
     regenerateFromId,
     editMessageId,
     webSearch,
+    webSearchMode,
+    webSearchEnabled,
+    forceWebSearch,
     contextItemIds,
     generationSettings
   } = payload
@@ -178,11 +184,65 @@ export async function startChatGeneration(
     .filter(Boolean)
     .join('\n\n')
 
-  // Optional web search
+  // Optional web search with explicit lifecycle status (local managed runtime)
   let searchPreamble = ''
-  if (webSearch && settings.webSearch?.enabled && settings.webSearch.provider !== 'none') {
+  const mode: WebSearchMode = resolveComposerSearchMode({
+    webSearchEnabled,
+    forceWebSearch,
+    webSearchMode,
+    legacyBoolean: webSearch
+  })
+  const searchQuery =
+    content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
+  const decision = decideWebSearch(mode, searchQuery)
+
+  const emitSearchStatus = (status: WebSearchStatus) => {
+    sendChunk(win, {
+      conversationId,
+      messageId: assistantMsgId,
+      generationId,
+      done: false,
+      searchStatus: status,
+      eventType: 'search'
+    })
+  }
+
+  if (mode === 'off') {
+    // Quiet when search is off
+  } else if (decision.skipped) {
+    emitSearchStatus({
+      state: 'skipped',
+      message: decision.statusMessage,
+      mode,
+      resultCount: 0
+    })
+  } else {
+    const ws = {
+      provider: 'local' as const,
+      enabled: true,
+      maxResults: settings.webSearch?.maxResults || 5,
+      endpoint: settings.webSearch?.endpoint
+    }
+
+    emitSearchStatus({
+      state: 'searching',
+      message: 'Searching the web…',
+      mode
+    })
+
     try {
-      const results = await runWebSearch(content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || '', settings.webSearch)
+      await ensureLocalSearchReady((progress) => {
+        emitSearchStatus({
+          state: 'searching',
+          message:
+            progress.percent < 100
+              ? `Setting up Web Search… ${progress.percent}%`
+              : 'Searching the web…',
+          mode
+        })
+      })
+
+      const results = await runWebSearch(searchQuery, ws)
       if (results.length > 0) {
         searchPreamble =
           'Web search results (cite these sources):\n' +
@@ -210,9 +270,29 @@ export async function startChatGeneration(
             eventType: 'citation'
           })
         })
+
+        emitSearchStatus({
+          state: 'success',
+          message: `${results.length} source${results.length === 1 ? '' : 's'} found`,
+          mode,
+          resultCount: results.length
+        })
+      } else {
+        emitSearchStatus({
+          state: 'no-results',
+          message: 'No sources found',
+          mode,
+          resultCount: 0
+        })
       }
     } catch (err: any) {
       console.warn('[web-search]', err.message || err)
+      emitSearchStatus({
+        state: 'error',
+        message: err?.message || 'Search is temporarily unavailable',
+        mode,
+        resultCount: 0
+      })
     }
   }
 

@@ -8,7 +8,8 @@ import type {
   Message,
   ModelInfo,
   StreamChunkPayload,
-  TokenBudget
+  TokenBudget,
+  WebSearchStatus
 } from '../../shared/types'
 import {
   DEFAULT_CONTEXT_WINDOW,
@@ -38,6 +39,8 @@ interface ChatState {
   models: ModelInfo[]
   selectedModel: ModelInfo | null
   isLoadingModels: boolean
+  isLoadingConversation: boolean
+  conversationError: string | null
   isGenerating: boolean
   activeGenerationId: string | null
   contextItems: ContextItem[]
@@ -45,6 +48,9 @@ interface ChatState {
   citations: Citation[]
   tokenBudget: TokenBudget | null
   webSearchEnabled: boolean
+  forceWebSearchNext: boolean
+  searchSetupError: string | null
+  searchStatusByMessageId: Record<string, WebSearchStatus>
   generationSettings: GenerationSettings
   draft: string
   draftUndoStack: string[]
@@ -62,7 +68,7 @@ interface ChatState {
   archiveConversation: (id: string) => Promise<void>
   exportConversation: (format: 'markdown' | 'json') => Promise<void>
   searchConversations: (query: string) => Promise<void>
-  sendMessage: (content?: string) => Promise<void>
+  sendMessage: (content?: string, options?: { forceWebSearch?: boolean }) => Promise<void>
   stopGeneration: () => Promise<void>
   regenerate: (assistantMessageId: string) => Promise<void>
   editAndResend: (userMessageId: string, content: string) => Promise<void>
@@ -85,11 +91,13 @@ interface ChatState {
   redoDraft: () => void
   undoAction: () => Promise<void>
   redoAction: () => Promise<void>
-  setWebSearchEnabled: (enabled: boolean) => void
+  setWebSearchEnabled: (enabled: boolean) => Promise<void>
+  setForceWebSearchNext: (force: boolean) => void
   setGenerationSettings: (settings: Partial<GenerationSettings>) => void
   updateArtifactContent: (id: string, content: string) => Promise<void>
   restoreArtifactVersion: (id: string, version: number) => Promise<void>
   updateConversationSystemPrompt: (prompt: string) => Promise<void>
+  hydrateWebSearchPreference: () => Promise<void>
 }
 
 function recomputeVisible(messages: Message[], activeLeafId?: string | null): Message[] {
@@ -108,6 +116,34 @@ function emptyBudget(): TokenBudget {
   }
 }
 
+function newClientId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function conversationScopedReset() {
+  return {
+    messages: [] as Message[],
+    visibleMessages: [] as Message[],
+    contextItems: [] as ContextItem[],
+    artifacts: [] as Artifact[],
+    citations: [] as Citation[],
+    tokenBudget: emptyBudget(),
+    draft: '',
+    draftUndoStack: [] as string[],
+    draftRedoStack: [] as string[],
+    isGenerating: false,
+    activeGenerationId: null as string | null,
+    searchStatusByMessageId: {} as Record<string, WebSearchStatus>,
+    conversationError: null as string | null
+  }
+}
+
+/** Monotonic tokens so async loads cannot overwrite a newer selection. */
+let selectSeq = 0
+let budgetSeq = 0
+let contextSeq = 0
+let artifactsSeq = 0
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   currentConversationId: null,
@@ -116,6 +152,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   models: [],
   selectedModel: null,
   isLoadingModels: false,
+  isLoadingConversation: false,
+  conversationError: null,
   isGenerating: false,
   activeGenerationId: null,
   contextItems: [],
@@ -123,6 +161,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   citations: [],
   tokenBudget: emptyBudget(),
   webSearchEnabled: false,
+  forceWebSearchNext: false,
+  searchSetupError: null,
+  searchStatusByMessageId: {},
   generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 },
   draft: '',
   draftUndoStack: [],
@@ -132,23 +173,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
   searchQuery: '',
   searchHits: [],
 
+  hydrateWebSearchPreference: async () => {
+    try {
+      const settings = await window.goltiAPI.getSettings()
+      if (typeof settings?.webSearchEnabled === 'boolean') {
+        set({ webSearchEnabled: settings.webSearchEnabled })
+        return
+      }
+      // Migrate legacy Off/Auto/On preference
+      const legacy = settings?.defaultWebSearchMode
+      set({ webSearchEnabled: legacy === 'auto' || legacy === 'on' })
+    } catch {
+      // keep default
+    }
+  },
+
   fetchConversations: async () => {
     try {
       const convs = await window.goltiAPI.getConversations()
+      const currentId = get().currentConversationId
       set({ conversations: convs })
-      if (convs.length > 0 && !get().currentConversationId) {
+      if (convs.length > 0 && !currentId) {
         await get().selectConversation(convs[0].id)
+      } else if (currentId && !convs.some((c: Conversation) => c.id === currentId)) {
+        if (convs.length > 0) await get().selectConversation(convs[0].id)
+        else set({ currentConversationId: null, ...conversationScopedReset() })
       }
     } catch (err) {
       console.error('Failed to fetch conversations:', err)
+      set({ conversationError: 'Failed to load conversations' })
     }
   },
 
   selectConversation: async (id: string) => {
+    const seq = ++selectSeq
+    set({
+      ...conversationScopedReset(),
+      currentConversationId: id,
+      isLoadingConversation: true,
+      // keep generation settings until we load conversation-specific ones
+      generationSettings: get().generationSettings
+    })
+
     try {
-      set({ currentConversationId: id, isGenerating: false, activeGenerationId: null })
       const msgs: Message[] = await window.goltiAPI.getMessages(id)
-      const conv = get().conversations.find((c) => c.id === id) || (await window.goltiAPI.getConversation(id))
+      if (seq !== selectSeq || get().currentConversationId !== id) return
+
+      const conv =
+        get().conversations.find((c) => c.id === id) || (await window.goltiAPI.getConversation(id))
+      if (seq !== selectSeq || get().currentConversationId !== id) return
+
       const visible = recomputeVisible(msgs, conv?.activeLeafId)
       set({
         messages: msgs,
@@ -158,7 +232,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           topP: 0.9,
           maxTokens: 2048,
           ...conv?.generationSettings
-        }
+        },
+        isLoadingConversation: false
       })
 
       if (conv) {
@@ -170,17 +245,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       await Promise.all([get().refreshContext(), get().refreshArtifacts(), get().refreshBudget()])
+      if (seq !== selectSeq || get().currentConversationId !== id) return
+
       const citations = await window.goltiAPI.listCitations(id)
+      if (seq !== selectSeq || get().currentConversationId !== id) return
       set({ citations })
     } catch (err) {
       console.error('Failed to fetch messages:', err)
+      if (seq === selectSeq && get().currentConversationId === id) {
+        set({
+          isLoadingConversation: false,
+          conversationError: 'Failed to load conversation'
+        })
+      }
     }
   },
 
   newConversation: async () => {
     const selected = get().selectedModel
     const newConv: Conversation = {
-      id: `conv_${Date.now()}`,
+      id: newClientId('conv'),
       title: 'New Conversation',
       model: selected ? selected.name : 'llama3:latest',
       providerId: selected ? selected.providerId : 'ollama-local',
@@ -191,9 +275,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeLeafId: null
     }
 
-    await window.goltiAPI.createConversation(newConv)
-    await get().fetchConversations()
-    await get().selectConversation(newConv.id)
+    // Optimistic: show immediately and clear scoped state before async work
+    set((state) => ({
+      ...conversationScopedReset(),
+      conversations: [newConv, ...state.conversations.filter((c) => c.id !== newConv.id)],
+      currentConversationId: newConv.id,
+      isLoadingConversation: false,
+      generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 }
+    }))
+    selectSeq += 1
+
+    try {
+      await window.goltiAPI.createConversation(newConv)
+      // Refresh list without auto-selecting a different conversation
+      const convs = await window.goltiAPI.getConversations()
+      if (get().currentConversationId === newConv.id) {
+        set({
+          conversations: convs.some((c: Conversation) => c.id === newConv.id)
+            ? convs
+            : [newConv, ...convs]
+        })
+        await get().refreshBudget()
+      }
+    } catch (err) {
+      console.error('Failed to create conversation:', err)
+      set({ conversationError: 'Failed to create conversation' })
+    }
+
     return newConv.id
   },
 
@@ -207,11 +315,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else {
         set({
           currentConversationId: null,
-          messages: [],
-          visibleMessages: [],
-          contextItems: [],
-          artifacts: [],
-          citations: []
+          ...conversationScopedReset()
         })
       }
     }
@@ -242,7 +346,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (get().currentConversationId === id) {
       const convs = get().conversations
       if (convs.length > 0) await get().selectConversation(convs[0].id)
-      else set({ currentConversationId: null, messages: [], visibleMessages: [] })
+      else set({ currentConversationId: null, ...conversationScopedReset() })
     }
   },
 
@@ -262,7 +366,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ searchHits: hits })
   },
 
-  sendMessage: async (content) => {
+  sendMessage: async (content, options) => {
     const text = (content ?? get().draft).trim()
     if (!text || get().isGenerating) return
 
@@ -276,6 +380,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const providerId = selected ? selected.providerId : 'ollama-local'
     const conv = get().conversations.find((c) => c.id === convId)
     const settings = await window.goltiAPI.getSettings()
+    const forceWebSearch = Boolean(options?.forceWebSearch || get().forceWebSearchNext)
 
     if (conv && conv.title === 'New Conversation') {
       const truncatedTitle = text.slice(0, 30) + (text.length > 30 ? '...' : '')
@@ -314,7 +419,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isGenerating: true,
         draft: '',
         draftUndoStack: [],
-        draftRedoStack: []
+        draftRedoStack: [],
+        forceWebSearchNext: false,
+        searchSetupError: null
       }
     })
 
@@ -325,7 +432,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       providerId,
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       parentId: conv?.activeLeafId ?? null,
-      webSearch: get().webSearchEnabled,
+      webSearchEnabled: get().webSearchEnabled,
+      forceWebSearch,
       contextItemIds: get()
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
@@ -348,10 +456,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
           generationId: m.id === tempAssistantMsg.id ? result.generationId : m.generationId
         }
       })
+
+      const searchStatusByMessageId = { ...state.searchStatusByMessageId }
+      const pending = searchStatusByMessageId[tempAssistantMsg.id]
+      if (pending) {
+        delete searchStatusByMessageId[tempAssistantMsg.id]
+        searchStatusByMessageId[result.assistantMsgId] = pending
+      }
+
       return {
         messages,
         visibleMessages: recomputeVisible(messages, result.assistantMsgId),
-        activeGenerationId: result.generationId
+        activeGenerationId: result.generationId,
+        searchStatusByMessageId,
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, activeLeafId: result.assistantMsgId } : c
+        )
       }
     })
   },
@@ -378,16 +498,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       providerId: selected?.providerId || 'ollama-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       messageId: assistantMessageId,
-      webSearch: get().webSearchEnabled,
+      webSearchEnabled: get().webSearchEnabled,
+      forceWebSearch: get().forceWebSearchNext,
       generationSettings: get().generationSettings
     })
+    set({ forceWebSearchNext: false })
 
     const msgs = await window.goltiAPI.getMessages(convId)
+    if (get().currentConversationId !== convId) return
     set({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, result.assistantMsgId),
       activeGenerationId: result.generationId,
-      isGenerating: true
+      isGenerating: true,
+      conversations: get().conversations.map((c) =>
+        c.id === convId ? { ...c, activeLeafId: result.assistantMsgId } : c
+      )
     })
   },
 
@@ -407,9 +533,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       providerId: selected?.providerId || 'ollama-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       editMessageId: userMessageId,
-      webSearch: get().webSearchEnabled,
+      webSearchEnabled: get().webSearchEnabled,
+      forceWebSearch: get().forceWebSearchNext,
       generationSettings: get().generationSettings
     })
+    set({ forceWebSearchNext: false })
 
     get().actionUndoStack.push({
       id: `edit_${Date.now()}`,
@@ -425,6 +553,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
 
     const msgs = await window.goltiAPI.getMessages(convId)
+    if (get().currentConversationId !== convId) return
     set({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, result.assistantMsgId),
@@ -439,6 +568,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const prevLeaf = get().conversations.find((c) => c.id === convId)?.activeLeafId
     await window.goltiAPI.setActiveLeaf(convId, messageId)
     const msgs = await window.goltiAPI.getMessages(convId)
+    if (get().currentConversationId !== convId) return
     set((state) => ({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, messageId),
@@ -461,6 +591,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
     set({ actionRedoStack: [] })
+    await get().refreshBudget()
   },
 
   fetchModels: async () => {
@@ -503,11 +634,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setupStreamListener: () => {
     return window.goltiAPI.onStreamChunk((chunk: StreamChunkPayload) => {
-      const { conversationId, messageId, contentDelta, done, error, usage, citation, artifact } = chunk
+      const {
+        conversationId,
+        messageId,
+        contentDelta,
+        done,
+        error,
+        usage,
+        citation,
+        artifact,
+        searchStatus
+      } = chunk
       if (get().currentConversationId !== conversationId) return
 
       set((state) => {
-        let messages = state.messages.map((msg) => {
+        const messages = state.messages.map((msg) => {
           if (msg.id === messageId) {
             return {
               ...msg,
@@ -522,7 +663,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
 
         const citations = citation ? [...state.citations, citation] : state.citations
-        const artifacts = artifact ? [...state.artifacts.filter((a) => a.id !== artifact.id), artifact] : state.artifacts
+        const artifacts = artifact
+          ? [...state.artifacts.filter((a) => a.id !== artifact.id), artifact]
+          : state.artifacts
+
+        const searchStatusByMessageId = searchStatus
+          ? { ...state.searchStatusByMessageId, [messageId]: searchStatus }
+          : state.searchStatusByMessageId
 
         return {
           messages,
@@ -532,6 +679,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ),
           citations,
           artifacts,
+          searchStatusByMessageId,
           isGenerating: !done,
           activeGenerationId: done ? null : state.activeGenerationId
         }
@@ -551,7 +699,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ contextItems: [] })
       return
     }
+    const seq = ++contextSeq
     const items = await window.goltiAPI.listContext(id)
+    if (seq !== contextSeq || get().currentConversationId !== id) return
     set({ contextItems: items })
   },
 
@@ -561,7 +711,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ artifacts: [] })
       return
     }
+    const seq = ++artifactsSeq
     const arts = await window.goltiAPI.listArtifacts(id)
+    if (seq !== artifactsSeq || get().currentConversationId !== id) return
     set({ artifacts: arts })
   },
 
@@ -571,8 +723,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ tokenBudget: emptyBudget() })
       return
     }
-    const budget = await window.goltiAPI.getTokenBudget(id, draft ?? get().draft)
-    set({ tokenBudget: budget })
+    const seq = ++budgetSeq
+    const draftText = draft ?? get().draft
+    try {
+      const budget = await window.goltiAPI.getTokenBudget(id, draftText)
+      if (seq !== budgetSeq || get().currentConversationId !== id) return
+      set({ tokenBudget: budget })
+    } catch (err) {
+      console.error('Failed to refresh token budget:', err)
+      if (seq === budgetSeq && get().currentConversationId === id) {
+        set({ tokenBudget: emptyBudget() })
+      }
+    }
   },
 
   addContextFiles: async () => {
@@ -714,7 +876,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await entry.redo()
   },
 
-  setWebSearchEnabled: (enabled) => set({ webSearchEnabled: enabled }),
+  setWebSearchEnabled: async (enabled) => {
+    set({ webSearchEnabled: enabled, searchSetupError: null })
+    window.goltiAPI
+      .updateSettings({ webSearchEnabled: enabled, defaultWebSearchMode: enabled ? 'auto' : 'off' })
+      .catch(() => {})
+
+    if (!enabled) return
+
+    // First enable: install/start local search runtime automatically
+    try {
+      const status = await window.goltiAPI.getSearchRuntimeStatus()
+      if (status.status === 'running' && status.apiHealthy) return
+      if (status.status === 'not-installed' || status.status === 'error') {
+        await window.goltiAPI.installSearchRuntime()
+      } else {
+        await window.goltiAPI.startSearchRuntime()
+      }
+    } catch (err: any) {
+      set({
+        searchSetupError:
+          err?.message || 'Web Search could not start. Open Settings to retry.'
+      })
+    }
+  },
+
+  setForceWebSearchNext: (force) => set({ forceWebSearchNext: force }),
 
   setGenerationSettings: (settings) => {
     set((s) => ({ generationSettings: { ...s.generationSettings, ...settings } }))

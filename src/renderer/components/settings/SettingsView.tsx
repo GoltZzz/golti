@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Server, Sliders, Info, Shield, Zap, Play, Square, Download, Trash2, CheckCircle2 } from "lucide-react";
+import { Server, Sliders, Info, Shield, Zap, Play, Square, Download, Trash2, CheckCircle2, Globe } from "lucide-react";
 import { ProviderConfig } from "./ProviderConfig";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useEngineStore } from "../../stores/engineStore";
+import { useSearchRuntimeStore } from "../../stores/searchRuntimeStore";
 
 export const SettingsView: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<
@@ -21,12 +22,30 @@ export const SettingsView: React.FC = () => {
     deleteLocalModel,
     loadModel
   } = useEngineStore();
+  const {
+    runtimeState,
+    progress,
+    error: searchRuntimeError,
+    install,
+    start,
+    stop,
+    repair,
+    setupListeners,
+    fetchStatus
+  } = useSearchRuntimeStore();
 
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [webSearchTestQuery, setWebSearchTestQuery] = useState("latest AI news");
+  const [webSearchTestBusy, setWebSearchTestBusy] = useState(false);
+  const [webSearchTestMessage, setWebSearchTestMessage] = useState<string | null>(null);
+  const [webSearchTestOk, setWebSearchTestOk] = useState<boolean | null>(null);
+  const [showSearchAdvanced, setShowSearchAdvanced] = useState(false);
 
   useEffect(() => {
     fetchSettings();
     fetchLocalModels();
+    const cleanup = setupListeners();
+    return () => cleanup();
   }, []);
 
   useEffect(() => {
@@ -34,6 +53,43 @@ export const SettingsView: React.FC = () => {
       setSystemPrompt(settings.systemPrompt);
     }
   }, [settings]);
+
+  const webSearchReady = runtimeState.status === "running" && runtimeState.apiHealthy;
+
+  const friendlyStatus = () => {
+    if (runtimeState.status === "downloading") return "Downloading Web Search…";
+    if (runtimeState.status === "starting") return "Starting Web Search…";
+    if (webSearchReady) return "Ready — Web Search is available";
+    if (runtimeState.status === "error") return runtimeState.error || "Web Search needs attention";
+    if (runtimeState.status === "not-installed") return "Not installed yet — turn on Web Search in chat to set up";
+    return "Installed — waiting to start";
+  };
+
+  const runWebSearchTest = async () => {
+    setWebSearchTestBusy(true);
+    setWebSearchTestMessage(null);
+    setWebSearchTestOk(null);
+    try {
+      const result = await window.goltiAPI.testWebSearch(webSearchTestQuery);
+      setWebSearchTestOk(result.ok);
+      if (result.ok) {
+        const first = result.results[0];
+        setWebSearchTestMessage(
+          `Working — ${result.results.length} result${result.results.length === 1 ? "" : "s"}${
+            first ? `: ${first.title}` : ""
+          }`
+        );
+      } else {
+        setWebSearchTestMessage(result.error || "Web search test failed");
+      }
+      await fetchStatus();
+    } catch (err: any) {
+      setWebSearchTestOk(false);
+      setWebSearchTestMessage(err?.message || "Web search test failed");
+    } finally {
+      setWebSearchTestBusy(false);
+    }
+  };
 
   return (
     <div
@@ -379,9 +435,12 @@ export const SettingsView: React.FC = () => {
                   fontWeight: 600,
                   color: "var(--text-primary)",
                   marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
                 }}
               >
-                Web Search
+                <Globe size={16} /> Web Search
               </h3>
               <p
                 style={{
@@ -390,105 +449,197 @@ export const SettingsView: React.FC = () => {
                   marginBottom: "var(--space-3)",
                 }}
               >
-                Configure a Brave or Tavily API key. Search stays opt-in per prompt from the chat composer.
+                Self-hosted on your computer. Turn on the Web Search switch in chat — Golti sets it up
+                automatically. No API keys required.
               </p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings?.webSearch?.enabled)}
-                  onChange={(e) =>
-                    updateSettings({
-                      webSearch: {
-                        provider: settings?.webSearch?.provider || 'brave',
-                        apiKey: settings?.webSearch?.apiKey,
-                        maxResults: settings?.webSearch?.maxResults || 5,
-                        enabled: e.target.checked
-                      }
-                    })
-                  }
-                />
-                Enable web search
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
-                  Provider
-                  <select
-                    value={settings?.webSearch?.provider || 'none'}
-                    onChange={(e) =>
-                      updateSettings({
-                        webSearch: {
-                          provider: e.target.value as any,
-                          apiKey: settings?.webSearch?.apiKey,
-                          maxResults: settings?.webSearch?.maxResults || 5,
-                          enabled: settings?.webSearch?.enabled || false
-                        }
-                      })
-                    }
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-medium)',
-                      borderRadius: 'var(--radius-sm)',
-                      color: 'var(--text-primary)',
-                      padding: '8px'
-                    }}
-                  >
-                    <option value="none">None</option>
-                    <option value="brave">Brave</option>
-                    <option value="tavily">Tavily</option>
-                  </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
-                  Max results
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: "10px 12px",
+                  borderRadius: "var(--radius-sm)",
+                  backgroundColor: webSearchReady
+                    ? "rgba(152, 195, 121, 0.12)"
+                    : "rgba(229, 192, 123, 0.12)",
+                  color: webSearchReady ? "#98c379" : "#e5c07b",
+                  fontSize: 12,
+                }}
+              >
+                {friendlyStatus()}
+                {progress && progress.percent < 100 ? ` (${progress.percent}%)` : ''}
+                {runtimeState.version ? ` · v${runtimeState.version}` : ''}
+              </div>
+
+              {(searchRuntimeError || runtimeState.error) && (
+                <div style={{ fontSize: 12, color: 'var(--accent-primary)', marginBottom: 12 }}>
+                  {searchRuntimeError || runtimeState.error}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                <button
+                  onClick={() => install().catch(() => {})}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--accent-primary)',
+                    color: 'var(--text-on-accent)',
+                    fontSize: 12,
+                    fontWeight: 500
+                  }}
+                >
+                  {runtimeState.status === 'not-installed' ? 'Install' : 'Check / Start'}
+                </button>
+                <button
+                  onClick={() => start().catch(() => {})}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-secondary)',
+                    fontSize: 12
+                  }}
+                >
+                  Start
+                </button>
+                <button
+                  onClick={() => stop()}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-secondary)',
+                    fontSize: 12
+                  }}
+                >
+                  Stop
+                </button>
+                <button
+                  onClick={() => repair().catch(() => {})}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'rgba(224, 108, 117, 0.15)',
+                    color: '#e06c75',
+                    fontSize: 12
+                  }}
+                >
+                  Repair / Reinstall
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Test search</span>
+                <div style={{ display: 'flex', gap: 8 }}>
                   <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={settings?.webSearch?.maxResults || 5}
-                    onChange={(e) =>
-                      updateSettings({
-                        webSearch: {
-                          provider: settings?.webSearch?.provider || 'brave',
-                          apiKey: settings?.webSearch?.apiKey,
-                          maxResults: Number(e.target.value),
-                          enabled: settings?.webSearch?.enabled || false
-                        }
-                      })
-                    }
+                    value={webSearchTestQuery}
+                    onChange={(e) => setWebSearchTestQuery(e.target.value)}
+                    placeholder="Try a search…"
                     style={{
+                      flex: 1,
                       background: 'var(--bg-input)',
                       border: '1px solid var(--border-medium)',
                       borderRadius: 'var(--radius-sm)',
                       color: 'var(--text-primary)',
-                      padding: '8px'
+                      padding: '8px',
+                      fontSize: 12
                     }}
                   />
-                </label>
+                  <button
+                    onClick={runWebSearchTest}
+                    disabled={webSearchTestBusy}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--accent-primary)',
+                      color: 'var(--text-on-accent)',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      opacity: webSearchTestBusy ? 0.5 : 1
+                    }}
+                  >
+                    {webSearchTestBusy ? 'Testing…' : 'Test'}
+                  </button>
+                </div>
+                {webSearchTestMessage && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: webSearchTestOk ? '#98c379' : 'var(--accent-primary)'
+                    }}
+                  >
+                    {webSearchTestMessage}
+                  </div>
+                )}
               </div>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
-                API key
-                <input
-                  type="password"
-                  value={settings?.webSearch?.apiKey || ''}
-                  onChange={(e) =>
-                    updateSettings({
-                      webSearch: {
-                        provider: settings?.webSearch?.provider || 'brave',
-                        apiKey: e.target.value,
-                        maxResults: settings?.webSearch?.maxResults || 5,
-                        enabled: settings?.webSearch?.enabled || false
+
+              <button
+                onClick={() => setShowSearchAdvanced((v) => !v)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  fontSize: 12,
+                  padding: 0,
+                  marginBottom: 8
+                }}
+              >
+                {showSearchAdvanced ? 'Hide advanced' : 'Show advanced'}
+              </button>
+
+              {showSearchAdvanced && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                    Local API port
+                    <input
+                      type="number"
+                      min={1024}
+                      max={65535}
+                      value={settings?.searchRuntimePort || 8741}
+                      onChange={(e) => updateSettings({ searchRuntimePort: Number(e.target.value) })}
+                      style={{
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-medium)',
+                        borderRadius: 'var(--radius-sm)',
+                        color: 'var(--text-primary)',
+                        padding: '8px'
+                      }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                    Max results
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={settings?.webSearch?.maxResults || 5}
+                      onChange={(e) =>
+                        updateSettings({
+                          webSearch: {
+                            provider: 'local',
+                            maxResults: Number(e.target.value),
+                            enabled: true,
+                            endpoint: settings?.webSearch?.endpoint
+                          }
+                        })
                       }
-                    })
-                  }
-                  placeholder="Paste provider API key"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-medium)',
-                    borderRadius: 'var(--radius-sm)',
-                    color: 'var(--text-primary)',
-                    padding: '8px'
-                  }}
-                />
-              </label>
+                      style={{
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-medium)',
+                        borderRadius: 'var(--radius-sm)',
+                        color: 'var(--text-primary)',
+                        padding: '8px'
+                      }}
+                    />
+                  </label>
+                  {runtimeState.lastLog && (
+                    <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                      Last log: {runtimeState.lastLog}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div style={{ paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>

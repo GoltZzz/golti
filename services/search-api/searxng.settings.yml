@@ -1,0 +1,22 @@
+# Minimal SearXNG settings for optional sidecar packaging.
+# When present next to the Go binary and started by Golti, the Go API will prefer this engine.
+use_default_settings: true
+server:
+  bind_address: "127.0.0.1"
+  port: 8742
+  secret_key: "golti-local-searxng"
+  limiter: false
+  image_proxy: false
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "en"
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: false
+  - name: wikipedia
+    engine: wikipedia
+    disabled: false
+outgoing:
+  request_timeout: 8.0

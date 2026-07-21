@@ -167,6 +167,17 @@ export interface TokenBudget {
   items: Array<{ id: string; label: string; tokens: number; category: 'system' | 'context' | 'history' | 'draft' | 'reserve' }>
 }
 
+export type WebSearchMode = 'off' | 'auto' | 'on'
+
+export type WebSearchStatusState = 'searching' | 'success' | 'no-results' | 'skipped' | 'error'
+
+export interface WebSearchStatus {
+  state: WebSearchStatusState
+  message?: string
+  resultCount?: number
+  mode?: WebSearchMode
+}
+
 export interface SendMessagePayload {
   conversationId: string
   content: string
@@ -176,12 +187,26 @@ export interface SendMessagePayload {
   parentId?: string | null
   regenerateFromId?: string
   editMessageId?: string
+  /** @deprecated Prefer webSearchEnabled / forceWebSearch */
   webSearch?: boolean
+  /** @deprecated Prefer webSearchEnabled / forceWebSearch */
+  webSearchMode?: WebSearchMode
+  /** Composer toggle: when true, Auto intent decides whether to search. */
+  webSearchEnabled?: boolean
+  /** Force search for this message even if Auto would skip. */
+  forceWebSearch?: boolean
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
 }
 
-export type StreamEventType = 'text' | 'usage' | 'citation' | 'artifact' | 'error' | 'done'
+export type StreamEventType =
+  | 'text'
+  | 'usage'
+  | 'citation'
+  | 'artifact'
+  | 'error'
+  | 'done'
+  | 'search'
 
 export interface StreamChunkPayload {
   conversationId: string
@@ -193,6 +218,7 @@ export interface StreamChunkPayload {
   usage?: TokenUsage
   citation?: Citation
   artifact?: Artifact
+  searchStatus?: WebSearchStatus
   eventType?: StreamEventType
 }
 
@@ -285,19 +311,56 @@ export interface PullProgress {
 
 export type PlatformType = 'darwin' | 'win32' | 'linux' | 'unknown'
 
-export type WebSearchProvider = 'brave' | 'tavily' | 'none'
+export type WebSearchProvider = 'local' | 'brave' | 'tavily' | 'none'
 
 export interface WebSearchSettings {
   provider: WebSearchProvider
+  /** @deprecated Legacy cloud providers only */
   apiKey?: string
   maxResults: number
   enabled: boolean
+  endpoint?: string
 }
 
 export interface WebSearchResult {
   title: string
   url: string
   snippet: string
+}
+
+export interface WebSearchTestResult {
+  ok: boolean
+  results: WebSearchResult[]
+  error?: string
+  engine?: string
+}
+
+export type SearchRuntimeStatus =
+  | 'not-installed'
+  | 'downloading'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'error'
+
+export interface SearchRuntimeState {
+  status: SearchRuntimeStatus
+  version?: string
+  apiPort?: number
+  searxPort?: number
+  apiHealthy: boolean
+  searxHealthy: boolean
+  engine?: string
+  error?: string
+  lastLog?: string
+}
+
+export interface SearchRuntimeProgress {
+  name: string
+  completed: number
+  total: number
+  percent: number
+  speed?: string
 }
 
 export interface Settings {
@@ -315,6 +378,12 @@ export interface Settings {
   enginePort: number
   engineGpuLayers: number
   webSearch?: WebSearchSettings
+  /** When true, composer Web Search toggle is on (Auto intent). */
+  webSearchEnabled?: boolean
+  /** @deprecated Migrated to webSearchEnabled */
+  defaultWebSearchMode?: WebSearchMode
+  searchRuntimePort?: number
+  searchRuntimeSearxPort?: number
   defaultGenerationSettings?: GenerationSettings
   defaultContextWindow?: number
   reservedOutputTokens?: number
