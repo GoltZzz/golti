@@ -102,16 +102,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                       const codeText = String(children).replace(/\n$/, '')
                       const index = codeText.length + (match?.[1]?.length || 0)
 
-                      if (!inline && match) {
+                      if (!inline) {
+                        const lang = match ? match[1] : 'code'
                         return (
                           <div className="msg-code-block">
                             <div className="msg-code-header">
-                              <span>{match[1]}</span>
-                              <div style={{ display: 'flex', gap: 8 }}>
+                              <span style={{ fontWeight: 600, textTransform: 'lowercase', letterSpacing: '0.02em' }}>{lang}</span>
+                              <div style={{ display: 'flex', gap: 6 }}>
                                 <button
                                   onClick={() => {
                                     const art = messageArtifacts.find(
-                                      (a) => a.content === codeText || a.language === match[1]
+                                      (a) => a.content === codeText || a.language === lang
                                     )
                                     if (art) selectArtifact(art.id)
                                   }}

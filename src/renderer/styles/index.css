@@ -61,9 +61,13 @@ button {
   justify-content: center;
 }
 
-button:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--accent-primary);
+button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.2);
   outline-offset: 1px;
+}
+
+input:focus-visible, textarea:focus-visible {
+  outline: none;
 }
 
 /* Tooltip Base */

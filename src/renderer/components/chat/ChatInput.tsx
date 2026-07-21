@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   ArrowUp,
   Paperclip,
-  FolderOpen,
   Link2,
   Globe,
   SlidersHorizontal,
@@ -14,6 +13,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
 import { ContextTray } from './ContextTray'
 import { UsageMeter } from './UsageMeter'
+import { Tooltip } from './Tooltip'
 
 export const ChatInput: React.FC = () => {
   const {
@@ -27,8 +27,7 @@ export const ChatInput: React.FC = () => {
     forceWebSearchNext,
     setForceWebSearchNext,
     searchSetupError,
-    addContextFiles,
-    addContextFolder,
+    addContext,
     addContextPaths,
     addContextUrl,
     addContextText,
@@ -113,70 +112,94 @@ export const ChatInput: React.FC = () => {
           onDrop={onDrop}
         >
           <div className="composer-toolbar">
-            <button className="chat-icon-btn" onClick={() => addContextFiles()} title="Attach files" aria-label="Attach files">
-              <Paperclip size={16} />
-            </button>
-            <button className="chat-icon-btn" onClick={() => addContextFolder()} title="Attach folder" aria-label="Attach folder">
-              <FolderOpen size={16} />
-            </button>
-            <button
-              className="chat-icon-btn"
-              onClick={() => setUrlPrompt((v) => !v)}
-              title="Add URL"
-              aria-label="Add URL context"
-            >
-              <Link2 size={16} />
-            </button>
-            <button
-              className={`chat-icon-btn ${webSearchEnabled ? 'is-active' : ''}`}
-              onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-              title={webSearchEnabled ? 'Web Search on' : 'Web Search off'}
-              aria-label="Toggle web search"
-              aria-pressed={webSearchEnabled}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-            >
-              <Globe size={16} />
-              <span style={{ fontSize: 11 }}>Web Search</span>
-            </button>
-            {webSearchEnabled && (
-              <button
-                className={`chat-icon-btn ${forceWebSearchNext ? 'is-active' : ''}`}
-                onClick={() => setForceWebSearchNext(!forceWebSearchNext)}
-                title="Search this message anyway"
-                aria-label="Force web search for next message"
-                aria-pressed={forceWebSearchNext}
-                style={{ fontSize: 11 }}
-              >
-                Force
+            <Tooltip label="Attach files or folders">
+              <button className="chat-icon-btn" onClick={() => addContext()} aria-label="Attach files or folders">
+                <Paperclip size={16} />
               </button>
+            </Tooltip>
+            <Tooltip label="Add URL">
+              <button
+                className="chat-icon-btn"
+                onClick={() => setUrlPrompt((v) => !v)}
+                aria-label="Add URL context"
+              >
+                <Link2 size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Toggle web search">
+              <button
+                className={`chat-ghost-btn ${webSearchEnabled ? 'is-active' : ''}`}
+                onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                aria-label="Toggle web search"
+                aria-pressed={webSearchEnabled}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  height: 28,
+                  padding: '0 8px',
+                  fontSize: 11,
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor: webSearchEnabled ? 'rgba(86, 182, 194, 0.15)' : 'transparent',
+                  borderColor: webSearchEnabled ? 'rgba(86, 182, 194, 0.4)' : 'var(--border-subtle)',
+                  color: webSearchEnabled ? 'var(--accent-cyan)' : 'var(--text-muted)'
+                }}
+              >
+                <Globe size={13} />
+                <span>Web Search</span>
+              </button>
+            </Tooltip>
+            {webSearchEnabled && (
+              <Tooltip label="Force search this message">
+                <button
+                  className={`chat-ghost-btn ${forceWebSearchNext ? 'is-active' : ''}`}
+                  onClick={() => setForceWebSearchNext(!forceWebSearchNext)}
+                  aria-label="Force web search for next message"
+                  aria-pressed={forceWebSearchNext}
+                  style={{
+                    height: 28,
+                    padding: '0 8px',
+                    fontSize: 11,
+                    borderRadius: 'var(--radius-full)',
+                    backgroundColor: forceWebSearchNext ? 'rgba(224, 108, 117, 0.15)' : 'transparent',
+                    borderColor: forceWebSearchNext ? 'var(--border-accent)' : 'var(--border-subtle)',
+                    color: forceWebSearchNext ? 'var(--accent-primary)' : 'var(--text-muted)'
+                  }}
+                >
+                  Force
+                </button>
+              </Tooltip>
             )}
-            <button
-              className={`chat-icon-btn ${showSettings ? 'is-active' : ''}`}
-              onClick={() => setShowSettings((v) => !v)}
-              title="Generation settings"
-              aria-label="Generation settings"
-              aria-expanded={showSettings}
-            >
-              <SlidersHorizontal size={16} />
-            </button>
-            <button
-              className="chat-icon-btn"
-              onClick={undoDraft}
-              disabled={draftUndoStack.length === 0}
-              title="Undo draft"
-              aria-label="Undo draft"
-            >
-              <Undo2 size={14} />
-            </button>
-            <button
-              className="chat-icon-btn"
-              onClick={redoDraft}
-              disabled={draftRedoStack.length === 0}
-              title="Redo draft"
-              aria-label="Redo draft"
-            >
-              <Redo2 size={14} />
-            </button>
+            <Tooltip label="Generation settings">
+              <button
+                className={`chat-icon-btn ${showSettings ? 'is-active' : ''}`}
+                onClick={() => setShowSettings((v) => !v)}
+                aria-label="Generation settings"
+                aria-expanded={showSettings}
+              >
+                <SlidersHorizontal size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Undo" shortcut="⌘Z">
+              <button
+                className="chat-icon-btn"
+                onClick={undoDraft}
+                disabled={draftUndoStack.length === 0}
+                aria-label="Undo draft"
+              >
+                <Undo2 size={14} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Redo" shortcut="⌘⇧Z">
+              <button
+                className="chat-icon-btn"
+                onClick={redoDraft}
+                disabled={draftRedoStack.length === 0}
+                aria-label="Redo draft"
+              >
+                <Redo2 size={14} />
+              </button>
+            </Tooltip>
           </div>
 
           {urlPrompt && (
@@ -258,7 +281,17 @@ export const ChatInput: React.FC = () => {
           {showSettings && (
             <div className="gen-settings" style={{ padding: '0 12px' }}>
               <label>
-                Temperature
+                <div className="gen-label-row">
+                  <span>Temperature</span>
+                  <Tooltip
+                    position="top"
+                    multiline
+                    maxWidth={300}
+                    label="Controls creativity & randomness. Lower values (0.2) give precise, factual answers (code, math). Higher values (0.8) are more creative for writing."
+                  >
+                    <span className="info-icon" aria-label="Temperature help">ⓘ</span>
+                  </Tooltip>
+                </div>
                 <input
                   type="number"
                   min={0}
@@ -269,7 +302,17 @@ export const ChatInput: React.FC = () => {
                 />
               </label>
               <label>
-                Top P
+                <div className="gen-label-row">
+                  <span>Top P</span>
+                  <Tooltip
+                    position="top"
+                    multiline
+                    maxWidth={300}
+                    label="Controls word choice variety. Lower values stick to common words; higher values allow more unique phrasing. Default (0.9) works best for most uses."
+                  >
+                    <span className="info-icon" aria-label="Top P help">ⓘ</span>
+                  </Tooltip>
+                </div>
                 <input
                   type="number"
                   min={0}
@@ -280,7 +323,17 @@ export const ChatInput: React.FC = () => {
                 />
               </label>
               <label>
-                Max tokens
+                <div className="gen-label-row">
+                  <span>Max tokens</span>
+                  <Tooltip
+                    position="top"
+                    multiline
+                    maxWidth={300}
+                    label="Limits maximum response length (~100 tokens ≈ 75 words). Increase if long responses get cut off early."
+                  >
+                    <span className="info-icon" aria-label="Max tokens help">ⓘ</span>
+                  </Tooltip>
+                </div>
                 <input
                   type="number"
                   min={64}
@@ -309,23 +362,26 @@ export const ChatInput: React.FC = () => {
             </div>
 
             {isGenerating ? (
-              <button
-                className="composer-send is-stop"
-                onClick={() => stopGeneration()}
-                aria-label="Stop generation"
-                title="Stop"
-              >
-                <Square size={14} />
-              </button>
+              <Tooltip label="Stop generation">
+                <button
+                  className="composer-send is-stop"
+                  onClick={() => stopGeneration()}
+                  aria-label="Stop generation"
+                >
+                  <Square size={14} />
+                </button>
+              </Tooltip>
             ) : (
-              <button
-                className={`composer-send ${draft.trim() && !tokenBudget?.overflow ? 'is-ready' : ''}`}
-                onClick={() => sendMessage()}
-                disabled={!draft.trim() || Boolean(tokenBudget?.overflow)}
-                aria-label="Send message"
-              >
-                <ArrowUp size={16} />
-              </button>
+              <Tooltip label="Send message" shortcut="Enter">
+                <button
+                  className={`composer-send ${draft.trim() && !tokenBudget?.overflow ? 'is-ready' : ''}`}
+                  onClick={() => sendMessage()}
+                  disabled={!draft.trim() || Boolean(tokenBudget?.overflow)}
+                  aria-label="Send message"
+                >
+                  <ArrowUp size={16} />
+                </button>
+              </Tooltip>
             )}
           </div>
         </div>

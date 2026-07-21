@@ -57,11 +57,14 @@ export const ModelSelector: React.FC = () => {
           gap: 'var(--space-2)',
           padding: '6px 12px',
           borderRadius: 'var(--radius-md)',
-          backgroundColor: 'var(--bg-card)',
+          backgroundColor: 'var(--bg-glass-card)',
+          backdropFilter: 'blur(12px)',
           border: '1px solid var(--border-medium)',
           color: 'var(--text-primary)',
           fontSize: '13px',
-          fontWeight: 500
+          fontWeight: 500,
+          transition: 'all var(--transition-fast)',
+          cursor: 'pointer'
         }}
       >
         <Server size={14} style={{ color: 'var(--accent-primary)' }} />
@@ -79,7 +82,8 @@ export const ModelSelector: React.FC = () => {
             minWidth: '260px',
             maxHeight: '300px',
             overflowY: 'auto',
-            backgroundColor: 'var(--bg-card)',
+            backgroundColor: 'rgba(19, 20, 31, 0.95)',
+            backdropFilter: 'blur(16px)',
             border: '1px solid var(--border-medium)',
             borderRadius: 'var(--radius-md)',
             boxShadow: 'var(--shadow-lg)',

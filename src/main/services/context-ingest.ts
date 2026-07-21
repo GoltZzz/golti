@@ -223,6 +223,17 @@ export async function addContextUrl(conversationId: string, url: string): Promis
   return item
 }
 
+export async function pickContext(
+  win: BrowserWindow | null,
+  conversationId: string
+): Promise<ContextItem[]> {
+  const result = await dialog.showOpenDialog(win!, {
+    properties: ['openFile', 'openDirectory', 'multiSelections']
+  })
+  if (result.canceled) return []
+  return result.filePaths.map((p) => addContextFromPath(conversationId, p))
+}
+
 export async function pickContextFiles(
   win: BrowserWindow | null,
   conversationId: string
@@ -245,3 +256,4 @@ export async function pickContextFolder(
   if (result.canceled || !result.filePaths[0]) return null
   return addContextFromPath(conversationId, result.filePaths[0])
 }
+

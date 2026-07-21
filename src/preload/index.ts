@@ -51,6 +51,8 @@ const api = {
     ipcRenderer.invoke('context:list', conversationId),
   addContextPaths: (conversationId: string, paths: string[]): Promise<ContextItem[]> =>
     ipcRenderer.invoke('context:add-paths', conversationId, paths),
+  pickContext: (conversationId: string): Promise<ContextItem[]> =>
+    ipcRenderer.invoke('context:pick', conversationId),
   pickContextFiles: (conversationId: string): Promise<ContextItem[]> =>
     ipcRenderer.invoke('context:pick-files', conversationId),
   pickContextFolder: (conversationId: string): Promise<ContextItem | null> =>

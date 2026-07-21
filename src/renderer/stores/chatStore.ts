@@ -79,6 +79,7 @@ interface ChatState {
   refreshContext: () => Promise<void>
   refreshArtifacts: () => Promise<void>
   refreshBudget: (draft?: string) => Promise<void>
+  addContext: () => Promise<void>
   addContextFiles: () => Promise<void>
   addContextFolder: () => Promise<void>
   addContextPaths: (paths: string[]) => Promise<void>
@@ -735,6 +736,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({ tokenBudget: emptyBudget() })
       }
     }
+  },
+
+  addContext: async () => {
+    const id = get().currentConversationId || (await get().newConversation())
+    await window.goltiAPI.pickContext(id)
+    await get().refreshContext()
+    await get().refreshBudget()
   },
 
   addContextFiles: async () => {

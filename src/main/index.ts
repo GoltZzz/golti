@@ -21,6 +21,7 @@ import {
   addContextFromPath,
   addContextText,
   addContextUrl,
+  pickContext,
   pickContextFiles,
   pickContextFolder
 } from './services/context-ingest'
@@ -304,6 +305,9 @@ function setupIpcHandlers(): void {
   ipcMain.handle('context:list', (_, conversationId: string) => dbContext.list(conversationId))
   ipcMain.handle('context:add-paths', (_, conversationId: string, paths: string[]) =>
     paths.map((p) => addContextFromPath(conversationId, p))
+  )
+  ipcMain.handle('context:pick', async (_, conversationId: string) =>
+    pickContext(mainWindow, conversationId)
   )
   ipcMain.handle('context:pick-files', async (_, conversationId: string) =>
     pickContextFiles(mainWindow, conversationId)
