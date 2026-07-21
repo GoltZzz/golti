@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useShallow } from 'zustand/react/shallow'
 import {
   Copy,
   Check,
@@ -11,7 +12,12 @@ import {
   Square,
   ChevronLeft,
   ChevronRight,
-  FileCode2
+  FileCode2,
+  Search,
+  BookOpen,
+  ExternalLink,
+  Loader2,
+  AlertCircle
 } from 'lucide-react'
 import type { Message } from '../../../shared/types'
 import { useChatStore } from '../../stores/chatStore'
@@ -22,29 +28,34 @@ interface MessageBubbleProps {
   message: Message
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message }) => {
   const isUser = message.role === 'user'
   const [copiedCodeIndex, setCopiedCodeIndex] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(message.content)
-  const {
-    regenerate,
-    editAndResend,
-    selectBranch,
-    stopGeneration,
-    isGenerating,
-    citations,
-    artifacts,
-    messages,
-    searchStatusByMessageId
-  } = useChatStore()
+
+  const regenerate = useChatStore((s) => s.regenerate)
+  const editAndResend = useChatStore((s) => s.editAndResend)
+  const selectBranch = useChatStore((s) => s.selectBranch)
+  const stopGeneration = useChatStore((s) => s.stopGeneration)
+  const isGenerating = useChatStore((s) => s.isGenerating)
+  
+  const messageCitations = useChatStore(
+    useShallow((s) => s.citations.filter((c) => c.messageId === message.id))
+  )
+  const messageArtifacts = useChatStore(
+    useShallow((s) => s.artifacts.filter((a) => a.messageId === message.id))
+  )
+  const siblings = useChatStore(
+    useShallow((s) => getSiblings(s.messages, message.id))
+  )
+  const searchStatus = useChatStore((s) => s.searchStatusByMessageId[message.id])
+  const researchProgress = useChatStore((s) => s.researchProgressByMessageId[message.id])
+
   const { selectArtifact } = useInspectorStore()
 
-  const siblings = useMemo(() => getSiblings(messages, message.id), [messages, message.id])
   const siblingIndex = Math.max(0, siblings.findIndex((s) => s.id === message.id))
-  const messageCitations = citations.filter((c) => c.messageId === message.id)
-  const messageArtifacts = artifacts.filter((a) => a.messageId === message.id)
-  const searchStatus = searchStatusByMessageId[message.id]
+  const isDeepResearchMsg = message.isDeepResearch || Boolean(researchProgress)
 
   const handleCopyCode = (text: string, index: number) => {
     navigator.clipboard.writeText(text)
@@ -154,7 +165,36 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             </div>
           )}
 
-          {!isUser && searchStatus && (
+          {!isUser && researchProgress && (
+            <div className="research-panel animate-fade-in">
+              <div className="research-header">
+                <Search size={14} className="research-icon" />
+                <span className="research-title">Deep Research Plan</span>
+              </div>
+              {researchProgress.plan?.reasoning && (
+                <p className="research-reasoning">{researchProgress.plan.reasoning}</p>
+              )}
+              <div className="research-steps">
+                {researchProgress.steps.map((step) => (
+                  <div key={step.stepIndex} className={`research-step is-${step.status}`}>
+                    <span className="research-step-status">
+                      {step.status === 'searching' && <Loader2 size={12} className="spin text-cyan" />}
+                      {step.status === 'reading' && <Loader2 size={12} className="spin text-yellow" />}
+                      {step.status === 'done' && <Check size={12} className="text-green" />}
+                      {step.status === 'error' && <AlertCircle size={12} className="text-red" />}
+                      {step.status === 'pending' && <span className="step-dot" />}
+                    </span>
+                    <span className="research-step-query">{step.query}</span>
+                    {step.status === 'done' && step.sourcesFound > 0 && (
+                      <span className="research-step-count">{step.sourcesFound} sources</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!isUser && searchStatus && !researchProgress && (
             <div
               className={`search-status is-${searchStatus.state}`}
               role="status"
@@ -179,21 +219,50 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           )}
 
           {messageCitations.length > 0 && (
-            <div className="citation-chips">
-              {messageCitations.map((c) => (
-                <a
-                  key={c.id}
-                  className="citation-chip"
-                  href={c.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={c.snippet}
-                >
-                  {c.rank ? `[${c.rank}] ` : ''}
-                  {c.title}
-                </a>
-              ))}
-            </div>
+            isDeepResearchMsg ? (
+              <details className="research-sources-details">
+                <summary className="research-sources-summary">
+                  <BookOpen size={13} />
+                  <span>Sources ({messageCitations.length})</span>
+                </summary>
+                <div className="research-sources-list">
+                  {messageCitations.map((c) => (
+                    <a
+                      key={c.id}
+                      className="research-source-card"
+                      href={c.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <div className="research-source-title">
+                        {c.rank ? `[${c.rank}] ` : ''}
+                        {c.title}
+                        <ExternalLink size={11} style={{ marginLeft: 4, opacity: 0.7 }} />
+                      </div>
+                      {c.snippet && (
+                        <p className="research-source-snippet">{c.snippet}</p>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              </details>
+            ) : (
+              <div className="citation-chips">
+                {messageCitations.map((c) => (
+                  <a
+                    key={c.id}
+                    className="citation-chip"
+                    href={c.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={c.snippet}
+                  >
+                    {c.rank ? `[${c.rank}] ` : ''}
+                    {c.title}
+                  </a>
+                ))}
+              </div>
+            )
           )}
 
           {(message.tokensIn || message.tokensOut || siblings.length > 1) && (
@@ -286,4 +355,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       </div>
     </div>
   )
-}
+})
+
+MessageBubble.displayName = 'MessageBubble'

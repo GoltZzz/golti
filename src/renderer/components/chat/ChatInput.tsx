@@ -4,6 +4,7 @@ import {
   Paperclip,
   Link2,
   Globe,
+  Search,
   SlidersHorizontal,
   Square,
   Undo2,
@@ -26,6 +27,8 @@ export const ChatInput: React.FC = () => {
     setWebSearchEnabled,
     forceWebSearchNext,
     setForceWebSearchNext,
+    deepResearchEnabled,
+    setDeepResearchEnabled,
     searchSetupError,
     addContext,
     addContextPaths,
@@ -170,6 +173,29 @@ export const ChatInput: React.FC = () => {
                 </button>
               </Tooltip>
             )}
+            <Tooltip label="Deep Research mode">
+              <button
+                className={`chat-ghost-btn ${deepResearchEnabled ? 'is-active' : ''}`}
+                onClick={() => setDeepResearchEnabled(!deepResearchEnabled)}
+                aria-label="Toggle deep research mode"
+                aria-pressed={deepResearchEnabled}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  height: 28,
+                  padding: '0 8px',
+                  fontSize: 11,
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor: deepResearchEnabled ? 'rgba(198, 120, 221, 0.15)' : 'transparent',
+                  borderColor: deepResearchEnabled ? 'rgba(198, 120, 221, 0.4)' : 'var(--border-subtle)',
+                  color: deepResearchEnabled ? 'var(--accent-purple)' : 'var(--text-muted)'
+                }}
+              >
+                <Search size={13} />
+                <span>Deep Research</span>
+              </button>
+            </Tooltip>
             <Tooltip label="Generation settings">
               <button
                 className={`chat-icon-btn ${showSettings ? 'is-active' : ''}`}
@@ -349,7 +375,11 @@ export const ChatInput: React.FC = () => {
           <div className="composer-footer">
             <div className="composer-footer-left">
               <UsageMeter compact />
-              {webSearchEnabled && (
+              {deepResearchEnabled ? (
+                <span style={{ fontSize: 11, color: 'var(--accent-purple)', fontWeight: 500 }}>
+                  Deep Research mode active
+                </span>
+              ) : webSearchEnabled && (
                 <span style={{ fontSize: 11, color: 'var(--accent-cyan)' }}>
                   {forceWebSearchNext ? 'Will search this message' : 'Web Search on'}
                 </span>

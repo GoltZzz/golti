@@ -22,7 +22,8 @@ export const ChatView: React.FC = () => {
     fetchModels,
     hydrateWebSearchPreference,
     isLoadingConversation,
-    conversationError
+    conversationError,
+    setDeepResearchEnabled
   } = useChatStore()
   const { isOpen, toggle } = useInspectorStore()
 
@@ -120,14 +121,19 @@ export const ChatView: React.FC = () => {
             <div className="chat-prompt-grid">
               {[
                 { label: 'Summarize local document', prompt: 'Summarize the key points of this project.' },
-                { label: 'Deep research query', prompt: 'Perform a deep research query on open source AI trends.' },
+                { label: 'Deep research query', prompt: 'What are the latest open source AI trends in 2026?', deepResearch: true },
                 { label: 'Draft an email reply', prompt: 'Help me draft a concise professional email reply.' },
                 { label: 'Compare model outputs', prompt: 'Explain quantum computing in simple terms.' }
               ].map((item, idx) => (
                 <button
                   key={idx}
                   className="chat-prompt-card"
-                  onClick={() => sendMessage(item.prompt)}
+                  onClick={async () => {
+                    if (item.deepResearch) {
+                      await setDeepResearchEnabled(true)
+                    }
+                    sendMessage(item.prompt)
+                  }}
                   disabled={isGenerating}
                 >
                   <Zap size={14} />

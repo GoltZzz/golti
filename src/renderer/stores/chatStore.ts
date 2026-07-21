@@ -7,6 +7,8 @@ import type {
   GenerationSettings,
   Message,
   ModelInfo,
+  ResearchPlan,
+  ResearchStep,
   StreamChunkPayload,
   TokenBudget,
   WebSearchStatus
@@ -49,8 +51,10 @@ interface ChatState {
   tokenBudget: TokenBudget | null
   webSearchEnabled: boolean
   forceWebSearchNext: boolean
+  deepResearchEnabled: boolean
   searchSetupError: string | null
   searchStatusByMessageId: Record<string, WebSearchStatus>
+  researchProgressByMessageId: Record<string, { plan?: ResearchPlan; steps: ResearchStep[] }>
   generationSettings: GenerationSettings
   draft: string
   draftUndoStack: string[]
@@ -94,6 +98,7 @@ interface ChatState {
   redoAction: () => Promise<void>
   setWebSearchEnabled: (enabled: boolean) => Promise<void>
   setForceWebSearchNext: (force: boolean) => void
+  setDeepResearchEnabled: (enabled: boolean) => Promise<void>
   setGenerationSettings: (settings: Partial<GenerationSettings>) => void
   updateArtifactContent: (id: string, content: string) => Promise<void>
   restoreArtifactVersion: (id: string, version: number) => Promise<void>
@@ -135,6 +140,7 @@ function conversationScopedReset() {
     isGenerating: false,
     activeGenerationId: null as string | null,
     searchStatusByMessageId: {} as Record<string, WebSearchStatus>,
+    researchProgressByMessageId: {} as Record<string, { plan?: ResearchPlan; steps: ResearchStep[] }>,
     conversationError: null as string | null
   }
 }
@@ -163,8 +169,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tokenBudget: emptyBudget(),
   webSearchEnabled: false,
   forceWebSearchNext: false,
+  deepResearchEnabled: false,
   searchSetupError: null,
   searchStatusByMessageId: {},
+  researchProgressByMessageId: {},
   generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 },
   draft: '',
   draftUndoStack: [],
@@ -177,6 +185,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   hydrateWebSearchPreference: async () => {
     try {
       const settings = await window.goltiAPI.getSettings()
+      if (typeof settings?.deepResearchEnabled === 'boolean') {
+        set({ deepResearchEnabled: settings.deepResearchEnabled })
+      }
       if (typeof settings?.webSearchEnabled === 'boolean') {
         set({ webSearchEnabled: settings.webSearchEnabled })
         return
@@ -435,6 +446,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       parentId: conv?.activeLeafId ?? null,
       webSearchEnabled: get().webSearchEnabled,
       forceWebSearch,
+      deepResearchEnabled: get().deepResearchEnabled,
       contextItemIds: get()
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
@@ -459,10 +471,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
 
       const searchStatusByMessageId = { ...state.searchStatusByMessageId }
-      const pending = searchStatusByMessageId[tempAssistantMsg.id]
-      if (pending) {
+      const pendingSearch = searchStatusByMessageId[tempAssistantMsg.id]
+      if (pendingSearch) {
         delete searchStatusByMessageId[tempAssistantMsg.id]
-        searchStatusByMessageId[result.assistantMsgId] = pending
+        searchStatusByMessageId[result.assistantMsgId] = pendingSearch
+      }
+
+      const researchProgressByMessageId = { ...state.researchProgressByMessageId }
+      const pendingResearch = researchProgressByMessageId[tempAssistantMsg.id]
+      if (pendingResearch) {
+        delete researchProgressByMessageId[tempAssistantMsg.id]
+        researchProgressByMessageId[result.assistantMsgId] = pendingResearch
       }
 
       return {
@@ -470,6 +489,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         visibleMessages: recomputeVisible(messages, result.assistantMsgId),
         activeGenerationId: result.generationId,
         searchStatusByMessageId,
+        researchProgressByMessageId,
         conversations: state.conversations.map((c) =>
           c.id === convId ? { ...c, activeLeafId: result.assistantMsgId } : c
         )
@@ -644,7 +664,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         usage,
         citation,
         artifact,
-        searchStatus
+        searchStatus,
+        researchPlan,
+        researchStep
       } = chunk
       if (get().currentConversationId !== conversationId) return
 
@@ -672,6 +694,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? { ...state.searchStatusByMessageId, [messageId]: searchStatus }
           : state.searchStatusByMessageId
 
+        let researchProgressByMessageId = state.researchProgressByMessageId
+        if (researchPlan) {
+          researchProgressByMessageId = {
+            ...researchProgressByMessageId,
+            [messageId]: { plan: researchPlan, steps: [] }
+          }
+        }
+        if (researchStep) {
+          const current = researchProgressByMessageId[messageId] || { steps: [] }
+          const existingSteps = current.steps
+          const idx = existingSteps.findIndex((s) => s.stepIndex === researchStep.stepIndex)
+          const newSteps =
+            idx >= 0
+              ? existingSteps.map((s, i) => (i === idx ? researchStep : s))
+              : [...existingSteps, researchStep]
+          researchProgressByMessageId = {
+            ...researchProgressByMessageId,
+            [messageId]: { ...current, steps: newSteps }
+          }
+        }
+
         return {
           messages,
           visibleMessages: recomputeVisible(
@@ -681,6 +724,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           citations,
           artifacts,
           searchStatusByMessageId,
+          researchProgressByMessageId,
           isGenerating: !done,
           activeGenerationId: done ? null : state.activeGenerationId
         }
@@ -885,9 +929,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setWebSearchEnabled: async (enabled) => {
-    set({ webSearchEnabled: enabled, searchSetupError: null })
+    set({ webSearchEnabled: enabled, searchSetupError: null, deepResearchEnabled: enabled ? get().deepResearchEnabled : false })
     window.goltiAPI
-      .updateSettings({ webSearchEnabled: enabled, defaultWebSearchMode: enabled ? 'auto' : 'off' })
+      .updateSettings({
+        webSearchEnabled: enabled,
+        defaultWebSearchMode: enabled ? 'auto' : 'off',
+        deepResearchEnabled: enabled ? get().deepResearchEnabled : false
+      })
       .catch(() => {})
 
     if (!enabled) return
@@ -910,6 +958,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setForceWebSearchNext: (force) => set({ forceWebSearchNext: force }),
+
+  setDeepResearchEnabled: async (enabled) => {
+    set({ deepResearchEnabled: enabled })
+    window.goltiAPI.updateSettings({ deepResearchEnabled: enabled }).catch(() => {})
+    if (enabled && !get().webSearchEnabled) {
+      await get().setWebSearchEnabled(true)
+    }
+  },
 
   setGenerationSettings: (settings) => {
     set((s) => ({ generationSettings: { ...s.generationSettings, ...settings } }))

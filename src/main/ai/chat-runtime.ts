@@ -28,6 +28,7 @@ import {
 } from '../db/database'
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
+import { startDeepResearch } from './deep-research'
 
 interface ActiveGeneration {
   generationId: string
@@ -95,6 +96,7 @@ export async function startChatGeneration(
     webSearchMode,
     webSearchEnabled,
     forceWebSearch,
+    deepResearchEnabled,
     contextItemIds,
     generationSettings
   } = payload
@@ -321,6 +323,11 @@ export async function startChatGeneration(
     ...settings.defaultGenerationSettings,
     ...conv?.generationSettings,
     ...generationSettings
+  }
+
+  if (deepResearchEnabled) {
+    startDeepResearch(win, payload, assistantMsgId, generationId, branch, effectiveSystem, mergedSettings, controller)
+    return { userMsgId, assistantMsgId, generationId }
   }
 
   ;(async () => {

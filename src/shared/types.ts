@@ -83,6 +83,21 @@ export interface MessagePart {
   artifactId?: string
 }
 
+export interface ResearchStep {
+  stepIndex: number
+  totalSteps: number
+  query: string
+  status: 'pending' | 'searching' | 'reading' | 'done' | 'error'
+  sourcesFound: number
+  error?: string
+}
+
+export interface ResearchPlan {
+  originalQuery: string
+  subQueries: string[]
+  reasoning: string
+}
+
 export interface Message {
   id: string
   conversationId: string
@@ -102,6 +117,7 @@ export interface Message {
   citations?: Citation[]
   artifactIds?: string[]
   generationId?: string
+  isDeepResearch?: boolean
 }
 
 export interface MessageVersion {
@@ -195,6 +211,8 @@ export interface SendMessagePayload {
   webSearchEnabled?: boolean
   /** Force search for this message even if Auto would skip. */
   forceWebSearch?: boolean
+  /** Deep Research mode toggle */
+  deepResearchEnabled?: boolean
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
 }
@@ -207,6 +225,9 @@ export type StreamEventType =
   | 'error'
   | 'done'
   | 'search'
+  | 'research-plan'
+  | 'research-step'
+  | 'research-sources'
 
 export interface StreamChunkPayload {
   conversationId: string
@@ -219,6 +240,8 @@ export interface StreamChunkPayload {
   citation?: Citation
   artifact?: Artifact
   searchStatus?: WebSearchStatus
+  researchPlan?: ResearchPlan
+  researchStep?: ResearchStep
   eventType?: StreamEventType
 }
 
@@ -380,6 +403,8 @@ export interface Settings {
   webSearch?: WebSearchSettings
   /** When true, composer Web Search toggle is on (Auto intent). */
   webSearchEnabled?: boolean
+  /** When true, composer Deep Research toggle is on. */
+  deepResearchEnabled?: boolean
   /** @deprecated Migrated to webSearchEnabled */
   defaultWebSearchMode?: WebSearchMode
   searchRuntimePort?: number
