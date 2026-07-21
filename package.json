@@ -6,7 +6,7 @@
   "author": "golti",
   "homepage": "https://github.com/golti/golti",
   "scripts": {
-    "dev": "electron-builder install-app-deps && electron-vite dev",
+    "dev": "npx @electron/rebuild -f -w better-sqlite3 && electron-vite dev",
     "build": "npm run typecheck && electron-builder install-app-deps && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
@@ -29,6 +29,7 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
