@@ -18,6 +18,7 @@ import {
   extractArtifacts,
   extractShells,
   extractThinkingTags,
+  createThinkStreamParser,
   getBranchPath
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
@@ -340,6 +341,8 @@ export async function startChatGeneration(
     let thinkingEndTime: number | null = null
     let usage: TokenUsage | undefined
 
+    const streamParser = createThinkStreamParser()
+
     try {
       for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
         signal: controller.signal,
@@ -360,18 +363,38 @@ export async function startChatGeneration(
             eventType: 'thinking'
           })
         } else if (event.type === 'text') {
-          if (thinkingStartTime && !thinkingEndTime) {
+          const { thinkingDelta, contentDelta } = streamParser(event.text)
+
+          if (thinkingDelta) {
+            if (!thinkingStartTime) thinkingStartTime = Date.now()
             thinkingEndTime = Date.now()
+            reasoningAccumulated += thinkingDelta
+            const duration = thinkingEndTime - thinkingStartTime
+            sendChunk(win, {
+              conversationId,
+              messageId: assistantMsgId,
+              generationId,
+              thinkingDelta,
+              thinkingDurationMs: duration,
+              done: false,
+              eventType: 'thinking'
+            })
           }
-          accumulated += event.text
-          sendChunk(win, {
-            conversationId,
-            messageId: assistantMsgId,
-            generationId,
-            contentDelta: event.text,
-            done: false,
-            eventType: 'text'
-          })
+
+          if (contentDelta) {
+            if (thinkingStartTime && !thinkingEndTime) {
+              thinkingEndTime = Date.now()
+            }
+            accumulated += contentDelta
+            sendChunk(win, {
+              conversationId,
+              messageId: assistantMsgId,
+              generationId,
+              contentDelta,
+              done: false,
+              eventType: 'text'
+            })
+          }
         } else if (event.type === 'usage') {
           usage = event.usage
         } else if (event.type === 'error') {
@@ -380,11 +403,22 @@ export async function startChatGeneration(
       }
 
       // Check if <think> tags exist in accumulated text (fallback parsing)
-      if (!reasoningAccumulated && accumulated.includes('<think>')) {
+      if (accumulated.includes('<think>')) {
         const { reasoningText, cleanContent } = extractThinkingTags(accumulated)
         if (reasoningText) {
-          reasoningAccumulated = reasoningText
+          reasoningAccumulated = reasoningAccumulated
+            ? `${reasoningAccumulated}\n${reasoningText}`
+            : reasoningText
           accumulated = cleanContent
+          sendChunk(win, {
+            conversationId,
+            messageId: assistantMsgId,
+            generationId,
+            correctedContent: accumulated,
+            reasoningContent: reasoningAccumulated,
+            done: false,
+            eventType: 'correction'
+          })
         }
       }
 

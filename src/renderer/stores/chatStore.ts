@@ -659,6 +659,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationId,
         messageId,
         contentDelta,
+        correctedContent,
+        reasoningContent: chunkReasoningContent,
         thinkingDelta,
         thinkingDurationMs,
         done,
@@ -676,10 +678,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => {
         const messages = state.messages.map((msg) => {
           if (msg.id === messageId) {
-            const reasoningContent = (msg.reasoningContent || '') + (thinkingDelta || '')
+            const reasoningContent =
+              chunkReasoningContent || (msg.reasoningContent || '') + (thinkingDelta || '')
+            const nextContent =
+              correctedContent !== undefined ? correctedContent : msg.content + (contentDelta || '')
             return {
               ...msg,
-              content: msg.content + (contentDelta || ''),
+              content: nextContent,
               reasoningContent: reasoningContent || msg.reasoningContent,
               thinkingDurationMs: thinkingDurationMs ?? msg.thinkingDurationMs,
               isStreaming: !done,

@@ -1,6 +1,5 @@
-import React, { useEffect } from 'react'
-import { Sparkles, Zap, PanelRight, Undo2, Redo2, MessageSquarePlus } from 'lucide-react'
-import { ModelSelector } from './ModelSelector'
+import React, { useEffect, useState } from 'react'
+import { Zap, PanelRight, Undo2, Redo2, MessageSquarePlus, Code2, Sparkles, Layers } from 'lucide-react'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { InspectorPanel } from './InspectorPanel'
@@ -23,9 +22,11 @@ export const ChatView: React.FC = () => {
     hydrateWebSearchPreference,
     isLoadingConversation,
     conversationError,
-    setDeepResearchEnabled
+    setDeepResearchEnabled,
+    setDraft
   } = useChatStore()
   const { isOpen, toggle } = useInspectorStore()
+  const [isHeaderScrolled, setIsHeaderScrolled] = useState(false)
 
   useEffect(() => {
     fetchConversations()
@@ -50,17 +51,57 @@ export const ChatView: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey)
   }, [undoAction, redoAction])
 
+  const quickPillActions = [
+    {
+      label: 'Plan New Idea',
+      shortcut: '⇧Tab',
+      icon: <Sparkles size={14} />,
+      onClick: () => {
+        setDraft('Plan a new feature or architectural idea for this project: ')
+      }
+    },
+    {
+      label: 'Multitask',
+      icon: <Layers size={14} />,
+      onClick: () => {
+        setDraft('Help me multitask across multiple modules in this codebase.')
+      }
+    },
+    {
+      label: 'Deep Research',
+      icon: <Zap size={14} />,
+      onClick: async () => {
+        await setDeepResearchEnabled(true)
+        setDraft('Research the latest best practices for ')
+      }
+    },
+    {
+      label: 'Summarize Codebase',
+      icon: <Code2 size={14} />,
+      onClick: () => {
+        sendMessage('Summarize the architecture, entry points, and key patterns in this repository.')
+      }
+    }
+  ]
+
+  const isLanding = !isLoadingConversation && visibleMessages.length === 0
+
   return (
     <div className="chat-workspace">
-      <div className="chat-main">
-        <div className="chat-header">
-          <ModelSelector />
+      <div className={`chat-main ${isLanding ? 'is-landing-mode' : ''}`}>
+        <div className={`chat-header ${isHeaderScrolled ? 'is-scrolled' : ''}`}>
+          <div className="chat-header-left">
+            <button className="chat-ghost-btn" onClick={() => newConversation()} aria-label="New thread">
+              <MessageSquarePlus size={14} />
+              <span>New Thread</span>
+            </button>
+          </div>
           <div className="chat-header-actions">
             <button
               className="chat-icon-btn"
               onClick={() => undoAction()}
               disabled={actionUndoStack.length === 0}
-              title="Undo"
+              title="Undo (⌘Z)"
               aria-label="Undo"
             >
               <Undo2 size={16} />
@@ -69,14 +110,10 @@ export const ChatView: React.FC = () => {
               className="chat-icon-btn"
               onClick={() => redoAction()}
               disabled={actionRedoStack.length === 0}
-              title="Redo"
+              title="Redo (⌘⇧Z)"
               aria-label="Redo"
             >
               <Redo2 size={16} />
-            </button>
-            <button className="chat-ghost-btn" onClick={() => newConversation()} aria-label="New thread">
-              <MessageSquarePlus size={14} />
-              <span>New Thread</span>
             </button>
             <button
               className={`chat-icon-btn ${isOpen ? 'is-active' : ''}`}
@@ -108,45 +145,37 @@ export const ChatView: React.FC = () => {
           <div className="chat-empty animate-fade-in">
             <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading conversation…</p>
           </div>
-        ) : visibleMessages.length === 0 ? (
-          <div className="chat-empty animate-fade-in">
-            <div className="chat-empty-icon">
-              <Sparkles size={28} />
-            </div>
-            <h2>What would you like to build or explore?</h2>
-            <p>
-              Attach context, watch your token budget, branch replies, and keep artifacts beside the
-              conversation.
-            </p>
-            <div className="chat-prompt-grid">
-              {[
-                { label: 'Summarize local document', prompt: 'Summarize the key points of this project.' },
-                { label: 'Deep research query', prompt: 'What are the latest open source AI trends in 2026?', deepResearch: true },
-                { label: 'Draft an email reply', prompt: 'Help me draft a concise professional email reply.' },
-                { label: 'Compare model outputs', prompt: 'Explain quantum computing in simple terms.' }
-              ].map((item, idx) => (
-                <button
-                  key={idx}
-                  className="chat-prompt-card"
-                  onClick={async () => {
-                    if (item.deepResearch) {
-                      await setDeepResearchEnabled(true)
-                    }
-                    sendMessage(item.prompt)
-                  }}
-                  disabled={isGenerating}
-                >
-                  <Zap size={14} />
-                  <span>{item.label}</span>
-                </button>
-              ))}
+        ) : isLanding ? (
+          <div className="chat-landing-container animate-fade-in">
+            <div className="chat-landing-center">
+              <ChatInput isLanding={true} />
+              <div className="chat-landing-pills">
+                {quickPillActions.map((pill, idx) => (
+                  <button
+                    key={idx}
+                    className="chat-landing-pill"
+                    onClick={pill.onClick}
+                    disabled={isGenerating}
+                  >
+                    <span className="chat-landing-pill-icon">{pill.icon}</span>
+                    <span>{pill.label}</span>
+                    {pill.shortcut && (
+                      <span className="chat-landing-pill-shortcut">{pill.shortcut}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
-          <MessageList messages={visibleMessages} />
+          <>
+            <MessageList
+              messages={visibleMessages}
+              onScrollStateChange={setIsHeaderScrolled}
+            />
+            <ChatInput isLanding={false} />
+          </>
         )}
-
-        <ChatInput />
       </div>
 
       <InspectorPanel />

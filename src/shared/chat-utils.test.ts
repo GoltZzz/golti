@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeTokenBudget,
+  createThinkStreamParser,
   estimateTokens,
   extractArtifacts,
   extractShells,
@@ -198,6 +199,44 @@ describe('extractThinkingTags', () => {
     const { reasoningText, cleanContent } = extractThinkingTags(raw)
     expect(reasoningText).toBe('Thinking in progress...')
     expect(cleanContent).toBe('')
+  })
+
+  it('handles content preceding and following think tags', () => {
+    const raw = 'Intro text <think>My internal thought</think> Main answer text'
+    const { reasoningText, cleanContent } = extractThinkingTags(raw)
+    expect(reasoningText).toBe('My internal thought')
+    expect(cleanContent).toBe('Intro text  Main answer text')
+  })
+})
+
+describe('createThinkStreamParser', () => {
+  it('parses complete <think> tags in a single chunk', () => {
+    const parser = createThinkStreamParser()
+    const result = parser('<think>Step 1</think>Result')
+    expect(result).toEqual({ thinkingDelta: 'Step 1', contentDelta: 'Result' })
+  })
+
+  it('handles streaming chunks split across think boundaries', () => {
+    const parser = createThinkStreamParser()
+    const r1 = parser('Hello <thi')
+    expect(r1).toEqual({ thinkingDelta: '', contentDelta: 'Hello ' })
+
+    const r2 = parser('nk>Step 1: thinking...')
+    expect(r2).toEqual({ thinkingDelta: 'Step 1: thinking...', contentDelta: '' })
+
+    const r3 = parser('</thi')
+    expect(r3).toEqual({ thinkingDelta: '', contentDelta: '' })
+
+    const r4 = parser('nk> Here is the answer.')
+    expect(r4).toEqual({ thinkingDelta: '', contentDelta: ' Here is the answer.' })
+  })
+
+  it('handles plain content with no think tags', () => {
+    const parser = createThinkStreamParser()
+    const r1 = parser('Just plain text ')
+    expect(r1).toEqual({ thinkingDelta: '', contentDelta: 'Just plain text ' })
+    const r2 = parser('continued.')
+    expect(r2).toEqual({ thinkingDelta: '', contentDelta: 'continued.' })
   })
 })
 

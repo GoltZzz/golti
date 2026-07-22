@@ -1,4 +1,5 @@
 import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
+import { extractThinkingTags } from '../../../shared/chat-utils'
 import {
   applyGenerationDefaults,
   doneEvent,
@@ -87,8 +88,11 @@ export async function* streamOllamaChat(
       const thinkingText = parsed.message?.thinking || parsed.message?.reasoning || parsed.message?.reasoning_content
       if (thinkingText) {
         yield thinkingEvent(thinkingText)
-      }
-      if (parsed.message?.content) {
+        if (parsed.message?.content) {
+          const { cleanContent } = extractThinkingTags(parsed.message.content)
+          if (cleanContent) yield textEvent(cleanContent)
+        }
+      } else if (parsed.message?.content) {
         yield textEvent(parsed.message.content)
       }
       if (parsed.done) {

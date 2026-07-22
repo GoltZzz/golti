@@ -5,9 +5,10 @@ import { MessageBubble } from './MessageBubble'
 
 interface MessageListProps {
   messages: Message[]
+  onScrollStateChange?: (isScrolled: boolean) => void
 }
 
-export const MessageList: React.FC<MessageListProps> = ({ messages }) => {
+export const MessageList: React.FC<MessageListProps> = ({ messages, onScrollStateChange }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false)
   const userScrolledUpRef = useRef(false)
@@ -51,12 +52,16 @@ export const MessageList: React.FC<MessageListProps> = ({ messages }) => {
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current
     const distanceToBottom = scrollHeight - scrollTop - clientHeight
 
+    if (onScrollStateChange) {
+      onScrollStateChange(scrollTop > 20)
+    }
+
     if (distanceToBottom <= 40) {
       userScrolledUpRef.current = false
       setShowScrollBottomBtn(false)
     } else if (distanceToBottom > 80 && !userScrolledUpRef.current) {
       userScrolledUpRef.current = true
-      setShowScrollBottomBtn(true)
+      setShowScrollBottomBtn(false)
     }
   }
 

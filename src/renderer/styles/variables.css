@@ -9,6 +9,7 @@
   --bg-bubble-user: #1e1b2e;
   --bg-bubble-assistant: #131420;
   --bg-modal-backdrop: rgba(0, 0, 0, 0.7);
+  --chat-measure: 900px;
 
   /* Primary Accent & Brand Colors */
   --accent-primary: #e06c75;

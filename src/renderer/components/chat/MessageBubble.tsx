@@ -63,6 +63,26 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const siblingIndex = Math.max(0, siblings.findIndex((s) => s.id === message.id))
   const isDeepResearchMsg = message.isDeepResearch || Boolean(researchProgress)
 
+  const { cleanContent, extractedReasoning } = useMemo(() => {
+    if (isUser || !message.content) {
+      return { cleanContent: message.content, extractedReasoning: '' }
+    }
+    const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/gi
+    if (!thinkRegex.test(message.content)) {
+      return { cleanContent: message.content, extractedReasoning: '' }
+    }
+    let reasoning = ''
+    const clean = message.content
+      .replace(/<think>([\s\S]*?)(?:<\/think>|$)/gi, (_, r) => {
+        if (r.trim()) reasoning += (reasoning ? '\n' : '') + r.trim()
+        return ''
+      })
+      .trimStart()
+    return { cleanContent: clean, extractedReasoning: reasoning }
+  }, [isUser, message.content])
+
+  const effectiveReasoning = message.reasoningContent || extractedReasoning
+
   const handleCopyCode = (text: string, index: number) => {
     navigator.clipboard.writeText(text)
     setCopiedCodeIndex(index)
@@ -83,9 +103,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
         )}
 
         <div className="msg-body">
-          {!isUser && message.reasoningContent && showThinkingProcess && (
+          {!isUser && effectiveReasoning && showThinkingProcess && (
             <ThinkingBlock
-              reasoningContent={message.reasoningContent}
+              reasoningContent={effectiveReasoning}
               isStreaming={message.isStreaming}
               durationMs={message.thinkingDurationMs}
               onRethink={handleRethink}
@@ -117,7 +137,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             </div>
           ) : (
             <div className="msg-content" data-selectable>
-              {message.isStreaming && !message.content ? (
+              {message.isStreaming && !cleanContent ? (
                 <div style={{ display: 'flex', gap: 4, padding: '6px 0' }}>
                   <span className="dot-flashing" />
                   <span className="dot-flashing" />
@@ -178,7 +198,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                     }
                   }}
                 >
-                  {message.content}
+                  {cleanContent}
                 </ReactMarkdown>
               )}
             </div>
@@ -358,7 +378,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                 className="msg-action-btn"
                 title="Copy"
                 aria-label="Copy message"
-                onClick={() => navigator.clipboard.writeText(message.content)}
+                onClick={() => navigator.clipboard.writeText(cleanContent || message.content)}
               >
                 <Copy size={14} />
               </button>

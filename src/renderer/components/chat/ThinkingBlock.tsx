@@ -53,7 +53,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   const tokenCount = estimateTokens(reasoningContent)
 
   return (
-    <div className={`thinking-block ${isExpanded ? 'is-expanded' : 'is-collapsed'}`}>
+    <div className={`thinking-block ${isExpanded ? 'is-expanded' : 'is-collapsed'} ${isStreaming ? 'is-streaming' : ''}`}>
       <div
         className="thinking-header"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -68,7 +68,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
       >
         <div className="thinking-title">
           <Brain size={14} className={`thinking-icon ${isStreaming ? 'pulse' : ''}`} />
-          <span>
+          <span className={isStreaming ? 'thinking-text-shimmer' : ''}>
             {isStreaming
               ? 'Thinking…'
               : durationMs
@@ -78,7 +78,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
                   : 'Thought process'}
           </span>
           {isStreaming && (
-            <span className="thinking-timer">{formattedTime(elapsedMs)}</span>
+            <span className="thinking-timer glowing">{formattedTime(elapsedMs)}</span>
           )}
           {!isStreaming && tokenCount > 0 && (
             <span className="thinking-badge">{tokenCount} tokens</span>
@@ -122,7 +122,13 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 
       {isExpanded && (
         <div className="thinking-body animate-fade-in">
-          <pre className="thinking-text">{reasoningContent}</pre>
+          <div className="thinking-text">
+            {reasoningContent.split('\n\n').map((paragraph, pIdx) => (
+              <p key={pIdx} style={{ margin: pIdx === 0 ? '0' : '0.6em 0 0 0' }}>
+                {paragraph}
+              </p>
+            ))}
+          </div>
         </div>
       )}
     </div>

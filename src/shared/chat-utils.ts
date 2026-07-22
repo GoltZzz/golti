@@ -141,6 +141,78 @@ export function extractThinkingTags(text: string): { reasoningText: string; clea
   return { reasoningText, cleanContent }
 }
 
+/**
+ * Creates a stateful parser for streaming text that separates <think>...</think> tags
+ * from regular content in real-time.
+ */
+export function createThinkStreamParser() {
+  let buffer = ''
+  let inThink = false
+
+  function getPartialTagLen(buf: string, tag: string): number {
+    const lowerBuf = buf.toLowerCase()
+    const lowerTag = tag.toLowerCase()
+    for (let len = Math.min(buf.length, tag.length - 1); len > 0; len--) {
+      if (lowerTag.startsWith(lowerBuf.slice(-len))) {
+        return len
+      }
+    }
+    return 0
+  }
+
+  return function parseChunk(chunk: string): { thinkingDelta: string; contentDelta: string } {
+    if (!chunk) return { thinkingDelta: '', contentDelta: '' }
+
+    buffer += chunk
+    let thinkingDelta = ''
+    let contentDelta = ''
+
+    while (buffer.length > 0) {
+      if (!inThink) {
+        const lowerBuffer = buffer.toLowerCase()
+        const thinkIndex = lowerBuffer.indexOf('<think>')
+
+        if (thinkIndex === -1) {
+          const holdLen = getPartialTagLen(buffer, '<think>')
+          if (holdLen > 0) {
+            contentDelta += buffer.slice(0, buffer.length - holdLen)
+            buffer = buffer.slice(buffer.length - holdLen)
+            break
+          } else {
+            contentDelta += buffer
+            buffer = ''
+          }
+        } else {
+          contentDelta += buffer.slice(0, thinkIndex)
+          inThink = true
+          buffer = buffer.slice(thinkIndex + 7)
+        }
+      } else {
+        const lowerBuffer = buffer.toLowerCase()
+        const endThinkIndex = lowerBuffer.indexOf('</think>')
+
+        if (endThinkIndex === -1) {
+          const holdLen = getPartialTagLen(buffer, '</think>')
+          if (holdLen > 0) {
+            thinkingDelta += buffer.slice(0, buffer.length - holdLen)
+            buffer = buffer.slice(buffer.length - holdLen)
+            break
+          } else {
+            thinkingDelta += buffer
+            buffer = ''
+          }
+        } else {
+          thinkingDelta += buffer.slice(0, endThinkIndex)
+          inThink = false
+          buffer = buffer.slice(endThinkIndex + 8)
+        }
+      }
+    }
+
+    return { thinkingDelta, contentDelta }
+  }
+}
+
 export function computeTokenBudget(params: {
   contextWindow: number
   reservedOutputTokens: number

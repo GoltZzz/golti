@@ -238,12 +238,15 @@ export type StreamEventType =
   | 'research-plan'
   | 'research-step'
   | 'research-sources'
+  | 'correction'
 
 export interface StreamChunkPayload {
   conversationId: string
   messageId: string
   generationId?: string
   contentDelta?: string
+  correctedContent?: string
+  reasoningContent?: string
   thinkingDelta?: string
   thinkingDurationMs?: number
   done: boolean
