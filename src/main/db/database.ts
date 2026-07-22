@@ -35,13 +35,16 @@ function getDbPath(): string {
   return dbPath
 }
 
+const LEGACY_DEFAULT_SYSTEM_PROMPT = 'You are Golti, an intelligent, helpful AI personal assistant.'
+
 const defaultSettings: Settings = {
   theme: 'dark',
   accentColor: '#e06c75',
   fontSize: 'medium',
   sidebarCollapsed: false,
   ollamaAutoDetect: true,
-  systemPrompt: 'You are Golti, an intelligent, helpful AI personal assistant.',
+  systemPrompt:
+    'You are Golti, an intelligent, helpful AI personal assistant. Note: Golti is your name; do not confuse general terms or technologies (such as the Go/Golang programming language) with the app.',
   engineEnabled: true,
   enginePort: 8391,
   engineGpuLayers: -1,
@@ -102,6 +105,10 @@ function loadDb(): DBData {
         if (!dbData.messages) dbData.messages = []
         dbData.settings = { ...defaultSettings, ...dbData.settings }
         let updated = false
+        if (dbData.settings.systemPrompt === LEGACY_DEFAULT_SYSTEM_PROMPT) {
+          dbData.settings.systemPrompt = defaultSettings.systemPrompt
+          updated = true
+        }
         for (const defProv of defaultProviders) {
           if (!dbData.providers.some((prov) => prov.id === defProv.id)) {
             dbData.providers.push({ ...defProv })
