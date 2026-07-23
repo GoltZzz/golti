@@ -18,7 +18,8 @@ import type {
   WebSearchTestResult,
   SearchRuntimeState,
   SearchRuntimeProgress,
-  InstalledLocalModelInfo
+  InstalledLocalModelInfo,
+  OllamaState
 } from '../shared/types'
 
 const api = {
@@ -137,6 +138,21 @@ const api = {
   getSystemInfo: () => ipcRenderer.invoke('system:info'),
   getSystemInfoFull: () => ipcRenderer.invoke('system:info:full'),
   getOllamaStatus: () => ipcRenderer.invoke('cookbook:ollama-status'),
+  getOllamaProcessState: (): Promise<OllamaState> => ipcRenderer.invoke('ollama:status'),
+  installOllamaProcess: () => ipcRenderer.invoke('ollama:install'),
+  startOllamaProcess: () => ipcRenderer.invoke('ollama:start'),
+  stopOllamaProcess: () => ipcRenderer.invoke('ollama:stop'),
+  getOllamaLogs: (): Promise<string[]> => ipcRenderer.invoke('ollama:logs'),
+  onOllamaProgress: (callback: (data: any) => void) => {
+    const listener = (_: any, data: any) => callback(data)
+    ipcRenderer.on('ollama:download-progress', listener)
+    return () => ipcRenderer.removeListener('ollama:download-progress', listener)
+  },
+  onOllamaStateChange: (callback: (state: OllamaState) => void) => {
+    const listener = (_: any, state: OllamaState) => callback(state)
+    ipcRenderer.on('ollama:state-changed', listener)
+    return () => ipcRenderer.removeListener('ollama:state-changed', listener)
+  },
   getInstalledModels: () => ipcRenderer.invoke('cookbook:installed-models'),
   getDetailedInstalledModels: (): Promise<InstalledLocalModelInfo[]> =>
     ipcRenderer.invoke('cookbook:detailed-installed-models'),

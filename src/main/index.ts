@@ -55,6 +55,8 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
+import { cancelOllamaDownload, downloadOllamaBinary } from './ollama/ollama-binary-manager'
+import { getOllamaState, startOllama, stopOllama, getOllamaLogs } from './ollama/ollama-process'
 
 const execAsync = promisify(exec)
 
@@ -151,8 +153,11 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
   // Disk speed benchmark
   let diskRead: number | null = null
   let diskWrite: number | null = null
+  const tempFilePath = path.join(
+    app.getPath('userData'),
+    `temp_disk_bench_${Date.now()}_${Math.random().toString(36).substring(2)}.tmp`
+  )
   try {
-    const tempFilePath = path.join(app.getPath('userData'), 'temp_disk_bench.tmp')
     const size = 15 * 1024 * 1024 // 15MB
     const buffer = Buffer.alloc(size, 'x')
     
@@ -167,10 +172,12 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
     const readEnd = process.hrtime.bigint()
     const readDuration = Number(readEnd - readStart) / 1e9
     diskRead = Math.round(size / (1024 * 1024) / readDuration)
-
-    await fs.promises.unlink(tempFilePath)
   } catch (err) {
     console.error('Disk benchmark failed:', err)
+  } finally {
+    try {
+      await fs.promises.rm(tempFilePath, { force: true })
+    } catch {}
   }
 
   // CPU Temperature
@@ -213,7 +220,7 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
 }
 
 
-let mainWindow: BrowserWindow | null = null
+export let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
@@ -268,7 +275,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
-  await Promise.all([stopEngine(), stopSearchRuntime()])
+  await Promise.all([stopEngine(), stopSearchRuntime(), stopOllama()])
 })
 
 function setupIpcHandlers(): void {
@@ -636,6 +643,31 @@ function setupIpcHandlers(): void {
       console.error('[Ollama Pull Error]', err)
       return { success: false, error: err.message }
     }
+  })
+
+  // Ollama Background Process IPC Handlers
+  ipcMain.handle('ollama:status', () => getOllamaState())
+  
+  ipcMain.handle('ollama:install', async () => {
+    return await downloadOllamaBinary((progress) => {
+      mainWindow?.webContents.send('ollama:download-progress', progress)
+    })
+  })
+
+  ipcMain.handle('ollama:cancel-install', () => {
+    return cancelOllamaDownload()
+  })
+
+  ipcMain.handle('ollama:start', async () => {
+    return await startOllama()
+  })
+
+  ipcMain.handle('ollama:stop', async () => {
+    return stopOllama()
+  })
+
+  ipcMain.handle('ollama:logs', () => {
+    return getOllamaLogs()
   })
 
   // Golti Engine IPC Handlers

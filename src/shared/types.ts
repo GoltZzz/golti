@@ -10,6 +10,21 @@ export interface EngineState {
   pid?: number
   loadedModel?: string
   error?: string
+  isSystemProcess?: boolean
+  host?: string
+  vramUsage?: string
+}
+
+export interface OllamaState {
+  status: 'not-installed' | 'stopped' | 'starting' | 'running' | 'error'
+  error?: string
+  binaryPath?: string | null
+  port?: number
+  pid?: number | null
+  isSystemProcess?: boolean
+  host?: string
+  version?: string
+  logs?: string[]
 }
 
 export interface EngineDownloadProgress {

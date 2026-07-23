@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useEngineStore } from '../../stores/engineStore'
+import { useOllamaProcessStore } from '../../stores/ollamaProcessStore'
 import { HardwareCard } from './HardwareCard'
 import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
@@ -12,6 +13,7 @@ import { CookbookModel } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
 
 export const CookbookView: React.FC = () => {
+  const [showManualGuide, setShowManualGuide] = React.useState(true)
   const {
     systemInfo,
     loadingInfo,
@@ -28,13 +30,18 @@ export const CookbookView: React.FC = () => {
   } = useCookbookStore()
 
   const { engineState, localModels, setupListeners, installEngine, isInstallingBinary } = useEngineStore()
+  const { processState: ollamaState, isInstallingBinary: isInstallingOllama, downloadProgress: ollamaProgress, setupListeners: setupOllamaListeners, installOllama, startOllama, stopOllama } = useOllamaProcessStore()
 
   useEffect(() => {
     scanHardware()
     checkOllama()
     fetchInstalled()
-    const unsub = setupListeners()
-    return () => unsub()
+    const unsubEngine = setupListeners()
+    const unsubOllama = setupOllamaListeners()
+    return () => {
+      unsubEngine()
+      unsubOllama()
+    }
   }, [])
 
   const isEngineDownloaded = (model: CookbookModel) =>
@@ -138,9 +145,54 @@ export const CookbookView: React.FC = () => {
     <div className="cookbook-container animate-fade-in">
       <div className="cookbook-scrollable">
         {/* Top Header Section */}
-        <div className="cookbook-header-title">
-          <h1>Hardware Cookbook</h1>
-          <p>Scan your device specs, verify compatibility, and download optimized local LLMs directly to your system.</p>
+        <div className="cookbook-header-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h1>Hardware Cookbook</h1>
+            <p>Scan your device specs, verify compatibility, and download optimized local LLMs directly to your system.</p>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+            {ollamaState.status === 'not-installed' ? (
+              <button
+                onClick={() => installOllama()}
+                disabled={isInstallingOllama}
+                style={{
+                  backgroundColor: '#98c379',
+                  color: '#1e1e1e',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '6px 14px',
+                  fontWeight: 600,
+                  fontSize: '12px',
+                  cursor: isInstallingOllama ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {isInstallingOllama ? `Installing Ollama... ${ollamaProgress ? ollamaProgress.percent + '%' : ''}` : 'Install Built-in Ollama'}
+              </button>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Ollama Status: {ollamaState.status === 'running' ? 'Running' : ollamaState.status === 'stopped' ? 'Stopped' : 'Starting...'}
+                </span>
+                <button
+                  onClick={() => ollamaState.status === 'running' ? stopOllama() : startOllama()}
+                  disabled={ollamaState.status === 'starting'}
+                  style={{
+                    backgroundColor: ollamaState.status === 'running' ? 'rgba(224, 108, 117, 0.1)' : 'rgba(152, 195, 121, 0.1)',
+                    color: ollamaState.status === 'running' ? '#e06c75' : '#98c379',
+                    border: `1px solid ${ollamaState.status === 'running' ? 'rgba(224, 108, 117, 0.3)' : 'rgba(152, 195, 121, 0.3)'}`,
+                    borderRadius: '6px',
+                    padding: '4px 12px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: ollamaState.status === 'starting' ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {ollamaState.status === 'running' ? 'Stop' : 'Start'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Hardware scan summary */}
@@ -204,24 +256,94 @@ export const CookbookView: React.FC = () => {
           )}
         </div>
 
-        {/* Ollama Offline Banner */}
-        {!ollamaOnline && (
-          <div className="ollama-offline-banner">
-            <div className="banner-left">
-              <AlertCircle size={20} className="alert-icon" />
-              <div className="banner-text">
-                <h3>Local Ollama Server Offline</h3>
-                <p>We couldn't connect to Ollama on http://localhost:11434. Installing models requires Ollama to be running.</p>
+        {/* ELI5 Manual Setup Guide & Offline Banner */}
+        {(!ollamaOnline && ollamaState.status !== 'running' && ollamaState.status !== 'starting') && (
+          <div className="ollama-offline-wrapper" style={{ marginTop: '20px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* ELI5 Manual Ollama Setup Guide */}
+            <div className="cookbook-eli5-card">
+              <div className="eli5-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className="eli5-badge" style={{ backgroundColor: 'rgba(97, 175, 239, 0.15)', color: '#61afef', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    ELI5 Guide
+                  </span>
+                  <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--text-primary)' }}>How to Download & Install Ollama Manually</h3>
+                </div>
+                <button
+                  onClick={() => setShowManualGuide(!showManualGuide)}
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: '#61afef',
+                    border: '1px solid rgba(97, 175, 239, 0.3)',
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    fontWeight: 500
+                  }}
+                >
+                  {showManualGuide ? 'Hide Guide' : 'Show 3-Step Guide'}
+                </button>
               </div>
+
+              {showManualGuide && (
+                <div className="eli5-content animate-fade-in" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-color)' }}>
+                  <p className="eli5-intro" style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: '1.5' }}>
+                    Think of <strong>Ollama</strong> as the engine that powers local AI models on your device.
+                    If automatic installation fails or you prefer managing it yourself, follow these 3 simple steps:
+                  </p>
+
+                  <div className="eli5-steps-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+                    <div className="eli5-step" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px', position: 'relative' }}>
+                      <div className="step-number" style={{ width: '24px', height: '24px', borderRadius: '50%', backgroundColor: '#61afef', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px', marginBottom: '10px' }}>1</div>
+                      <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: 'var(--text-primary)' }}>Download Official App</h4>
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                        Visit <a href="https://ollama.com/download" target="_blank" rel="noreferrer" style={{ color: '#61afef', textDecoration: 'none', fontWeight: 600 }}>ollama.com/download <ExternalLink size={11} style={{ display: 'inline', verticalAlign: 'middle' }} /></a> and grab the free installer for your OS.
+                      </p>
+                    </div>
+
+                    <div className="eli5-step" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
+                      <div className="step-number" style={{ width: '24px', height: '24px', borderRadius: '50%', backgroundColor: '#61afef', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px', marginBottom: '10px' }}>2</div>
+                      <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: 'var(--text-primary)' }}>Run the Installer</h4>
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                        Open the downloaded file (<code>.dmg</code> on Mac or <code>.exe</code> on Windows) and complete standard setup.
+                      </p>
+                    </div>
+
+                    <div className="eli5-step" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
+                      <div className="step-number" style={{ width: '24px', height: '24px', borderRadius: '50%', backgroundColor: '#61afef', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px', marginBottom: '10px' }}>3</div>
+                      <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: 'var(--text-primary)' }}>Launch & Connect</h4>
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                        Open the Ollama desktop app (or type <code>ollama serve</code> in terminal). Golti will auto-detect it on <code>http://localhost:11434</code>!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <a
-              href="https://ollama.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ollama-download-link"
-            >
-              Get Ollama <ExternalLink size={14} />
-            </a>
+
+            {/* Offline Status Banner */}
+            <div className="ollama-offline-banner">
+              <div className="banner-left">
+                <AlertCircle size={20} className="alert-icon" />
+                <div className="banner-text">
+                  <h3>Local Ollama Server Offline</h3>
+                  <p>
+                    {ollamaState.status === 'not-installed' 
+                      ? "Ollama isn't installed. Click 'Install Built-in Ollama' above to download and run it directly within Golti, or follow the 3-step guide above."
+                      : "The Ollama background process is stopped. Click 'Start' in the header to run it."
+                    }
+                  </p>
+                </div>
+              </div>
+              <a
+                href="https://ollama.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ollama-download-link"
+              >
+                Get External Ollama <ExternalLink size={14} />
+              </a>
+            </div>
           </div>
         )}
 
