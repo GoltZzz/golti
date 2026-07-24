@@ -54,7 +54,6 @@ export const ChatView: React.FC = () => {
   const quickPillActions = [
     {
       label: 'Plan New Idea',
-      shortcut: '⇧Tab',
       icon: <Sparkles size={14} />,
       onClick: () => {
         setDraft('Plan a new feature or architectural idea for this project: ')

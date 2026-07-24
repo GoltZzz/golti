@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react'
 import {
   MessageSquare,
   Search,
-  Bot,
   Brain,
   FileText,
   Mail,
@@ -67,7 +66,6 @@ export const Sidebar: React.FC = () => {
   const mainNavItems = useMemo(() => {
     const items: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
       { id: 'chat', label: 'AI Chat', icon: <MessageSquare size={18} /> },
-      { id: 'agents', label: 'Autonomous Agents', icon: <Bot size={18} /> },
       { id: 'memory', label: 'Brain & Memory', icon: <Brain size={18} /> },
       { id: 'docs', label: 'Document Editor', icon: <FileText size={18} /> },
       { id: 'email', label: 'Mail & Calendar', icon: <Mail size={18} /> },

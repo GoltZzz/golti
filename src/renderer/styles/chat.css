@@ -932,6 +932,39 @@
   flex-wrap: wrap;
 }
 
+.composer-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.composer-mode-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.composer-mode-pill.is-agent {
+  border-color: rgba(97, 175, 239, 0.35);
+  background: rgba(97, 175, 239, 0.12);
+  color: var(--accent-cyan);
+}
+
+.composer-mode-pill.is-agent:hover {
+  background: rgba(97, 175, 239, 0.18);
+  color: var(--accent-cyan);
+}
+
 .usage-meter-inline {
   display: flex;
   align-items: center;

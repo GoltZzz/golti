@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type ActiveTab = 'chat' | 'agents' | 'memory' | 'docs' | 'email' | 'compare' | 'cookbook' | 'ollama' | 'settings'
+export type ActiveTab = 'chat' | 'memory' | 'docs' | 'email' | 'compare' | 'cookbook' | 'ollama' | 'settings'
 
 interface SidebarState {
   isCollapsed: boolean

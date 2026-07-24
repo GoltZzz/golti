@@ -1,6 +1,6 @@
 import React from 'react'
 import { ActiveTab } from '../../stores/sidebarStore'
-import { Search, Bot, Brain, FileText, Mail, GitCompare, BookOpen, Clock } from 'lucide-react'
+import { Search, Brain, FileText, Mail, GitCompare, BookOpen, Clock } from 'lucide-react'
 
 interface PlaceholderViewProps {
   tab: ActiveTab
@@ -13,12 +13,6 @@ export const PlaceholderView: React.FC<PlaceholderViewProps> = ({ tab }) => {
       desc: 'Multi-step autonomous web searching, source evaluation, and report synthesis.',
       phase: 'Phase 2',
       icon: <Search size={32} />
-    },
-    agents: {
-      title: 'Autonomous Agents',
-      desc: 'Task-driven AI agents with tool access (file system, bash commands, web tools).',
-      phase: 'Phase 2',
-      icon: <Bot size={32} />
     },
     memory: {
       title: 'Brain & Memory System',

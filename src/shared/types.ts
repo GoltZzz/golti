@@ -1,5 +1,8 @@
 export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
 
+/** Composer Chat vs Agent mode (Cursor-style Shift+Tab toggle). */
+export type ComposerMode = 'chat' | 'agent'
+
 export type EngineStatus = 'not-installed' | 'downloading' | 'stopped' | 'starting' | 'running' | 'error'
 
 export interface EngineState {
@@ -236,6 +239,8 @@ export interface SendMessagePayload {
   forceWebSearch?: boolean
   /** Deep Research mode toggle */
   deepResearchEnabled?: boolean
+  /** Composer Chat vs Agent mode */
+  composerMode?: ComposerMode
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
 }
@@ -457,6 +462,8 @@ export interface Settings {
   webSearchEnabled?: boolean
   /** When true, composer Deep Research toggle is on. */
   deepResearchEnabled?: boolean
+  /** Composer Chat vs Agent mode preference. */
+  composerMode?: ComposerMode
   /** @deprecated Migrated to webSearchEnabled */
   defaultWebSearchMode?: WebSearchMode
   searchRuntimePort?: number

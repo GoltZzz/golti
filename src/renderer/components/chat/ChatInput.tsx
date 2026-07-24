@@ -9,7 +9,9 @@ import {
   Square,
   Undo2,
   Redo2,
-  Plus
+  Plus,
+  MessageSquare,
+  Bot
 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
@@ -37,6 +39,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     setForceWebSearchNext,
     deepResearchEnabled,
     setDeepResearchEnabled,
+    composerMode,
+    cycleComposerMode,
     searchSetupError,
     addContext,
     addContextPaths,
@@ -121,6 +125,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     if (meta && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
       e.preventDefault()
       redoDraft()
+      return
+    }
+    if (e.key === 'Tab' && e.shiftKey && !showCommandPalette) {
+      e.preventDefault()
+      cycleComposerMode()
       return
     }
     if (e.key === 'Enter' && !e.shiftKey && !showCommandPalette) {
@@ -351,9 +360,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              isLanding
-                ? 'Plan, Build, / for skills, @ for context'
-                : 'Ask Golti anything… (@ for tools, Shift+Enter for newline)'
+              composerMode === 'agent'
+                ? isLanding
+                  ? 'Describe a task for the agent… (@ for tools)'
+                  : 'Tell the agent what to do…'
+                : isLanding
+                  ? 'Plan, Build, / for skills, @ for context'
+                  : 'Ask Golti anything… (@ for tools, Shift+Enter for newline)'
             }
             rows={1}
             disabled={false}
@@ -440,6 +453,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                   aria-label="Add context or tools"
                 >
                   <Plus size={16} />
+                </button>
+              </Tooltip>
+              <Tooltip label="Switch mode" shortcut="⇧Tab">
+                <button
+                  type="button"
+                  className={`composer-mode-pill ${composerMode === 'agent' ? 'is-agent' : 'is-chat'}`}
+                  onClick={() => cycleComposerMode()}
+                  aria-label={`Composer mode: ${composerMode === 'agent' ? 'Agent' : 'Chat'}. Press Shift+Tab to switch.`}
+                >
+                  {composerMode === 'agent' ? <Bot size={12} /> : <MessageSquare size={12} />}
+                  <span>{composerMode === 'agent' ? 'Agent' : 'Chat'}</span>
                 </button>
               </Tooltip>
               <UsageMeter compact />

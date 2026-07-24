@@ -43,6 +43,15 @@ interface ActiveGeneration {
 
 const activeGenerations = new Map<string, ActiveGeneration>()
 
+/** Appended when composerMode is 'agent' (tools not wired yet — prompt-only). */
+const COMPOSER_AGENT_SYSTEM_SUFFIX = [
+  'You are operating in Agent mode.',
+  'Treat the user message as a task to accomplish: clarify the goal if needed, break work into clear steps, and work toward a concrete outcome.',
+  'Be proactive and structured. Prefer actionable plans and specific recommendations over vague advice.',
+  'Ask before suggesting destructive or irreversible actions.',
+  'Note: filesystem, shell, and other tool execution are not available yet in this build — do not claim you ran tools or modified files. Reason through the task and provide the best guidance, plans, and code you can without tool access.'
+].join(' ')
+
 function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -101,6 +110,7 @@ export async function startChatGeneration(
     webSearchEnabled,
     forceWebSearch,
     deepResearchEnabled,
+    composerMode,
     contextItemIds,
     generationSettings
   } = payload
@@ -186,7 +196,11 @@ export async function startChatGeneration(
   const branch = getBranchPath(refreshed, assistantMsgId).filter((m) => m.id !== assistantMsgId)
 
   const contextBlock = buildContextBlock(conversationId, contextItemIds)
-  const effectiveSystem = [systemPrompt || conv?.systemPrompt || settings.systemPrompt, contextBlock]
+  const effectiveSystem = [
+    systemPrompt || conv?.systemPrompt || settings.systemPrompt,
+    composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+    contextBlock
+  ]
     .filter(Boolean)
     .join('\n\n')
 

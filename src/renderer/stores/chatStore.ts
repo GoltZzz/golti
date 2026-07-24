@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   Artifact,
   Citation,
+  ComposerMode,
   ContextItem,
   Conversation,
   GenerationSettings,
@@ -56,6 +57,7 @@ interface ChatState {
   webSearchEnabled: boolean
   forceWebSearchNext: boolean
   deepResearchEnabled: boolean
+  composerMode: ComposerMode
   searchSetupError: string | null
   searchStatusByMessageId: Record<string, WebSearchStatus>
   researchProgressByMessageId: Record<string, ResearchProgress>
@@ -103,6 +105,8 @@ interface ChatState {
   setWebSearchEnabled: (enabled: boolean) => Promise<void>
   setForceWebSearchNext: (force: boolean) => void
   setDeepResearchEnabled: (enabled: boolean) => Promise<void>
+  setComposerMode: (mode: ComposerMode) => void
+  cycleComposerMode: () => void
   setGenerationSettings: (settings: Partial<GenerationSettings>) => void
   updateArtifactContent: (id: string, content: string) => Promise<void>
   restoreArtifactVersion: (id: string, version: number) => Promise<void>
@@ -182,6 +186,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   webSearchEnabled: false,
   forceWebSearchNext: false,
   deepResearchEnabled: false,
+  composerMode: 'chat',
   searchSetupError: null,
   searchStatusByMessageId: {},
   researchProgressByMessageId: {},
@@ -199,6 +204,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const settings = await window.goltiAPI.getSettings()
       if (typeof settings?.deepResearchEnabled === 'boolean') {
         set({ deepResearchEnabled: settings.deepResearchEnabled })
+      }
+      if (settings?.composerMode === 'chat' || settings?.composerMode === 'agent') {
+        set({ composerMode: settings.composerMode })
       }
       if (typeof settings?.webSearchEnabled === 'boolean') {
         set({ webSearchEnabled: settings.webSearchEnabled })
@@ -468,6 +476,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       webSearchEnabled: get().webSearchEnabled,
       forceWebSearch,
       deepResearchEnabled,
+      composerMode: get().composerMode,
       contextItemIds: get()
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
@@ -567,6 +576,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messageId: assistantMessageId,
       webSearchEnabled: get().webSearchEnabled,
       forceWebSearch: get().forceWebSearchNext,
+      deepResearchEnabled: get().deepResearchEnabled,
+      composerMode: get().composerMode,
       generationSettings: get().generationSettings
     })
     set({ forceWebSearchNext: false })
@@ -602,6 +613,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       editMessageId: userMessageId,
       webSearchEnabled: get().webSearchEnabled,
       forceWebSearch: get().forceWebSearchNext,
+      deepResearchEnabled: get().deepResearchEnabled,
+      composerMode: get().composerMode,
       generationSettings: get().generationSettings
     })
     set({ forceWebSearchNext: false })
@@ -1080,6 +1093,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setForceWebSearchNext: (force) => set({ forceWebSearchNext: force }),
+
+  setComposerMode: (mode) => {
+    set({ composerMode: mode })
+    window.goltiAPI.updateSettings({ composerMode: mode }).catch(() => {})
+  },
+
+  cycleComposerMode: () => {
+    const next = get().composerMode === 'chat' ? 'agent' : 'chat'
+    get().setComposerMode(next)
+  },
 
   setDeepResearchEnabled: async (enabled) => {
     set({ deepResearchEnabled: enabled })

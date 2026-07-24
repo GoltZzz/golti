@@ -55,6 +55,7 @@ const defaultSettings: Settings = {
     endpoint: 'http://127.0.0.1:8741'
   },
   webSearchEnabled: false,
+  composerMode: 'chat',
   defaultWebSearchMode: 'off',
   searchRuntimePort: 8741,
   searchRuntimeSearxPort: 8742,
