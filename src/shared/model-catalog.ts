@@ -76,6 +76,24 @@ export const MODEL_CATALOG: CookbookModel[] = [
     highlights: ['Strong coding support', '128k context window', 'Very popular general-purpose model']
   },
   {
+    id: 'hermes-3-llama-3.1:8b-q4',
+    name: 'Hermes 3 8B (Q4_K_M)',
+    family: 'hermes',
+    parameterBillions: 8.0,
+    sizeTier: 'small',
+    quantization: 'Q4_K_M',
+    useCases: ['chat', 'creative', 'agentic'],
+    ramRequiredGB: 5.5,
+    ramRecommendedGB: 8.0,
+    diskSizeGB: 4.9,
+    ollamaTag: 'hermes3:8b',
+    ggufUrl: 'https://huggingface.co/bartowski/Hermes-3-Llama-3.1-8B-GGUF/resolve/main/Hermes-3-Llama-3.1-8B-Q4_K_M.gguf',
+    ggufFilename: 'Hermes-3-Llama-3.1-8B-Q4_K_M.gguf',
+    ggufFileSize: 4920000000,
+    description: 'NousResearch\'s highly capable and uncensored fine-tune of Llama 3.1 8B. Excellent for general chat, roleplay, and agentic workflows.',
+    highlights: ['Uncensored', 'Agentic system prompts', 'Superb instruction following']
+  },
+  {
     id: 'llama3.3:70b-q4',
     name: 'Llama 3.3 70B (Q4_K_M)',
     family: 'llama',
