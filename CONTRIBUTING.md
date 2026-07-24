@@ -67,7 +67,8 @@ This project uses a dual-branch model:
    git checkout -b feature/your-feature-name
    ```
 2. **Commit Changes:** Write clear, concise commit messages.
-3. **Push & Create PR:** Push your branch to GitHub and open a Pull Request targeting the **`dev`** branch.
+3. **Review AI Output:** Thoroughly inspect and verify any AI-assisted code or docs before opening a PR.
+4. **Push & Create PR:** Push your branch to GitHub and open a Pull Request targeting the **`dev`** branch.
 
 ### Releases
 
@@ -84,6 +85,16 @@ For critical bug fixes that need to go to production immediately:
    ```
 2. Open a Pull Request targeting the **`main`** branch.
 3. Once the hotfix is merged into `main`, the changes must be merged or cherry-picked back into `dev` to keep both branches in sync.
+
+---
+
+## 🤖 AI-Assisted Contributions
+
+AI tools (such as Copilot, ChatGPT, Claude, Cursor, Antigravity, etc.) are welcome to assist with writing code, tests, and documentation. However, please keep the following in mind:
+
+- **Review Before Submitting:** Always thoroughly inspect, test, and understand all AI-generated contributions before creating a Pull Request. Never submit unreviewed or unverified AI output.
+- **Author Accountability:** You, as the pull request author, are 100% responsible for all submitted code, including its correctness, security, licensing, and adherence to project standards.
+- **Quality & Verification:** Ensure type checks (`npm run typecheck`) and unit tests (`npm run test`) pass for all AI-assisted modifications before asking for review.
 
 ---
 
