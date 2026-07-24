@@ -43,6 +43,18 @@ export const SettingsView: React.FC = () => {
   const [webSearchTestMessage, setWebSearchTestMessage] = useState<string | null>(null);
   const [webSearchTestOk, setWebSearchTestOk] = useState<boolean | null>(null);
   const [showSearchAdvanced, setShowSearchAdvanced] = useState(false);
+  const [gpuDevices, setGpuDevices] = useState<
+    { id: string; name: string; totalMiB: number; freeMiB: number }[]
+  >([]);
+
+  const refreshGpuDevices = React.useCallback(async () => {
+    try {
+      const devices = await window.goltiAPI.listEngineDevices();
+      setGpuDevices(devices || []);
+    } catch {
+      setGpuDevices([]);
+    }
+  }, []);
 
   useEffect(() => {
     fetchSettings();
@@ -50,6 +62,20 @@ export const SettingsView: React.FC = () => {
     const cleanup = setupListeners();
     return () => cleanup();
   }, []);
+
+  // Refresh the offload device list once the engine binary is present.
+  useEffect(() => {
+    if (engineState.status !== "not-installed") refreshGpuDevices();
+  }, [engineState.status, refreshGpuDevices]);
+
+  // Apply a GPU/CPU selection: persist it and restart the engine if running.
+  const applyEngineDevice = async (device: string) => {
+    await updateSettings({ engineDevice: device });
+    if (engineState.status === "running") {
+      await stopEngine();
+      await startEngine();
+    }
+  };
 
   useEffect(() => {
     if (settingsFocus) setActiveSubTab(settingsFocus);
@@ -282,6 +308,76 @@ export const SettingsView: React.FC = () => {
                   <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Process PID</span>
                   <div style={{ fontSize: "13px", fontWeight: 500 }}>{engineState.pid || "—"}</div>
                 </div>
+              </div>
+
+              {/* GPU acceleration + device picker */}
+              <div style={{ background: "var(--bg-app)", padding: "12px", borderRadius: "6px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Acceleration
+                  </span>
+                  {engineState.status === "running" && (
+                    <span style={{ fontSize: "12px", fontWeight: 500, color: engineState.gpuLayers === 0 ? "var(--text-muted)" : "#98c379" }}>
+                      {engineState.gpuLayers === 0
+                        ? "CPU only"
+                        : `GPU · ${engineState.gpuDevice || engineState.backend || "accelerated"}`}
+                      {engineState.gpuLayers && engineState.gpuLayers > 0
+                        ? ` · ${engineState.gpuLayers} layers`
+                        : engineState.gpuLayers === -1
+                        ? " · all layers"
+                        : ""}
+                      {engineState.fellBackToCpu ? " · reduced (fit)" : ""}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Offload to</label>
+                  <select
+                    value={settings?.engineDevice || "auto"}
+                    onChange={(e) => applyEngineDevice(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: "200px",
+                      padding: "6px 8px",
+                      fontSize: "12px",
+                      borderRadius: "var(--radius-sm)",
+                      backgroundColor: "var(--bg-card)",
+                      color: "var(--text-primary)",
+                      border: "1px solid var(--border-subtle)"
+                    }}
+                  >
+                    <option value="auto">Auto (pick best GPU)</option>
+                    {gpuDevices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} · {(d.totalMiB / 1024).toFixed(1)} GB
+                      </option>
+                    ))}
+                    <option value="cpu">CPU only</option>
+                  </select>
+                  <button
+                    onClick={() => refreshGpuDevices()}
+                    title="Rescan GPUs"
+                    style={{
+                      padding: "6px 10px",
+                      fontSize: "12px",
+                      borderRadius: "var(--radius-sm)",
+                      backgroundColor: "var(--bg-card)",
+                      color: "var(--text-secondary)",
+                      border: "1px solid var(--border-subtle)"
+                    }}
+                  >
+                    Rescan
+                  </button>
+                </div>
+                {gpuDevices.length === 0 && (
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                    No GPU devices detected — the engine will run on CPU. Install the engine first if you just set it up.
+                  </span>
+                )}
+                <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                  Changing this restarts the engine. "Auto" sizes GPU layers to fit your VRAM.
+                </span>
               </div>
 
               {engineState.loadedModel && (

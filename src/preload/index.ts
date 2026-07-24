@@ -180,6 +180,10 @@ const api = {
   startEngine: () => ipcRenderer.invoke('engine:start'),
   stopEngine: () => ipcRenderer.invoke('engine:stop'),
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
+  listEngineDevices: () =>
+    ipcRenderer.invoke('engine:list-devices') as Promise<
+      { id: string; name: string; totalMiB: number; freeMiB: number }[]
+    >,
   downloadModel: (url: string, filename: string) =>
     ipcRenderer.invoke('engine:download-model', url, filename),
   pauseModelDownload: (filename: string) =>

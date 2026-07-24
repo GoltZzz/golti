@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import path from 'path'
-import { getEngineSpawnEnv, getPlatformBinaryKey, getBinaryFilename } from './binary-manager'
+import {
+  getEngineSpawnEnv,
+  getPlatformBinaryKey,
+  getBinaryFilename,
+  getBinaryAsset,
+  LLAMA_VERSION
+} from './binary-manager'
 
 describe('engine binary manager', () => {
   it('returns a valid platform binary key', () => {
@@ -12,6 +18,32 @@ describe('engine binary manager', () => {
   it('names the server binary per platform', () => {
     const expected = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'
     expect(getBinaryFilename()).toBe(expected)
+  })
+
+  describe('getBinaryAsset', () => {
+    const key = getPlatformBinaryKey()
+
+    it('selects a GPU asset for the vulkan backend and a portable one for cpu', () => {
+      if (key === 'unknown') return
+      const gpu = getBinaryAsset('vulkan')
+      const cpu = getBinaryAsset('cpu')
+      expect(gpu.url).toContain(LLAMA_VERSION)
+      expect(cpu.url).toContain(LLAMA_VERSION)
+
+      if (key === 'linux-x64') {
+        expect(gpu.url).toContain('ubuntu-vulkan')
+        expect(gpu.format).toBe('tar.gz')
+        expect(cpu.url).toContain('ubuntu-x64')
+      } else if (key === 'win32-x64') {
+        expect(gpu.url).toContain('win-vulkan')
+        expect(gpu.format).toBe('zip')
+        expect(cpu.url).toContain('win-cpu')
+      } else {
+        // macOS ships Metal in the standard build regardless of requested backend.
+        expect(gpu.url).toContain('macos')
+        expect(gpu.format).toBe('tar.gz')
+      }
+    })
   })
 
   describe('getEngineSpawnEnv', () => {
