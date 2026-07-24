@@ -23,10 +23,11 @@ import type { Message } from '../../../shared/types'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
-import { getSiblings } from '../../../shared/chat-utils'
+import { getSiblings, parseEngineMemoryError } from '../../../shared/chat-utils'
 
 import { useSettingsStore } from '../../stores/settingsStore'
 import { ThinkingBlock } from './ThinkingBlock'
+import { EngineMemoryErrorCard } from './EngineMemoryErrorCard'
 
 interface MessageBubbleProps {
   message: Message
@@ -89,6 +90,22 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   }, [isUser, message.content])
 
   const effectiveReasoning = message.reasoningContent || extractedReasoning
+
+  const memoryErrorDetails = useMemo(() => {
+    if (isUser) return null
+    return parseEngineMemoryError(message.content || message.error, message.model)
+  }, [isUser, message.content, message.error, message.model])
+
+  const displayCleanContent = useMemo(() => {
+    if (!cleanContent) return ''
+    if (memoryErrorDetails?.isMemoryError) {
+      return cleanContent
+        .replace(/\n*\*\[Error:.*?\]\*/gi, '')
+        .replace(/\[Error:.*?\]/gi, '')
+        .trim()
+    }
+    return cleanContent
+  }, [cleanContent, memoryErrorDetails])
 
   const handleCopyCode = (text: string, index: number) => {
     navigator.clipboard.writeText(text)
@@ -296,8 +313,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                     }
                   }}
                 >
-                  {cleanContent}
+                  {displayCleanContent}
                 </ReactMarkdown>
+              )}
+
+              {memoryErrorDetails?.isMemoryError && (
+                <EngineMemoryErrorCard
+                  details={memoryErrorDetails}
+                  onRetry={() => regenerate(message.id)}
+                />
               )}
             </div>
           )}

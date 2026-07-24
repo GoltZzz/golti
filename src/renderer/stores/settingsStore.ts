@@ -10,6 +10,7 @@ interface SettingsState {
   fetchProviders: () => Promise<void>
   saveProvider: (provider: AIProviderConfig) => Promise<void>
   deleteProvider: (id: string) => Promise<void>
+  setupListeners: () => () => void
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -48,7 +49,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   deleteProvider: async (id: string) => {
+    const isGoltiEngine = id.includes('golti-engine') || get().providers.find((p) => p.id === id)?.type === 'golti-engine'
     await window.goltiAPI.deleteProvider(id)
     await get().fetchProviders()
+    if (isGoltiEngine) {
+      const { useEngineStore } = await import('./engineStore')
+      await useEngineStore.getState().fetchStatus()
+    }
+  },
+
+  setupListeners: () => {
+    if (typeof window === 'undefined' || !window.goltiAPI?.onProvidersUpdated) return () => {}
+    return window.goltiAPI.onProvidersUpdated(() => {
+      get().fetchProviders()
+    })
   }
 }))

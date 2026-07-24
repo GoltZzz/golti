@@ -38,7 +38,9 @@ import {
   startEngine,
   getEngineState,
   onEngineStatusChange,
+  updateState,
   downloadEngineBinary,
+  deleteEngineBinary,
   downloadModel,
   listLocalModels,
   deleteLocalModel,
@@ -550,8 +552,24 @@ function setupIpcHandlers(): void {
 
   // DB Providers
   ipcMain.handle('db:providers:list', () => dbProviders.list())
-  ipcMain.handle('db:providers:upsert', (_, provider: any) => dbProviders.upsert(provider))
-  ipcMain.handle('db:providers:delete', (_, id: string) => dbProviders.delete(id))
+  ipcMain.handle('db:providers:upsert', (_, provider: any) => {
+    const res = dbProviders.upsert(provider)
+    sendToRenderer('providers:updated')
+    return res
+  })
+  ipcMain.handle('db:providers:delete', async (_, id: string) => {
+    const provider = dbProviders.list().find((p) => p.id === id || (p.type === 'golti-engine' && id.includes('golti-engine')))
+    const isGoltiEngine = provider?.type === 'golti-engine' || id === 'golti-engine' || id.startsWith('golti-engine_')
+
+    if (isGoltiEngine) {
+      console.warn('[GoltiEngine] Prevented deletion of protected Golti Engine provider:', id)
+      return false
+    }
+
+    const res = dbProviders.delete(id)
+    sendToRenderer('providers:updated')
+    return res
+  })
 
   // Settings
   ipcMain.handle('settings:get', () => dbSettings.get())
@@ -937,9 +955,76 @@ function setupIpcHandlers(): void {
   ipcMain.handle('engine:status', () => getEngineState())
   
   ipcMain.handle('engine:install', async () => {
-    return await downloadEngineBinary((progress) => {
-      mainWindow?.webContents.send('engine:download-progress', progress)
-    })
+    updateState({ status: 'downloading', error: undefined })
+    sendToRenderer('engine:status-change', getEngineState())
+    try {
+      const res = await downloadEngineBinary((progress) => {
+        mainWindow?.webContents.send('engine:download-progress', progress)
+      })
+      const providers = dbProviders.list()
+      const existing = providers.find((p) => p.type === 'golti-engine')
+      if (!existing) {
+        dbProviders.upsert({
+          id: `golti-engine_${Date.now()}`,
+          type: 'golti-engine',
+          name: 'Golti Engine Local',
+          endpoint: 'http://127.0.0.1:8391',
+          apiKey: '',
+          isActive: true,
+          models: []
+        })
+      } else if (!existing.isActive) {
+        dbProviders.upsert({ ...existing, isActive: true })
+      }
+      sendToRenderer('providers:updated')
+
+      updateState({ status: 'stopped', error: undefined })
+      sendToRenderer('engine:status-change', getEngineState())
+      return res
+    } catch (err: any) {
+      updateState({ status: 'error', error: err.message || String(err) })
+      sendToRenderer('engine:status-change', getEngineState())
+      throw err
+    }
+  })
+
+  ipcMain.handle('engine:reinstall', async () => {
+    updateState({ status: 'downloading', error: undefined })
+    sendToRenderer('engine:status-change', getEngineState())
+    try {
+      await stopEngine()
+    } catch {}
+    deleteEngineBinary()
+
+    try {
+      const res = await downloadEngineBinary((progress) => {
+        mainWindow?.webContents.send('engine:download-progress', progress)
+      })
+      const providers = dbProviders.list()
+      const existing = providers.find((p) => p.type === 'golti-engine')
+      if (!existing) {
+        dbProviders.upsert({
+          id: `golti-engine_${Date.now()}`,
+          type: 'golti-engine',
+          name: 'Golti Engine Local',
+          endpoint: 'http://127.0.0.1:8391',
+          apiKey: '',
+          isActive: true,
+          models: []
+        })
+      } else if (!existing.isActive) {
+        dbProviders.upsert({ ...existing, isActive: true })
+      }
+      sendToRenderer('providers:updated')
+
+      updateState({ status: 'stopped', error: undefined })
+      sendToRenderer('engine:status-change', getEngineState())
+      return res
+    } catch (err: any) {
+      updateState({ status: 'error', error: err.message || String(err) })
+      sendToRenderer('engine:status-change', getEngineState())
+      throw err
+    }
   })
 
   ipcMain.handle('engine:start', async () => {

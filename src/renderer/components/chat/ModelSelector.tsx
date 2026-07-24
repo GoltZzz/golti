@@ -1,18 +1,40 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
-import { ChevronDown, RefreshCw, Server, Zap, Search, Brain } from 'lucide-react'
+import { ChevronDown, RefreshCw, Server, Zap, Search, Brain, Check, X, Sparkles } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { ModelInfo } from '../../../shared/types'
+
+interface ParsedModelDetails {
+  displayName: string
+  paramSize?: string
+  quantization?: string
+  isReasoning: boolean
+}
 
 export const ModelSelector: React.FC = () => {
   const { models, selectedModel, setSelectedModel, fetchModels, isLoadingModels } = useChatStore()
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [activeCategory, setActiveCategory] = useState<string>('all')
+  const [highlightedIndex, setHighlightedIndex] = useState<number>(0)
+  const [hoveredModel, setHoveredModel] = useState<ModelInfo | null>(null)
+  
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([])
 
   useEffect(() => {
     fetchModels()
   }, [])
 
+  // Auto focus search input when opened
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => searchInputRef.current?.focus(), 50)
+      setHighlightedIndex(0)
+    }
+  }, [isOpen])
+
+  // Handle clicking outside to close
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -24,6 +46,29 @@ export const ModelSelector: React.FC = () => {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [isOpen])
+
+  const parseModelDetails = (name: string): ParsedModelDetails => {
+    const paramMatch = name.match(/(\d+(?:\.\d+)?[BMKbmk])/)
+    const paramSize = paramMatch ? paramMatch[1].toUpperCase() : undefined
+
+    const quantMatch = name.match(/(Q\d+_[Kk]_[MmLlSs]|\bQ\d+_\d+|\bQ\d+_[Kk]|\bQ\d+|\bFP\d+|\bBF\d+)/i)
+    const quantization = quantMatch ? quantMatch[1].toUpperCase() : undefined
+
+    const lower = name.toLowerCase()
+    const isReasoning = lower.includes('deepseek-r1') || lower.includes('qwen') || lower.includes('reasoning') || lower.includes('think') || lower.includes('r1')
+
+    let displayName = name
+    if (paramMatch) displayName = displayName.replace(paramMatch[0], '')
+    if (quantMatch) displayName = displayName.replace(quantMatch[0], '')
+    displayName = displayName.replace(/[-_]+/g, ' ').trim()
+
+    return {
+      displayName: displayName || name,
+      paramSize,
+      quantization,
+      isReasoning
+    }
+  }
 
   const getProviderBadge = (providerType: string) => {
     if (providerType === 'golti-engine') {
@@ -39,7 +84,8 @@ export const ModelSelector: React.FC = () => {
             alignItems: 'center',
             gap: '3px',
             fontWeight: 600,
-            textTransform: 'uppercase'
+            textTransform: 'uppercase',
+            flexShrink: 0
           }}
         >
           <Zap size={10} /> Golti Engine
@@ -54,7 +100,9 @@ export const ModelSelector: React.FC = () => {
           borderRadius: 'var(--radius-xs)',
           backgroundColor: 'var(--accent-primary-alpha)',
           color: 'var(--accent-primary)',
-          textTransform: 'uppercase'
+          textTransform: 'uppercase',
+          fontWeight: 600,
+          flexShrink: 0
         }}
       >
         {providerType}
@@ -62,17 +110,28 @@ export const ModelSelector: React.FC = () => {
     )
   }
 
-  const isReasoningModel = (name: string) => {
-    const lower = name.toLowerCase()
-    return lower.includes('deepseek-r1') || lower.includes('qwen') || lower.includes('reasoning') || lower.includes('think')
-  }
-
+  // Filter models by search query and category chip
   const filteredModels = useMemo(() => {
-    if (!searchQuery) return models
-    const lowerQuery = searchQuery.toLowerCase()
-    return models.filter(m => m.name.toLowerCase().includes(lowerQuery) || m.providerType.toLowerCase().includes(lowerQuery))
-  }, [models, searchQuery])
+    return models.filter(m => {
+      // Category filter
+      if (activeCategory === 'golti' && m.providerType !== 'golti-engine') return false
+      if (activeCategory === 'ollama' && m.providerType !== 'ollama') return false
+      if (activeCategory === 'reasoning') {
+        const parsed = parseModelDetails(m.name)
+        if (!parsed.isReasoning) return false
+      }
 
+      // Search query filter
+      if (!searchQuery) return true
+      const lowerQuery = searchQuery.toLowerCase()
+      return m.name.toLowerCase().includes(lowerQuery) || m.providerType.toLowerCase().includes(lowerQuery)
+    })
+  }, [models, searchQuery, activeCategory])
+
+  // Flat array of models for indexed keyboard navigation
+  const flatModels = useMemo(() => filteredModels, [filteredModels])
+
+  // Group models by providerType
   const groupedModels = useMemo(() => {
     const groups: Record<string, ModelInfo[]> = {}
     filteredModels.forEach(m => {
@@ -82,153 +141,262 @@ export const ModelSelector: React.FC = () => {
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]))
   }, [filteredModels])
 
+  // Ensure scroll into view for keyboard navigation
+  useEffect(() => {
+    if (isOpen && highlightedIndex >= 0 && itemRefs.current[highlightedIndex]) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({
+        block: 'nearest',
+        behavior: 'smooth'
+      })
+    }
+  }, [highlightedIndex, isOpen])
+
+  // Keyboard navigation handler
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') {
+        setIsOpen(true)
+        e.preventDefault()
+      }
+      return
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex(prev => (flatModels.length > 0 ? (prev + 1) % flatModels.length : 0))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex(prev => (flatModels.length > 0 ? (prev - 1 + flatModels.length) % flatModels.length : 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (flatModels[highlightedIndex]) {
+        setSelectedModel(flatModels[highlightedIndex])
+        setIsOpen(false)
+        setSearchQuery('')
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setIsOpen(false)
+    }
+  }
+
+  // Current selected parsed info for trigger display
+  const selectedParsed = useMemo(() => {
+    return selectedModel ? parseModelDetails(selectedModel.name) : null
+  }, [selectedModel])
+
   return (
-    <div style={{ position: 'relative' }} ref={menuRef}>
+    <div className="model-selector-container" ref={menuRef} onKeyDown={handleKeyDown}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-2)',
-          padding: '6px 12px',
-          borderRadius: 'var(--radius-md)',
-          backgroundColor: 'var(--bg-glass-card)',
-          backdropFilter: 'blur(12px)',
-          border: '1px solid var(--border-medium)',
-          color: 'var(--text-primary)',
-          fontSize: '13px',
-          fontWeight: 500,
-          transition: 'all var(--transition-fast)',
-          cursor: 'pointer'
-        }}
+        className={`model-selector-trigger ${isOpen ? 'is-open' : ''}`}
+        aria-label="Select AI Model"
+        aria-expanded={isOpen}
       >
-        <Server size={14} style={{ color: 'var(--accent-primary)' }} />
-        <span>{selectedModel ? selectedModel.name : 'Select Model'}</span>
+        <Server size={14} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>
+          {selectedParsed ? selectedParsed.displayName : 'Select Model'}
+        </span>
+        {selectedParsed?.paramSize && (
+          <span className="model-selector-badge-param">{selectedParsed.paramSize}</span>
+        )}
+        {selectedParsed?.isReasoning && (
+          <span className="model-selector-badge-reasoning" title="Reasoning Model">
+            <Brain size={12} />
+          </span>
+        )}
         {selectedModel && getProviderBadge(selectedModel.providerType)}
-        <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+        <ChevronDown
+          size={14}
+          style={{
+            color: 'var(--text-muted)',
+            flexShrink: 0,
+            transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform var(--transition-fast)'
+          }}
+        />
       </button>
 
       {isOpen && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 'calc(100% + 6px)',
-            left: 0,
-            minWidth: '320px',
-            maxHeight: '400px',
-            overflowY: 'auto',
-            backgroundColor: 'rgba(19, 20, 31, 0.95)',
-            backdropFilter: 'blur(16px)',
-            border: '1px solid var(--border-medium)',
-            borderRadius: 'var(--radius-md)',
-            boxShadow: 'var(--shadow-lg)',
-            zIndex: 100,
-            padding: '4px',
-            display: 'flex',
-            flexDirection: 'column'
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '6px 8px',
-              borderBottom: '1px solid var(--border-subtle)',
-              marginBottom: '4px'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+        <div className="model-selector-popover">
+          {/* Search Header */}
+          <div className="model-selector-header">
+            <div className="model-selector-search-wrapper">
               <Search size={12} color="var(--text-muted)" />
               <input
-                autoFocus
+                ref={searchInputRef}
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search models..."
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  color: 'var(--text-primary)',
-                  fontSize: '12px',
-                  width: '100%'
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setHighlightedIndex(0)
                 }}
+                placeholder="Search models... (↑↓ to navigate)"
+                className="model-selector-search-input"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="model-selector-search-clear"
+                  title="Clear search"
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
             <button
               onClick={(e) => {
                 e.stopPropagation()
                 fetchModels()
               }}
-              title="Refresh Models"
-              style={{ padding: '2px', color: 'var(--text-muted)', marginLeft: '8px' }}
+              title="Refresh available models"
+              className="model-selector-refresh-btn"
             >
               <RefreshCw size={12} className={isLoadingModels ? 'dot-flashing' : ''} />
             </button>
           </div>
 
-          {models.length === 0 ? (
-            <div style={{ padding: '12px', fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>
-              No active models found.<br />Check Cookbook or Settings to download models.
-            </div>
-          ) : filteredModels.length === 0 ? (
-            <div style={{ padding: '12px', fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>
-              No models match your search.
-            </div>
-          ) : (
-            groupedModels.map(([provider, providerModels]) => (
-              <div key={provider} style={{ marginBottom: '8px' }}>
-                <div style={{ padding: '4px 8px', fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {provider}
-                </div>
-                {providerModels.map((m) => {
-                  const isReasoning = isReasoningModel(m.name)
-                  return (
-                    <div
-                      key={m.id}
-                      onClick={() => {
-                        setSelectedModel(m)
-                        setIsOpen(false)
-                        setSearchQuery('')
-                      }}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: 'var(--radius-sm)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '8px',
-                        backgroundColor: selectedModel?.id === m.id ? 'var(--accent-primary-alpha)' : 'transparent',
-                        color: selectedModel?.id === m.id ? 'var(--accent-primary)' : 'var(--text-primary)',
-                        fontSize: '13px'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (selectedModel?.id !== m.id) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
-                      }}
-                      onMouseLeave={(e) => {
-                        if (selectedModel?.id !== m.id) e.currentTarget.style.backgroundColor = 'transparent'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
-                        {isReasoning && (
-                          <span title="Thinking/Reasoning Model" style={{ display: 'inline-flex', color: 'var(--accent-purple)' }}>
-                            <Brain size={12} />
-                          </span>
-                        )}
-                      </div>
-                      {getProviderBadge(m.providerType)}
-                    </div>
-                  )
-                })}
+          {/* Category Filter Chips */}
+          <div className="model-selector-filter-bar">
+            <button
+              className={`model-selector-chip ${activeCategory === 'all' ? 'is-active' : ''}`}
+              onClick={() => {
+                setActiveCategory('all')
+                setHighlightedIndex(0)
+              }}
+            >
+              All ({models.length})
+            </button>
+            <button
+              className={`model-selector-chip ${activeCategory === 'golti' ? 'is-active' : ''}`}
+              onClick={() => {
+                setActiveCategory('golti')
+                setHighlightedIndex(0)
+              }}
+            >
+              <Zap size={10} style={{ marginRight: 3 }} /> Golti Engine
+            </button>
+            <button
+              className={`model-selector-chip ${activeCategory === 'reasoning' ? 'is-active' : ''}`}
+              onClick={() => {
+                setActiveCategory('reasoning')
+                setHighlightedIndex(0)
+              }}
+            >
+              <Brain size={10} style={{ marginRight: 3 }} /> Reasoning
+            </button>
+            <button
+              className={`model-selector-chip ${activeCategory === 'ollama' ? 'is-active' : ''}`}
+              onClick={() => {
+                setActiveCategory('ollama')
+                setHighlightedIndex(0)
+              }}
+            >
+              <Server size={10} style={{ marginRight: 3 }} /> Ollama
+            </button>
+          </div>
+
+          {/* Model List */}
+          <div className="model-selector-list">
+            {models.length === 0 ? (
+              <div style={{ padding: '20px 12px', fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                No active models found.<br />Check Cookbook or Settings to download models.
               </div>
-            ))
+            ) : filteredModels.length === 0 ? (
+              <div style={{ padding: '20px 12px', fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                No models match your search or filter.
+              </div>
+            ) : (
+              (() => {
+                let globalIndexCounter = 0
+                return groupedModels.map(([provider, providerModels]) => (
+                  <div key={provider} className="model-selector-group">
+                    <div className="model-selector-group-title">
+                      <span>{provider}</span>
+                      <span style={{ fontSize: '9px', fontWeight: 500, color: 'var(--text-muted)' }}>
+                        {providerModels.length} {providerModels.length === 1 ? 'model' : 'models'}
+                      </span>
+                    </div>
+
+                    {providerModels.map((m) => {
+                      const itemIndex = globalIndexCounter++
+                      const isSelected = selectedModel?.id === m.id
+                      const isHighlighted = highlightedIndex === itemIndex
+                      const parsed = parseModelDetails(m.name)
+
+                      return (
+                        <div
+                          key={m.id}
+                          ref={(el) => {
+                            itemRefs.current[itemIndex] = el
+                          }}
+                          onClick={() => {
+                            setSelectedModel(m)
+                            setIsOpen(false)
+                            setSearchQuery('')
+                          }}
+                          onMouseEnter={() => {
+                            setHighlightedIndex(itemIndex)
+                            setHoveredModel(m)
+                          }}
+                          onMouseLeave={() => setHoveredModel(null)}
+                          className={`model-selector-item ${isSelected ? 'is-selected' : ''} ${
+                            isHighlighted ? 'is-highlighted' : ''
+                          }`}
+                        >
+                          {/* Active Selection Indicator Bar */}
+                          {isSelected && <div className="model-selector-active-bar" />}
+
+                          <div className="model-selector-item-left">
+                            <span className="model-selector-name">{parsed.displayName}</span>
+
+                            {parsed.paramSize && (
+                              <span className="model-selector-badge-param">{parsed.paramSize}</span>
+                            )}
+
+                            {parsed.quantization && (
+                              <span className="model-selector-badge-quant">{parsed.quantization}</span>
+                            )}
+
+                            {parsed.isReasoning && (
+                              <span className="model-selector-badge-reasoning" title="Reasoning / Thinking Model">
+                                <Brain size={12} />
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Checkmark for selected model */}
+                          {isSelected && (
+                            <div className="model-selector-check">
+                              <Check size={14} />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ))
+              })()
+            )}
+          </div>
+
+          {/* Detailed Hover Tooltip */}
+          {hoveredModel && (
+            <div className="model-selector-tooltip">
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)', marginRight: 4 }}>
+                {hoveredModel.name}
+              </span>
+              <span>({hoveredModel.providerType})</span>
+            </div>
           )}
+
+          {/* Footer Shortcuts hint */}
+          <div className="model-selector-footer">
+            <span>{filteredModels.length} models</span>
+            <span>↑↓ Navigate • ↵ Select • ESC Close</span>
+          </div>
         </div>
       )}
     </div>
   )
 }
-

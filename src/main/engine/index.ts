@@ -1,10 +1,11 @@
-import { isBinaryInstalled, downloadEngineBinary, getBinaryPath } from './binary-manager'
+import { isBinaryInstalled, downloadEngineBinary, deleteEngineBinary, getBinaryPath } from './binary-manager'
 import {
   startEngine,
   stopEngine,
   loadModelInEngine,
   getEngineState,
   onEngineStatusChange,
+  updateState,
   checkEngineHealth,
   listEngineDevices,
   type EngineDevice
@@ -50,12 +51,14 @@ export async function initEngine(): Promise<EngineState> {
 export {
   isBinaryInstalled,
   downloadEngineBinary,
+  deleteEngineBinary,
   getBinaryPath,
   startEngine,
   stopEngine,
   loadModelInEngine,
   getEngineState,
   onEngineStatusChange,
+  updateState,
   checkEngineHealth,
   listEngineDevices,
   type EngineDevice,
@@ -67,3 +70,4 @@ export {
   cancelModelDownload,
   getModelDir
 }
+

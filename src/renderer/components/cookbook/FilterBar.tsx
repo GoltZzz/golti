@@ -37,6 +37,7 @@ export const FilterBar: React.FC = () => {
     { id: 'smollm', label: 'SmolLM' },
     { id: 'internlm', label: 'InternLM' },
     { id: 'command-r', label: 'Command-R' },
+    { id: 'hermes', label: 'Hermes' },
     { id: 'kimi', label: 'Kimi' }
   ]
 

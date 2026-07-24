@@ -3,19 +3,25 @@ import { Cpu, HardDrive, Circle, Zap, Globe } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useEngineStore } from '../../stores/engineStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { EngineStatusBadge } from '../common/EngineStatusBadge'
 import { SystemInfo } from '../../../shared/types'
 
 export const StatusBar: React.FC = () => {
   const { selectedModel, isGenerating, tokenBudget, webSearchEnabled } = useChatStore()
-  const { engineState } = useEngineStore()
+  const { engineState, setupListeners: setupEngineListeners, fetchStatus: fetchEngineStatus } = useEngineStore()
   const { runtimeState, progress, setupListeners } = useSearchRuntimeStore()
+  const { settings, fetchSettings } = useSettingsStore()
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
 
   useEffect(() => {
+    fetchSettings()
+    fetchEngineStatus()
     window.goltiAPI.getSystemInfo().then(setSysInfo).catch(console.error)
   }, [])
 
   useEffect(() => setupListeners(), [setupListeners])
+  useEffect(() => setupEngineListeners(), [setupEngineListeners])
 
   const showSearchStatus =
     webSearchEnabled &&
@@ -57,10 +63,9 @@ export const StatusBar: React.FC = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: engineState.status === 'running' ? '#98c379' : 'var(--text-muted)' }}>
-          <Zap size={12} />
-          <span>Engine: {engineState.status}</span>
-        </div>
+        {settings?.engineEnabled !== false && (
+          <EngineStatusBadge engineState={engineState} compact />
+        )}
 
         {showSearchStatus && (
           <div
