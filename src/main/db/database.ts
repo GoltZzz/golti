@@ -48,6 +48,7 @@ const defaultSettings: Settings = {
   engineEnabled: true,
   enginePort: 8391,
   engineGpuLayers: -1,
+  engineDevice: 'auto',
   webSearch: {
     provider: 'local',
     maxResults: 5,
