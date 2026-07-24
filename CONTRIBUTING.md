@@ -76,9 +76,13 @@ This project uses a dual-branch model:
 3. **Review AI Output:** Thoroughly inspect and verify any AI-assisted code or docs before opening a PR.
 4. **Push & Create PR:** Push your branch to GitHub and open a Pull Request targeting the **`dev`** branch.
 
-### Releases
+### Releases (Merging `dev` into `main`)
 
-When features in `dev` are stable and ready for users, a periodic release Pull Request is created to merge `dev` into `main`.
+When all new features and fixes on the `dev` branch are thoroughly tested and ready for production:
+1. The repository maintainer creates a **Release Pull Request** comparing `dev` into `main` (`base: main` ← `compare: dev`).
+2. Automated CI checks (`typecheck` and `unit tests`) run against the Release PR.
+3. Once verified, the maintainer merges the Release PR into `main` and creates a tagged release on GitHub (e.g. `v1.0.0`).
+4. `main` now represents the latest stable release for all users.
 
 ### Hotfixes
 
