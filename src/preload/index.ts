@@ -159,6 +159,11 @@ const api = {
   getDetailedInstalledModels: (): Promise<InstalledLocalModelInfo[]> =>
     ipcRenderer.invoke('cookbook:detailed-installed-models'),
   pullOllamaModel: (modelTag: string) => ipcRenderer.invoke('cookbook:ollama-pull', modelTag),
+  cancelOllamaPull: (modelTag: string) =>
+    ipcRenderer.invoke('cookbook:ollama-pull-cancel', modelTag) as Promise<{
+      success: boolean
+      error?: string
+    }>,
   deleteOllamaModel: (modelTag: string) =>
     ipcRenderer.invoke('cookbook:ollama-delete', modelTag) as Promise<{ success: boolean; error?: string }>,
   onPullProgress: (callback: (data: any) => void) => {
@@ -177,6 +182,15 @@ const api = {
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
   downloadModel: (url: string, filename: string) =>
     ipcRenderer.invoke('engine:download-model', url, filename),
+  pauseModelDownload: (filename: string) =>
+    ipcRenderer.invoke('engine:pause-download', filename) as Promise<{ success: boolean }>,
+  cancelModelDownload: (filename: string) =>
+    ipcRenderer.invoke('engine:cancel-download', filename) as Promise<{ success: boolean }>,
+  deletePartialModel: (filename: string) =>
+    ipcRenderer.invoke('engine:delete-partial', filename) as Promise<{
+      success: boolean
+      error?: string
+    }>,
   listLocalModels: () => ipcRenderer.invoke('engine:list-models'),
   deleteLocalModel: (filename: string) =>
     ipcRenderer.invoke('engine:delete-model', filename) as Promise<{ success: boolean; error?: string }>,

@@ -1,9 +1,23 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { EngineDownloadProgress } from '../../shared/types'
+import { EngineDownloadProgress, ModelDownloadResult } from '../../shared/types'
+
+let modelDirOverride: string | null = null
+
+/** Test-only: force model directory (avoids relying on os.homedir mocks). */
+export function _setModelDirForTests(dir: string | null): void {
+  modelDirOverride = dir
+}
 
 export function getModelDir(): string {
+  if (modelDirOverride) {
+    if (!fs.existsSync(modelDirOverride)) {
+      fs.mkdirSync(modelDirOverride, { recursive: true })
+    }
+    return modelDirOverride
+  }
+
   const homeDir = os.homedir()
   const modelDir = path.join(homeDir, 'Golti', 'models')
   if (!fs.existsSync(modelDir)) {
@@ -17,6 +31,52 @@ export interface LocalModelFile {
   filepath: string
   sizeBytes: number
   sizeGB: number
+}
+
+type ActiveDownload = {
+  controller: AbortController
+  paused: boolean
+  cancelled: boolean
+  lastProgress: EngineDownloadProgress | null
+}
+
+const activeDownloads = new Map<string, ActiveDownload>()
+
+function assertSafeGgufBasename(filename: string): string {
+  const base = path.basename(filename)
+  if (base !== filename || !base.toLowerCase().endsWith('.gguf') || base.includes('..')) {
+    throw new Error('Invalid model filename')
+  }
+  return base
+}
+
+function resolveModelPath(filename: string): { dir: string; filepath: string; tempPath: string } {
+  const base = assertSafeGgufBasename(filename)
+  const dir = getModelDir()
+  const filepath = path.join(dir, base)
+  const resolved = path.resolve(filepath)
+  if (!resolved.startsWith(path.resolve(dir) + path.sep)) {
+    throw new Error('Invalid model path')
+  }
+  return { dir, filepath, tempPath: path.join(dir, `${base}.tmp`) }
+}
+
+function unlinkQuiet(filePath: string): void {
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+  } catch {
+    // ignore
+  }
+}
+
+function endStream(stream: fs.WriteStream): Promise<void> {
+  return new Promise((resolve) => {
+    if (stream.closed || stream.destroyed) {
+      resolve()
+      return
+    }
+    stream.end(() => resolve())
+  })
 }
 
 export function listLocalModels(): LocalModelFile[] {
@@ -43,21 +103,62 @@ export function listLocalModels(): LocalModelFile[] {
 }
 
 export function deleteLocalModel(filename: string): boolean {
-  // Only allow simple basenames ending in .gguf (no path traversal)
-  const base = path.basename(filename)
-  if (base !== filename || !base.toLowerCase().endsWith('.gguf') || base.includes('..')) {
-    throw new Error('Invalid model filename')
-  }
-
-  const dir = getModelDir()
-  const filepath = path.join(dir, base)
-  const resolved = path.resolve(filepath)
-  if (!resolved.startsWith(path.resolve(dir) + path.sep)) {
-    throw new Error('Invalid model path')
-  }
+  const { filepath, tempPath } = resolveModelPath(filename)
+  let deleted = false
 
   if (fs.existsSync(filepath)) {
     fs.unlinkSync(filepath)
+    deleted = true
+  }
+  if (fs.existsSync(tempPath)) {
+    fs.unlinkSync(tempPath)
+    deleted = true
+  }
+  return deleted
+}
+
+/** Remove only the in-progress `.tmp` file (keeps a completed `.gguf` if present). */
+export function deletePartialModel(filename: string): boolean {
+  const { tempPath } = resolveModelPath(filename)
+  if (!fs.existsSync(tempPath)) return false
+  fs.unlinkSync(tempPath)
+  return true
+}
+
+export function getPartialDownloadBytes(filename: string): number {
+  const { tempPath } = resolveModelPath(filename)
+  if (!fs.existsSync(tempPath)) return 0
+  try {
+    return fs.statSync(tempPath).size
+  } catch {
+    return 0
+  }
+}
+
+export function pauseModelDownload(filename: string): boolean {
+  const base = assertSafeGgufBasename(filename)
+  const active = activeDownloads.get(base)
+  if (!active || active.paused || active.cancelled) return false
+  active.paused = true
+  active.controller.abort()
+  return true
+}
+
+export function cancelModelDownload(filename: string): boolean {
+  const base = assertSafeGgufBasename(filename)
+  const { tempPath } = resolveModelPath(base)
+  const active = activeDownloads.get(base)
+
+  if (active) {
+    active.cancelled = true
+    active.paused = false
+    active.controller.abort()
+    return true
+  }
+
+  // No active transfer — still clear any leftover partial
+  if (fs.existsSync(tempPath)) {
+    unlinkQuiet(tempPath)
     return true
   }
   return false
@@ -67,86 +168,232 @@ export async function downloadModel(
   url: string,
   filename: string,
   onProgress?: (progress: EngineDownloadProgress) => void
-): Promise<string> {
-  const dir = getModelDir()
-  const targetPath = path.join(dir, filename)
-  const tempPath = path.join(dir, `${filename}.tmp`)
+): Promise<ModelDownloadResult> {
+  const base = assertSafeGgufBasename(filename)
+  const { filepath: targetPath, tempPath } = resolveModelPath(base)
 
   if (fs.existsSync(targetPath)) {
-    return targetPath
+    return { status: 'complete', path: targetPath }
   }
 
-  onProgress?.({
+  if (activeDownloads.has(base)) {
+    throw new Error(`Download already in progress for ${base}`)
+  }
+
+  const controller = new AbortController()
+  const active: ActiveDownload = {
+    controller,
+    paused: false,
+    cancelled: false,
+    lastProgress: null
+  }
+  activeDownloads.set(base, active)
+
+  const emit = (progress: EngineDownloadProgress) => {
+    active.lastProgress = progress
+    onProgress?.(progress)
+  }
+
+  let existingBytes = getPartialDownloadBytes(base)
+
+  emit({
     type: 'model',
-    name: filename,
-    completed: 0,
-    total: 100,
+    name: base,
+    completed: existingBytes,
+    total: existingBytes > 0 ? Math.max(existingBytes, 1) : 100,
     percent: 0,
-    speed: 'Connecting...'
+    speed: existingBytes > 0 ? 'Resuming...' : 'Connecting...',
+    status: 'downloading'
   })
 
   try {
-    const res = await fetch(url, { redirect: 'follow' })
-    if (!res.ok || !res.body) {
-      throw new Error(`Failed to download model ${filename}: HTTP ${res.status} ${res.statusText}`)
+    const headers: Record<string, string> = {}
+    if (existingBytes > 0) {
+      headers.Range = `bytes=${existingBytes}-`
     }
 
-    const totalBytes = Number(res.headers.get('content-length') || 0)
-    let downloadedBytes = 0
-    let lastTime = Date.now()
-    let lastBytes = 0
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers
+    })
 
-    const fileStream = fs.createWriteStream(tempPath)
+    // Server ignored Range — restart from scratch
+    if (existingBytes > 0 && res.status === 200) {
+      unlinkQuiet(tempPath)
+      existingBytes = 0
+    }
+
+    const isPartial = res.status === 206
+    if (!res.ok && res.status !== 206) {
+      throw new Error(`Failed to download model ${base}: HTTP ${res.status} ${res.statusText}`)
+    }
+    if (!res.body) {
+      throw new Error(`Failed to download model ${base}: empty response body`)
+    }
+
+    const contentLength = Number(res.headers.get('content-length') || 0)
+    const contentRange = res.headers.get('content-range')
+    let totalBytes = 0
+    if (contentRange) {
+      const match = /\/(\d+)$/.exec(contentRange)
+      if (match) totalBytes = Number(match[1])
+    }
+    if (!totalBytes) {
+      totalBytes = isPartial ? existingBytes + contentLength : contentLength
+    }
+
+    let downloadedBytes = existingBytes
+    let lastTime = Date.now()
+    let lastBytes = existingBytes
+
+    const fileStream = fs.createWriteStream(tempPath, {
+      flags: existingBytes > 0 ? 'a' : 'w'
+    })
     const reader = res.body.getReader()
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      fileStream.write(value)
-      downloadedBytes += value.length
+        const canContinue = fileStream.write(value)
+        downloadedBytes += value.length
 
-      const now = Date.now()
-      if (now - lastTime > 400 || downloadedBytes === totalBytes) {
-        const timeDiff = (now - lastTime) / 1000
-        const bytesDiff = downloadedBytes - lastBytes
-        const bytesPerSec = timeDiff > 0 ? bytesDiff / timeDiff : 0
-        const speedMBs = (bytesPerSec / (1024 * 1024)).toFixed(1)
-        const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 50
+        if (!canContinue) {
+          await new Promise<void>((resolve) => fileStream.once('drain', resolve))
+        }
 
-        onProgress?.({
-          type: 'model',
-          name: filename,
-          completed: downloadedBytes,
-          total: totalBytes,
-          percent,
-          speed: `${speedMBs} MB/s`
-        })
+        const now = Date.now()
+        const isFirstChunk = lastBytes === existingBytes && downloadedBytes > existingBytes
+        if (
+          isFirstChunk ||
+          now - lastTime > 400 ||
+          (totalBytes > 0 && downloadedBytes === totalBytes)
+        ) {
+          const timeDiff = (now - lastTime) / 1000
+          const bytesDiff = downloadedBytes - lastBytes
+          const bytesPerSec = timeDiff > 0 ? bytesDiff / timeDiff : 0
+          const speedMBs = (bytesPerSec / (1024 * 1024)).toFixed(1)
+          const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 50
 
-        lastTime = now
-        lastBytes = downloadedBytes
+          emit({
+            type: 'model',
+            name: base,
+            completed: downloadedBytes,
+            total: totalBytes,
+            percent,
+            speed: `${speedMBs} MB/s`,
+            status: 'downloading'
+          })
+
+          lastTime = now
+          lastBytes = downloadedBytes
+        }
+      }
+    } finally {
+      await endStream(fileStream)
+      try {
+        reader.releaseLock()
+      } catch {
+        // ignore
       }
     }
 
-    fileStream.end()
-    await new Promise<void>((resolve) => fileStream.on('finish', () => resolve()))
+    if (active.cancelled) {
+      unlinkQuiet(tempPath)
+      emit({
+        type: 'model',
+        name: base,
+        completed: 0,
+        total: totalBytes || 0,
+        percent: 0,
+        speed: 'Cancelled',
+        status: 'cancelled'
+      })
+      return { status: 'cancelled' }
+    }
+
+    if (active.paused) {
+      const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0
+      emit({
+        type: 'model',
+        name: base,
+        completed: downloadedBytes,
+        total: totalBytes || downloadedBytes,
+        percent,
+        speed: 'Paused',
+        status: 'paused'
+      })
+      return { status: 'paused' }
+    }
 
     fs.renameSync(tempPath, targetPath)
 
-    onProgress?.({
+    emit({
       type: 'model',
-      name: filename,
+      name: base,
       completed: downloadedBytes,
       total: downloadedBytes,
       percent: 100,
-      speed: 'Complete'
+      speed: 'Complete',
+      status: 'complete'
     })
 
-    return targetPath
+    return { status: 'complete', path: targetPath }
   } catch (err: any) {
-    if (fs.existsSync(tempPath)) {
-      try { fs.unlinkSync(tempPath) } catch {}
+    if (active.cancelled) {
+      unlinkQuiet(tempPath)
+      emit({
+        type: 'model',
+        name: base,
+        completed: 0,
+        total: active.lastProgress?.total || 0,
+        percent: 0,
+        speed: 'Cancelled',
+        status: 'cancelled'
+      })
+      return { status: 'cancelled' }
     }
+
+    if (active.paused || err?.name === 'AbortError') {
+      const completed = getPartialDownloadBytes(base)
+      const total = active.lastProgress?.total || completed
+      const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+      emit({
+        type: 'model',
+        name: base,
+        completed,
+        total,
+        percent,
+        speed: 'Paused',
+        status: 'paused'
+      })
+      return { status: 'paused' }
+    }
+
+    const message = err?.message || String(err)
+    const completed = getPartialDownloadBytes(base)
+    const total = active.lastProgress?.total || completed
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+    emit({
+      type: 'model',
+      name: base,
+      completed,
+      total,
+      percent,
+      speed: 'Error',
+      status: 'error',
+      error: message
+    })
+    // Keep .tmp so the user can Resume
     throw err
+  } finally {
+    activeDownloads.delete(base)
   }
+}
+
+/** Test helpers */
+export function _resetActiveDownloadsForTests(): void {
+  activeDownloads.clear()
 }

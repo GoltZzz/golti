@@ -26,7 +26,8 @@ export const CookbookView: React.FC = () => {
     searchQuery,
     scanHardware,
     checkOllama,
-    fetchInstalled
+    fetchInstalled,
+    setupPullListeners
   } = useCookbookStore()
 
   const { engineState, localModels, setupListeners, installEngine, isInstallingBinary } = useEngineStore()
@@ -38,9 +39,11 @@ export const CookbookView: React.FC = () => {
     fetchInstalled()
     const unsubEngine = setupListeners()
     const unsubOllama = setupOllamaListeners()
+    const unsubPull = setupPullListeners()
     return () => {
       unsubEngine()
       unsubOllama()
+      unsubPull()
     }
   }, [])
 

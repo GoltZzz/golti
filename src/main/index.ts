@@ -40,6 +40,9 @@ import {
   downloadModel,
   listLocalModels,
   deleteLocalModel,
+  deletePartialModel,
+  pauseModelDownload,
+  cancelModelDownload,
   loadModelInEngine
 } from './engine'
 import {
@@ -599,11 +602,24 @@ function setupIpcHandlers(): void {
     return installedList
   })
 
+  // Active Ollama pulls keyed by model tag (supports cancel)
+  const activeOllamaPulls = new Map<string, AbortController>()
+
   // Cookbook Ollama Model Pull
   ipcMain.handle('cookbook:ollama-pull', async (_, modelTag: string) => {
     const providers = dbProviders.list()
     const ollamaProvider = providers.find(p => p.type === 'ollama')
     const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+
+    // Abort any existing pull for the same tag before starting a new one
+    const existing = activeOllamaPulls.get(modelTag)
+    if (existing) {
+      existing.abort()
+      activeOllamaPulls.delete(modelTag)
+    }
+
+    const controller = new AbortController()
+    activeOllamaPulls.set(modelTag, controller)
 
     try {
       const response = await fetch(`${endpoint}/api/pull`, {
@@ -612,16 +628,19 @@ function setupIpcHandlers(): void {
         body: JSON.stringify({
           name: modelTag,
           stream: true
-        })
+        }),
+        signal: controller.signal
       })
 
       if (!response.ok || !response.body) {
+        activeOllamaPulls.delete(modelTag)
         throw new Error(`Ollama error (${response.status}): ${await response.text()}`)
       }
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
+      let lastProgress = { completed: 0, total: 0, percent: 0 }
 
       // Process stream asynchronously
       ;(async () => {
@@ -629,7 +648,7 @@ function setupIpcHandlers(): void {
           while (true) {
             const { done, value } = await reader.read()
             if (done) break
-            
+
             buffer += decoder.decode(value, { stream: true })
             const lines = buffer.split('\n')
             buffer = lines.pop() || ''
@@ -641,7 +660,8 @@ function setupIpcHandlers(): void {
                 const completed = parsed.completed || 0
                 const total = parsed.total || 0
                 const percent = total > 0 ? Math.round((completed / total) * 100) : 0
-                
+                lastProgress = { completed, total, percent }
+
                 mainWindow?.webContents.send('cookbook:pull-progress', {
                   modelTag,
                   status: parsed.status || 'pulling',
@@ -653,6 +673,17 @@ function setupIpcHandlers(): void {
                 // Ignore partial JSON
               }
             }
+          }
+
+          if (controller.signal.aborted) {
+            mainWindow?.webContents.send('cookbook:pull-progress', {
+              modelTag,
+              status: 'cancelled',
+              completed: lastProgress.completed,
+              total: lastProgress.total,
+              percent: lastProgress.percent
+            })
+            return
           }
 
           // Done pulling, notify completion
@@ -670,25 +701,58 @@ function setupIpcHandlers(): void {
               await getAllModels()
             } catch (err) {}
           }, 1000)
-
         } catch (streamErr: any) {
+          if (controller.signal.aborted || streamErr?.name === 'AbortError') {
+            mainWindow?.webContents.send('cookbook:pull-progress', {
+              modelTag,
+              status: 'cancelled',
+              completed: lastProgress.completed,
+              total: lastProgress.total,
+              percent: lastProgress.percent
+            })
+            return
+          }
           console.error('[Ollama Pull Stream Error]', streamErr)
           mainWindow?.webContents.send('cookbook:pull-progress', {
             modelTag,
             status: 'error',
-            completed: 0,
-            total: 0,
-            percent: 0,
+            completed: lastProgress.completed,
+            total: lastProgress.total,
+            percent: lastProgress.percent,
             error: streamErr.message
           })
+        } finally {
+          if (activeOllamaPulls.get(modelTag) === controller) {
+            activeOllamaPulls.delete(modelTag)
+          }
         }
       })()
 
       return { success: true }
     } catch (err: any) {
+      if (activeOllamaPulls.get(modelTag) === controller) {
+        activeOllamaPulls.delete(modelTag)
+      }
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        mainWindow?.webContents.send('cookbook:pull-progress', {
+          modelTag,
+          status: 'cancelled',
+          completed: 0,
+          total: 0,
+          percent: 0
+        })
+        return { success: true, cancelled: true }
+      }
       console.error('[Ollama Pull Error]', err)
       return { success: false, error: err.message }
     }
+  })
+
+  ipcMain.handle('cookbook:ollama-pull-cancel', (_, modelTag: string) => {
+    const controller = activeOllamaPulls.get(modelTag)
+    if (!controller) return { success: false, error: 'No active pull for this model' }
+    controller.abort()
+    return { success: true }
   })
 
   // Ollama Background Process IPC Handlers
@@ -745,10 +809,30 @@ function setupIpcHandlers(): void {
     const res = await downloadModel(url, filename, (progress) => {
       mainWindow?.webContents.send('engine:download-progress', progress)
     })
-    try {
-      await getAllModels()
-    } catch (e) {}
+    if (res.status === 'complete') {
+      try {
+        await getAllModels()
+      } catch (e) {}
+    }
     return res
+  })
+
+  ipcMain.handle('engine:pause-download', (_, filename: string) => {
+    return { success: pauseModelDownload(filename) }
+  })
+
+  ipcMain.handle('engine:cancel-download', (_, filename: string) => {
+    return { success: cancelModelDownload(filename) }
+  })
+
+  ipcMain.handle('engine:delete-partial', (_, filename: string) => {
+    try {
+      cancelModelDownload(filename)
+      deletePartialModel(filename)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to delete partial download' }
+    }
   })
 
   ipcMain.handle('engine:list-models', () => listLocalModels())
@@ -766,6 +850,7 @@ function setupIpcHandlers(): void {
     }
 
     try {
+      cancelModelDownload(filename)
       const res = deleteLocalModel(filename)
       try {
         await getAllModels()

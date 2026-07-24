@@ -41,3 +41,6 @@ lerna-debug.log*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Test temp dirs
+.tmp-model-dl-*/

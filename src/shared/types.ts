@@ -30,6 +30,13 @@ export interface OllamaState {
   logs?: string[]
 }
 
+export type EngineDownloadStatus =
+  | 'downloading'
+  | 'paused'
+  | 'error'
+  | 'cancelled'
+  | 'complete'
+
 export interface EngineDownloadProgress {
   type: 'binary' | 'model'
   name: string
@@ -37,7 +44,14 @@ export interface EngineDownloadProgress {
   total: number
   percent: number
   speed?: string
+  status?: EngineDownloadStatus
+  error?: string
 }
+
+export type ModelDownloadResult =
+  | { status: 'complete'; path: string }
+  | { status: 'paused' }
+  | { status: 'cancelled' }
 
 export interface AIProviderConfig {
   id: string

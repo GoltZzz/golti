@@ -23,9 +23,8 @@ interface CookbookState {
   filters: CookbookFilters
   sortBy: 'name' | 'size' | 'compatibility' | 'family'
   searchQuery: string
-  pullingModel: string | null // ollamaTag of model being pulled
-  pullProgress: PullProgress | null
-  pullError: string | null
+  pullingModels: Record<string, PullProgress>
+  pullErrors: Record<string, string>
   deletingOllamaTag: string | null
   deleteError: string | null
 
@@ -33,6 +32,8 @@ interface CookbookState {
   checkOllama: () => Promise<void>
   fetchInstalled: () => Promise<void>
   pullModel: (ollamaTag: string) => Promise<void>
+  cancelPull: (ollamaTag: string) => Promise<void>
+  clearPullState: (ollamaTag: string) => void
   deleteOllamaModel: (ollamaTag: string) => Promise<{ success: boolean; error?: string }>
   deleteLocalEngineModel: (filename: string) => Promise<{ success: boolean; error?: string }>
   setFilter: <K extends keyof CookbookFilters>(key: K, value: CookbookFilters[K]) => void
@@ -41,13 +42,23 @@ interface CookbookState {
   toggleHardwareCardCollapsed: () => void
   setSort: (sortBy: CookbookState['sortBy']) => void
   setSearch: (query: string) => void
-  setPullingModel: (model: string | null) => void
-  setPullProgress: (progress: PullProgress | null) => void
+  setupPullListeners: () => () => void
   clearDeleteError: () => void
 }
 
+function removePullEntry(
+  pullingModels: Record<string, PullProgress>,
+  pullErrors: Record<string, string>,
+  tag: string
+) {
+  const nextPulling = { ...pullingModels }
+  delete nextPulling[tag]
+  const nextErrors = { ...pullErrors }
+  delete nextErrors[tag]
+  return { pullingModels: nextPulling, pullErrors: nextErrors }
+}
+
 export const useCookbookStore = create<CookbookState>((set, get) => {
-  // Listen for progress updates from IPC
   let cleanupListener: (() => void) | null = null
 
   return {
@@ -69,9 +80,8 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     },
     sortBy: 'compatibility',
     searchQuery: '',
-    pullingModel: null,
-    pullProgress: null,
-    pullError: null,
+    pullingModels: {},
+    pullErrors: {},
     deletingOllamaTag: null,
     deleteError: null,
 
@@ -110,75 +120,145 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
       }
     },
 
-    pullModel: async (ollamaTag: string) => {
-      if (get().pullingModel) return
-
-      set({ pullingModel: ollamaTag, pullProgress: null, pullError: null })
-
-      // Setup listener
-      if (cleanupListener) cleanupListener()
+    setupPullListeners: () => {
+      // Keep a single long-lived listener so in-flight pulls still settle
+      // if the user leaves the Cookbook tab mid-download.
+      if (cleanupListener) {
+        return () => {}
+      }
 
       cleanupListener = window.goltiAPI.onPullProgress((data: any) => {
-        if (data.modelTag === ollamaTag) {
-          if (data.status === 'success') {
-            set({
-              pullingModel: null,
-              pullProgress: null,
-              pullError: null
-            })
-            // Refetch installed models
-            get().fetchInstalled()
-            useChatStore.getState().fetchModels()
-            if (cleanupListener) {
-              cleanupListener()
-              cleanupListener = null
+        const tag = data.modelTag as string
+        if (!tag) return
+
+        if (data.status === 'success') {
+          set((state) => removePullEntry(state.pullingModels, state.pullErrors, tag))
+          get().fetchInstalled()
+          useChatStore.getState().fetchModels()
+        } else if (data.status === 'error') {
+          set((state) => {
+            const nextErrors = {
+              ...state.pullErrors,
+              [tag]: data.error || 'Failed to download model'
             }
-          } else if (data.status === 'error') {
-            set({
-              pullingModel: null,
-              pullProgress: null,
-              pullError: data.error || 'Failed to download model'
-            })
-            if (cleanupListener) {
-              cleanupListener()
-              cleanupListener = null
+            return {
+              pullingModels: {
+                ...state.pullingModels,
+                [tag]: {
+                  modelTag: tag,
+                  status: 'error',
+                  completed: data.completed || state.pullingModels[tag]?.completed || 0,
+                  total: data.total || state.pullingModels[tag]?.total || 0,
+                  percent: data.percent || state.pullingModels[tag]?.percent || 0
+                }
+              },
+              pullErrors: nextErrors
             }
-          } else {
-            set({
-              pullProgress: {
-                modelTag: data.modelTag,
+          })
+        } else if (data.status === 'cancelled') {
+          // Keep last progress so Resume can show where we left off
+          set((state) => {
+            const nextErrors = { ...state.pullErrors }
+            delete nextErrors[tag]
+            return {
+              pullingModels: {
+                ...state.pullingModels,
+                [tag]: {
+                  modelTag: tag,
+                  status: 'cancelled',
+                  completed: data.completed || state.pullingModels[tag]?.completed || 0,
+                  total: data.total || state.pullingModels[tag]?.total || 0,
+                  percent: data.percent || state.pullingModels[tag]?.percent || 0
+                }
+              },
+              pullErrors: nextErrors
+            }
+          })
+        } else {
+          set((state) => ({
+            pullingModels: {
+              ...state.pullingModels,
+              [tag]: {
+                modelTag: tag,
                 status: data.status,
                 completed: data.completed,
                 total: data.total,
                 percent: data.percent
               }
-            })
-          }
+            }
+          }))
         }
       })
+
+      return () => {}
+    },
+
+    pullModel: async (ollamaTag: string) => {
+      const existing = get().pullingModels[ollamaTag]
+      // Block only while an active pull is in flight (allow resume after cancelled/error)
+      if (existing && existing.status !== 'cancelled' && existing.status !== 'error') return
+
+      set((state) => {
+        const nextErrors = { ...state.pullErrors }
+        delete nextErrors[ollamaTag]
+        return {
+          pullingModels: {
+            ...state.pullingModels,
+            [ollamaTag]: {
+              modelTag: ollamaTag,
+              status: 'starting',
+              completed: existing?.completed || 0,
+              total: existing?.total || 0,
+              percent: existing?.percent || 0
+            }
+          },
+          pullErrors: nextErrors
+        }
+      })
+
+      // Ensure a long-lived listener is attached even if CookbookView hasn't mounted yet
+      if (!cleanupListener) {
+        get().setupPullListeners()
+      }
 
       try {
         const result = await window.goltiAPI.pullOllamaModel(ollamaTag)
         if (!result.success) {
-          set({
-            pullingModel: null,
-            pullError: result.error || 'Failed to start pull'
+          set((state) => {
+            const { pullingModels } = removePullEntry(state.pullingModels, state.pullErrors, ollamaTag)
+            return {
+              pullingModels,
+              pullErrors: {
+                ...state.pullErrors,
+                [ollamaTag]: result.error || 'Failed to start pull'
+              }
+            }
           })
-          if (cleanupListener) {
-            cleanupListener()
-            cleanupListener = null
-          }
         }
       } catch (err: any) {
-        set({
-          pullingModel: null,
-          pullError: err.message || 'Error occurred during pull request'
+        set((state) => {
+          const { pullingModels } = removePullEntry(state.pullingModels, state.pullErrors, ollamaTag)
+          return {
+            pullingModels,
+            pullErrors: {
+              ...state.pullErrors,
+              [ollamaTag]: err.message || 'Error occurred during pull request'
+            }
+          }
         })
-        if (cleanupListener) {
-          cleanupListener()
-          cleanupListener = null
-        }
       }
+    },
+
+    cancelPull: async (ollamaTag: string) => {
+      try {
+        await window.goltiAPI.cancelOllamaPull(ollamaTag)
+      } catch (err: any) {
+        console.warn('[CookbookStore] Failed to cancel pull:', err)
+      }
+    },
+
+    clearPullState: (ollamaTag: string) => {
+      set((state) => removePullEntry(state.pullingModels, state.pullErrors, ollamaTag))
     },
 
     deleteOllamaModel: async (ollamaTag: string) => {
@@ -254,8 +334,6 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     },
 
     setSort: (sortBy) => set({ sortBy }),
-    setSearch: (searchQuery) => set({ searchQuery }),
-    setPullingModel: (pullingModel) => set({ pullingModel }),
-    setPullProgress: (pullProgress) => set({ pullProgress })
+    setSearch: (searchQuery) => set({ searchQuery })
   }
 })

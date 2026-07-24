@@ -22,7 +22,10 @@ import {
   Sparkles,
   RefreshCw,
   Zap,
-  Trash2
+  Trash2,
+  Pause,
+  Play,
+  X
 } from 'lucide-react'
 
 interface ModelCardProps {
@@ -41,21 +44,26 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   isOllamaOnline
 }) => {
   const {
-    pullingModel,
-    pullProgress,
-    pullError,
+    pullingModels,
+    pullErrors,
     pullModel,
+    cancelPull,
+    clearPullState,
     deleteOllamaModel,
     deletingOllamaTag
   } = useCookbookStore()
   const {
     localModels,
-    downloadingModelFilename,
-    downloadProgress,
+    downloadingModels,
+    downloadErrors,
     isInstallingBinary,
     engineState,
     installEngine,
     downloadModel,
+    pauseDownload,
+    resumeDownload,
+    cancelDownload,
+    clearDownload,
     loadModel,
     deleteLocalModel
   } = useEngineStore()
@@ -66,17 +74,37 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const [selectedSource, setSelectedSource] = useState<DeleteSource | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [engineActionBusy, setEngineActionBusy] = useState(false)
+  const [ollamaActionBusy, setOllamaActionBusy] = useState(false)
 
   const isEngineInstalled = engineState.status !== 'not-installed'
   const isEngineModelDownloaded = model.ggufFilename
     ? localModels.some((lm) => lm.filename === model.ggufFilename)
     : false
 
-  const isCurrentEngineDownloading = model.ggufFilename && downloadingModelFilename === model.ggufFilename
+  const engineDownloadProgress = model.ggufFilename
+    ? downloadingModels[model.ggufFilename]
+    : undefined
+  const engineDownloadError = model.ggufFilename
+    ? downloadErrors[model.ggufFilename] || engineDownloadProgress?.error
+    : undefined
+  const engineStatus = engineDownloadProgress?.status
+  const isEngineDownloading = Boolean(engineDownloadProgress) && (!engineStatus || engineStatus === 'downloading')
+  const isEnginePaused = engineStatus === 'paused'
+  const isEngineErrored = engineStatus === 'error' || Boolean(engineDownloadError && engineDownloadProgress)
+  const showEngineProgress =
+    Boolean(engineDownloadProgress) &&
+    (isEngineDownloading || isEnginePaused || isEngineErrored)
+
+  const pullProgress = pullingModels[model.ollamaTag]
+  const pullError = pullErrors[model.ollamaTag]
+  const isPullCancelled = pullProgress?.status === 'cancelled'
+  const isPullErrored = pullProgress?.status === 'error' || Boolean(pullError)
+  const isCurrentPulling =
+    Boolean(pullProgress) && pullProgress?.status !== 'cancelled' && pullProgress?.status !== 'error'
+  const showOllamaProgress = isCurrentPulling || isPullCancelled || (isPullErrored && Boolean(pullProgress))
 
   const comp = getCompatibility(systemInfo, model)
-
-  const isCurrentPulling = pullingModel === model.ollamaTag
 
   const isEngineActive = useMemo(() => {
     if (!model.ggufFilename || !engineState.loadedModel) return false
@@ -242,17 +270,82 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   }
 
   const handleOllamaInstall = () => {
-    if (!isOllamaOnline) return
-    pullModel(model.ollamaTag)
+    if (!isOllamaOnline || isCurrentPulling) return
+    // Fire-and-forget so Engine downloads on this/other cards stay independently clickable
+    void pullModel(model.ollamaTag)
   }
 
   const handleEngineInstall = async () => {
-    if (!isEngineInstalled) {
-      await installEngine()
+    if (isInstallingBinary || isEngineDownloading || engineActionBusy) return
+    setEngineActionBusy(true)
+    try {
+      if (!isEngineInstalled) {
+        await installEngine()
+      }
+      // Do not await the transfer — progress is tracked in engineStore so
+      // Ollama pulls (and other Engine downloads) can start concurrently.
+      if (model.ggufUrl && model.ggufFilename) {
+        void downloadModel(model.ggufUrl, model.ggufFilename)
+      }
+    } finally {
+      setEngineActionBusy(false)
     }
-    if (model.ggufUrl && model.ggufFilename) {
-      await downloadModel(model.ggufUrl, model.ggufFilename)
+  }
+
+  const handleEnginePause = async () => {
+    if (!model.ggufFilename || engineActionBusy) return
+    setEngineActionBusy(true)
+    try {
+      await pauseDownload(model.ggufFilename)
+    } finally {
+      setEngineActionBusy(false)
     }
+  }
+
+  const handleEngineCancel = async () => {
+    if (!model.ggufFilename || engineActionBusy) return
+    setEngineActionBusy(true)
+    try {
+      await cancelDownload(model.ggufFilename)
+    } finally {
+      setEngineActionBusy(false)
+    }
+  }
+
+  const handleEngineResume = () => {
+    if (!model.ggufUrl || !model.ggufFilename || engineActionBusy || isEngineDownloading) return
+    // Kick off resume without awaiting the full download (keeps Pause/Cancel usable
+    // and allows concurrent Ollama pulls).
+    void resumeDownload(model.ggufUrl, model.ggufFilename)
+  }
+
+  const handleEngineClear = async () => {
+    if (!model.ggufFilename || engineActionBusy) return
+    setEngineActionBusy(true)
+    try {
+      await clearDownload(model.ggufFilename)
+    } finally {
+      setEngineActionBusy(false)
+    }
+  }
+
+  const handleOllamaCancel = async () => {
+    if (ollamaActionBusy) return
+    setOllamaActionBusy(true)
+    try {
+      await cancelPull(model.ollamaTag)
+    } finally {
+      setOllamaActionBusy(false)
+    }
+  }
+
+  const handleOllamaResume = () => {
+    if (!isOllamaOnline || ollamaActionBusy || isCurrentPulling) return
+    void pullModel(model.ollamaTag)
+  }
+
+  const handleOllamaClear = () => {
+    clearPullState(model.ollamaTag)
   }
 
   const openDeleteDialog = () => {
@@ -381,25 +474,84 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               <MessageSquare size={13} /> Chat (Engine)
             </button>
           </div>
-        ) : isCurrentEngineDownloading ? (
+        ) : showEngineProgress ? (
           <div className="pull-progress-container" style={{ width: '100%' }}>
             <div className="pull-status-row">
               <span className="status-text">
-                <RefreshCw size={12} className="spin" /> {downloadProgress?.speed || 'Downloading GGUF...'}
+                {isEngineDownloading ? (
+                  <RefreshCw size={12} className="spin" />
+                ) : isEnginePaused ? (
+                  <Pause size={12} />
+                ) : (
+                  <AlertTriangle size={12} />
+                )}{' '}
+                {isEnginePaused
+                  ? 'Paused'
+                  : isEngineErrored
+                    ? 'Download failed'
+                    : engineDownloadProgress?.speed || 'Downloading GGUF...'}
               </span>
-              <span className="percent-text">{downloadProgress?.percent || 0}%</span>
+              <span className="percent-text">{engineDownloadProgress?.percent || 0}%</span>
             </div>
             <div className="progress-bar-bg">
               <div
                 className="progress-bar-fill"
-                style={{ width: `${downloadProgress?.percent || 0}%`, backgroundColor: '#e5c07b' }}
+                style={{
+                  width: `${engineDownloadProgress?.percent || 0}%`,
+                  backgroundColor: isEngineErrored ? '#e06c75' : '#e5c07b'
+                }}
               ></div>
+            </div>
+            <div className="pull-action-row">
+              {isEngineDownloading ? (
+                <>
+                  <button
+                    type="button"
+                    className="pull-action-btn"
+                    onClick={handleEnginePause}
+                    disabled={engineActionBusy}
+                    title="Pause download"
+                  >
+                    <Pause size={12} /> Pause
+                  </button>
+                  <button
+                    type="button"
+                    className="pull-action-btn pull-action-danger"
+                    onClick={handleEngineCancel}
+                    disabled={engineActionBusy}
+                    title="Cancel and discard partial download"
+                  >
+                    <X size={12} /> Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="pull-action-btn"
+                    onClick={handleEngineResume}
+                    disabled={engineActionBusy}
+                    title="Resume download"
+                  >
+                    <Play size={12} /> Resume
+                  </button>
+                  <button
+                    type="button"
+                    className="pull-action-btn pull-action-danger"
+                    onClick={handleEngineClear}
+                    disabled={engineActionBusy}
+                    title="Delete partial download"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ) : model.ggufUrl ? (
           <button
             onClick={handleEngineInstall}
-            disabled={isInstallingBinary || downloadingModelFilename !== null}
+            disabled={isInstallingBinary || isEngineDownloading || engineActionBusy}
             className="action-btn"
             style={{
               width: '100%',
@@ -438,25 +590,73 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               <MessageSquare size={13} /> Chat (Ollama)
             </button>
           </div>
-        ) : isCurrentPulling ? (
+        ) : showOllamaProgress ? (
           <div className="pull-progress-container" style={{ width: '100%' }}>
             <div className="pull-status-row">
               <span className="status-text">
-                <RefreshCw size={12} className="spin" /> {pullProgress?.status || 'Downloading...'}
+                {isCurrentPulling ? (
+                  <RefreshCw size={12} className="spin" />
+                ) : isPullErrored ? (
+                  <AlertTriangle size={12} />
+                ) : (
+                  <Pause size={12} />
+                )}{' '}
+                {isPullCancelled
+                  ? 'Cancelled'
+                  : isPullErrored
+                    ? 'Download failed'
+                    : pullProgress?.status || 'Downloading...'}
               </span>
               <span className="percent-text">{pullProgress?.percent || 0}%</span>
             </div>
             <div className="progress-bar-bg">
               <div
                 className="progress-bar-fill"
-                style={{ width: `${pullProgress?.percent || 0}%` }}
+                style={{
+                  width: `${pullProgress?.percent || 0}%`,
+                  backgroundColor: isPullErrored ? '#e06c75' : undefined
+                }}
               ></div>
+            </div>
+            <div className="pull-action-row">
+              {isCurrentPulling ? (
+                <button
+                  type="button"
+                  className="pull-action-btn pull-action-danger"
+                  onClick={handleOllamaCancel}
+                  disabled={ollamaActionBusy}
+                  title="Cancel pull"
+                >
+                  <X size={12} /> Cancel
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="pull-action-btn"
+                    onClick={handleOllamaResume}
+                    disabled={!isOllamaOnline || ollamaActionBusy}
+                    title="Resume pull"
+                  >
+                    <Play size={12} /> Resume
+                  </button>
+                  <button
+                    type="button"
+                    className="pull-action-btn pull-action-danger"
+                    onClick={handleOllamaClear}
+                    disabled={ollamaActionBusy}
+                    title="Clear cancelled pull"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ) : (
           <button
             onClick={handleOllamaInstall}
-            disabled={!isOllamaOnline || pullingModel !== null}
+            disabled={!isOllamaOnline || isCurrentPulling}
             className={`action-btn install-btn ${!isOllamaOnline ? 'disabled' : ''}`}
             style={{ width: '100%' }}
             title={!isOllamaOnline ? 'Ollama is offline. Start Ollama to install.' : 'Pull model to Ollama'}
@@ -480,9 +680,9 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         )}
       </div>
 
-      {isCurrentPulling && pullError && (
-        <div className="card-error-banner">
-          <AlertTriangle size={12} /> {pullError}
+      {(pullError || engineDownloadError) && (
+        <div className="card-error-banner" role="alert">
+          <AlertTriangle size={12} /> {pullError || engineDownloadError}
         </div>
       )}
 

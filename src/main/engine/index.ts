@@ -7,7 +7,15 @@ import {
   onEngineStatusChange,
   checkEngineHealth
 } from './engine-process'
-import { downloadModel, listLocalModels, deleteLocalModel, getModelDir } from './model-downloader'
+import {
+  downloadModel,
+  listLocalModels,
+  deleteLocalModel,
+  deletePartialModel,
+  pauseModelDownload,
+  cancelModelDownload,
+  getModelDir
+} from './model-downloader'
 import { EngineDownloadProgress, EngineState } from '../../shared/types'
 import { dbProviders } from '../db/database'
 
@@ -50,5 +58,8 @@ export {
   downloadModel,
   listLocalModels,
   deleteLocalModel,
+  deletePartialModel,
+  pauseModelDownload,
+  cancelModelDownload,
   getModelDir
 }
