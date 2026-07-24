@@ -76,6 +76,8 @@ const api = {
     ipcRenderer.invoke('artifacts:versions', artifactId),
   restoreArtifactVersion: (artifactId: string, version: number): Promise<Artifact | undefined> =>
     ipcRenderer.invoke('artifacts:restore', artifactId, version),
+  saveShellToFile: (opts: { content: string; filePath?: string; defaultFilename?: string }): Promise<{ success: boolean; filePath?: string; cancelled?: boolean; error?: string }> =>
+    ipcRenderer.invoke('artifacts:save-to-file', opts),
 
   // Citations
   listCitations: (conversationId: string): Promise<Citation[]> =>

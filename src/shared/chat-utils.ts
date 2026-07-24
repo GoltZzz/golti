@@ -82,32 +82,47 @@ export interface ExtractedShell {
 export type ExtractedArtifact = ExtractedShell
 
 const SHELL_FENCE =
-  /```(?:shell(?::(\w+))?|artifact(?::(\w+))?|([\w+-]+))\s*(?:\n|$)([\s\S]*?)```/g
+  /```(?:shell(?::(\w+))?|artifact(?::(\w+))?|([\w+-]+))?\s*(?:\n|$)([\s\S]*?)```/g
 
 /**
  * Detect fenced code/markdown blocks. Prefer ```shell:lang, ```artifact:lang or ```lang
  * blocks longer than a short inline snippet threshold.
  */
-export function extractShells(content: string, minLines = 3): ExtractedShell[] {
+export function extractShells(content: string, minLines = 1): ExtractedShell[] {
   const results: ExtractedShell[] = []
   let match: RegExpExecArray | null
   const re = new RegExp(SHELL_FENCE.source, 'g')
 
   while ((match = re.exec(content)) !== null) {
     const shellLang = match[1] || match[2]
-    const language = (shellLang || match[3] || 'text').toLowerCase()
-    const body = (match[4] || '').replace(/\n$/, '')
+    let language = (shellLang || match[3] || 'text').toLowerCase()
+    let body = (match[4] || '').replace(/\n$/, '')
+
+    if (
+      body.trim().startsWith('mermaid\n') ||
+      /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|mindmap|timeline)/i.test(
+        body.trim()
+      )
+    ) {
+      language = 'mermaid'
+      if (body.trim().startsWith('mermaid\n')) {
+        body = body.trim().slice(8).trimStart()
+      }
+    }
+
     const lineCount = body.split('\n').length
-    const isExplicit = Boolean(shellLang) || language === 'markdown' || language === 'md'
+    const isExplicit = Boolean(shellLang) || language === 'markdown' || language === 'md' || language === 'mermaid'
     if (!isExplicit && lineCount < minLines) continue
 
     const type = language === 'markdown' || language === 'md' ? 'markdown' : 'code'
     const title =
       type === 'markdown'
         ? 'Document'
-        : language === 'text'
-          ? 'Code'
-          : `${language} snippet`
+        : language === 'mermaid'
+          ? 'Mermaid Diagram'
+          : language === 'text'
+            ? 'Code'
+            : `${language} snippet`
 
     results.push({
       title,

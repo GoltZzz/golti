@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
 import os from 'os'
 import {
@@ -349,6 +349,27 @@ function setupIpcHandlers(): void {
   ipcMain.handle('artifacts:versions', (_, artifactId: string) => dbArtifacts.listVersions(artifactId))
   ipcMain.handle('artifacts:restore', (_, artifactId: string, version: number) =>
     dbArtifacts.restoreVersion(artifactId, version)
+  )
+  ipcMain.handle(
+    'artifacts:save-to-file',
+    async (_, { content, filePath, defaultFilename }: { content: string; filePath?: string; defaultFilename?: string }) => {
+      try {
+        let savePath = filePath
+        if (!savePath) {
+          const res = await dialog.showSaveDialog(mainWindow!, {
+            defaultPath: defaultFilename || 'shell-artifact.txt'
+          })
+          if (res.canceled || !res.filePath) {
+            return { success: false, cancelled: true }
+          }
+          savePath = res.filePath
+        }
+        await fs.promises.writeFile(savePath, content, 'utf-8')
+        return { success: true, filePath: savePath }
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Failed to write file' }
+      }
+    }
   )
 
   // Citations

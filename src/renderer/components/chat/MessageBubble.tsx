@@ -20,6 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import type { Message } from '../../../shared/types'
+import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
 import { getSiblings } from '../../../shared/chat-utils'
@@ -45,6 +46,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const selectBranch = useChatStore((s) => s.selectBranch)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const isGenerating = useChatStore((s) => s.isGenerating)
+  const createOrSelectShell = useChatStore((s) => s.createOrSelectShell)
   
   const messageCitations = useChatStore(
     useShallow((s) => s.citations.filter((c) => c.messageId === message.id))
@@ -62,6 +64,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
 
   const siblingIndex = Math.max(0, siblings.findIndex((s) => s.id === message.id))
   const isDeepResearchMsg = message.isDeepResearch || Boolean(researchProgress)
+  const researchPhaseLabel = researchProgress ? getResearchPhaseLabel(researchProgress) : null
+  const isResearchActive =
+    Boolean(researchProgress) &&
+    researchProgress!.phase !== 'done' &&
+    researchProgress!.phase !== 'error'
 
   const { cleanContent, extractedReasoning } = useMemo(() => {
     if (isUser || !message.content) {
@@ -112,6 +119,54 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             />
           )}
 
+          {!isUser && researchProgress && (
+            <div className="research-panel animate-fade-in">
+              <div className="research-header">
+                <Search size={14} className={`research-icon ${isResearchActive ? 'pulse' : ''}`} />
+                <span className={`research-title ${isResearchActive ? 'research-title-live' : ''}`}>
+                  {researchPhaseLabel}
+                </span>
+              </div>
+              {researchProgress.plan?.reasoning && researchProgress.phase !== 'planning' && (
+                <p className="research-reasoning">{researchProgress.plan.reasoning}</p>
+              )}
+              {researchProgress.phase === 'planning' && researchProgress.steps.length === 0 && (
+                <p className="research-status" role="status">
+                  Breaking the topic into search queries…
+                </p>
+              )}
+              {researchProgress.steps.length > 0 && (
+                <div className="research-steps">
+                  {researchProgress.steps.map((step) => (
+                    <div key={step.stepIndex} className={`research-step is-${step.status}`}>
+                      <span className="research-step-status">
+                        {step.status === 'searching' && <Loader2 size={12} className="spin text-cyan" />}
+                        {step.status === 'reading' && <Loader2 size={12} className="spin text-yellow" />}
+                        {step.status === 'done' && <Check size={12} className="text-green" />}
+                        {step.status === 'error' && <AlertCircle size={12} className="text-red" />}
+                        {step.status === 'pending' && <span className="step-dot" />}
+                      </span>
+                      <span className="research-step-query">{step.query}</span>
+                      {step.status === 'done' && step.sourcesFound > 0 && (
+                        <span className="research-step-count">{step.sourcesFound} sources</span>
+                      )}
+                      {step.status === 'error' && step.error && (
+                        <span className="research-step-error" title={step.error}>
+                          {step.error}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {researchProgress.phase === 'synthesizing' && message.isStreaming && !cleanContent && (
+                <p className="research-status" role="status">
+                  Synthesizing findings into a report…
+                </p>
+              )}
+            </div>
+          )}
+
           {editing ? (
             <div className="msg-edit-box">
               <textarea
@@ -138,37 +193,80 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
           ) : (
             <div className="msg-content" data-selectable>
               {message.isStreaming && !cleanContent ? (
-                <div style={{ display: 'flex', gap: 4, padding: '6px 0' }}>
-                  <span className="dot-flashing" />
-                  <span className="dot-flashing" />
-                  <span className="dot-flashing" />
-                </div>
+                researchProgress ? null : (
+                  <div style={{ display: 'flex', gap: 4, padding: '6px 0' }}>
+                    <span className="dot-flashing" />
+                    <span className="dot-flashing" />
+                    <span className="dot-flashing" />
+                  </div>
+                )
               ) : (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
                     code({ inline, className, children, ...props }: any) {
                       const match = /language-(\w+)/.exec(className || '')
-                      const codeText = String(children).replace(/\n$/, '')
+                      let rawText = String(children).replace(/\n$/, '')
+                      let lang = match ? match[1] : 'code'
+
+                      if (
+                        lang === 'code' ||
+                        rawText.trim().startsWith('mermaid\n') ||
+                        /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|mindmap|timeline)/i.test(
+                          rawText.trim()
+                        )
+                      ) {
+                        if (
+                          rawText.trim().startsWith('mermaid\n') ||
+                          /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|mindmap|timeline)/i.test(
+                            rawText.trim()
+                          )
+                        ) {
+                          lang = 'mermaid'
+                          if (rawText.trim().startsWith('mermaid\n')) {
+                            rawText = rawText.trim().slice(8).trimStart()
+                          }
+                        }
+                      }
+
+                      const codeText = rawText
                       const index = codeText.length + (match?.[1]?.length || 0)
 
                       if (!inline) {
-                        const lang = match ? match[1] : 'code'
                         return (
                           <div className="msg-code-block">
                             <div className="msg-code-header">
                               <span style={{ fontWeight: 600, textTransform: 'lowercase', letterSpacing: '0.02em' }}>{lang}</span>
                               <div style={{ display: 'flex', gap: 6 }}>
                                 <button
-                                  onClick={() => {
-                                    const sh = messageShells.find(
-                                      (a) => a.content === codeText || a.language === lang
-                                    )
-                                    if (sh) selectShell(sh.id)
+                                  className="chat-ghost-btn"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    color: 'var(--accent-primary, #818cf8)',
+                                    fontSize: 11,
+                                    padding: '2px 6px'
                                   }}
-                                  title="Open in Shell"
+                                  onClick={() => {
+                                    const title =
+                                      lang === 'mermaid'
+                                        ? 'Mermaid Diagram'
+                                        : lang === 'html' || lang === 'svg'
+                                          ? `${lang.toUpperCase()} Canvas`
+                                          : `${lang.toUpperCase()} Document`
+                                    createOrSelectShell({
+                                      conversationId: message.conversationId,
+                                      messageId: message.id,
+                                      title,
+                                      language: lang,
+                                      content: codeText,
+                                      type: lang === 'markdown' || lang === 'md' ? 'markdown' : 'code'
+                                    })
+                                  }}
+                                  title="Open in Shell Canvas"
                                 >
-                                  <FileCode2 size={12} /> Shell
+                                  <FileCode2 size={12} /> Open in Shell Canvas
                                 </button>
                                 <button onClick={() => handleCopyCode(codeText, index)}>
                                   {copiedCodeIndex === index ? (
@@ -201,35 +299,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                   {cleanContent}
                 </ReactMarkdown>
               )}
-            </div>
-          )}
-
-          {!isUser && researchProgress && (
-            <div className="research-panel animate-fade-in">
-              <div className="research-header">
-                <Search size={14} className="research-icon" />
-                <span className="research-title">Deep Research Plan</span>
-              </div>
-              {researchProgress.plan?.reasoning && (
-                <p className="research-reasoning">{researchProgress.plan.reasoning}</p>
-              )}
-              <div className="research-steps">
-                {researchProgress.steps.map((step) => (
-                  <div key={step.stepIndex} className={`research-step is-${step.status}`}>
-                    <span className="research-step-status">
-                      {step.status === 'searching' && <Loader2 size={12} className="spin text-cyan" />}
-                      {step.status === 'reading' && <Loader2 size={12} className="spin text-yellow" />}
-                      {step.status === 'done' && <Check size={12} className="text-green" />}
-                      {step.status === 'error' && <AlertCircle size={12} className="text-red" />}
-                      {step.status === 'pending' && <span className="step-dot" />}
-                    </span>
-                    <span className="research-step-query">{step.query}</span>
-                    {step.status === 'done' && step.sourcesFound > 0 && (
-                      <span className="research-step-count">{step.sourcesFound} sources</span>
-                    )}
-                  </div>
-                ))}
-              </div>
             </div>
           )}
 

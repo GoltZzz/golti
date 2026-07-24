@@ -7,8 +7,6 @@ import type {
   GenerationSettings,
   Message,
   ModelInfo,
-  ResearchPlan,
-  ResearchStep,
   StreamChunkPayload,
   TokenBudget,
   WebSearchStatus
@@ -19,6 +17,12 @@ import {
   getActiveLeaf,
   getBranchPath
 } from '../../shared/chat-utils'
+import {
+  createPlanningProgress,
+  seedPendingStepsFromPlan,
+  type ResearchProgress
+} from '../../shared/research-progress'
+import { useInspectorStore } from './inspectorStore'
 
 declare global {
   interface Window {
@@ -54,7 +58,7 @@ interface ChatState {
   deepResearchEnabled: boolean
   searchSetupError: string | null
   searchStatusByMessageId: Record<string, WebSearchStatus>
-  researchProgressByMessageId: Record<string, { plan?: ResearchPlan; steps: ResearchStep[] }>
+  researchProgressByMessageId: Record<string, ResearchProgress>
   generationSettings: GenerationSettings
   draft: string
   draftUndoStack: string[]
@@ -104,6 +108,14 @@ interface ChatState {
   restoreArtifactVersion: (id: string, version: number) => Promise<void>
   updateConversationSystemPrompt: (prompt: string) => Promise<void>
   hydrateWebSearchPreference: () => Promise<void>
+  createOrSelectShell: (shellData: {
+    conversationId: string
+    messageId: string
+    title: string
+    language: string
+    content: string
+    type: 'code' | 'markdown'
+  }) => string
 }
 
 function recomputeVisible(messages: Message[], activeLeafId?: string | null): Message[] {
@@ -140,7 +152,7 @@ function conversationScopedReset() {
     isGenerating: false,
     activeGenerationId: null as string | null,
     searchStatusByMessageId: {} as Record<string, WebSearchStatus>,
-    researchProgressByMessageId: {} as Record<string, { plan?: ResearchPlan; steps: ResearchStep[] }>,
+    researchProgressByMessageId: {} as Record<string, ResearchProgress>,
     conversationError: null as string | null
   }
 }
@@ -413,6 +425,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       createdAt: now,
       parentId: conv?.activeLeafId ?? null
     }
+    const deepResearchEnabled = get().deepResearchEnabled
     const tempAssistantMsg: Message = {
       id: `temp_a_${now}`,
       conversationId: convId,
@@ -420,11 +433,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content: '',
       createdAt: now + 1,
       isStreaming: true,
-      parentId: tempUserMsg.id
+      parentId: tempUserMsg.id,
+      isDeepResearch: deepResearchEnabled || undefined
     }
 
     set((state) => {
       const messages = [...state.messages, tempUserMsg, tempAssistantMsg]
+      const researchProgressByMessageId = deepResearchEnabled
+        ? {
+            ...state.researchProgressByMessageId,
+            [tempAssistantMsg.id]: createPlanningProgress(text)
+          }
+        : state.researchProgressByMessageId
       return {
         messages,
         visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
@@ -433,7 +453,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draftUndoStack: [],
         draftRedoStack: [],
         forceWebSearchNext: false,
-        searchSetupError: null
+        searchSetupError: null,
+        researchProgressByMessageId
       }
     })
 
@@ -446,7 +467,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       parentId: conv?.activeLeafId ?? null,
       webSearchEnabled: get().webSearchEnabled,
       forceWebSearch,
-      deepResearchEnabled: get().deepResearchEnabled,
+      deepResearchEnabled,
       contextItemIds: get()
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
@@ -501,7 +522,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const genId = get().activeGenerationId
     if (!genId) return
     await window.goltiAPI.cancelGeneration(genId)
-    set({ isGenerating: false, activeGenerationId: null })
+    set((state) => {
+      const messages = state.messages.map((msg) =>
+        msg.isStreaming || msg.generationId === genId
+          ? { ...msg, isStreaming: false }
+          : msg
+      )
+      let researchProgressByMessageId = state.researchProgressByMessageId
+      for (const [messageId, progress] of Object.entries(researchProgressByMessageId)) {
+        if (progress.phase !== 'done' && progress.phase !== 'error') {
+          researchProgressByMessageId = {
+            ...researchProgressByMessageId,
+            [messageId]: { ...progress, phase: 'done' }
+          }
+        }
+      }
+      return {
+        messages,
+        visibleMessages: recomputeVisible(
+          messages,
+          state.conversations.find((c) => c.id === state.currentConversationId)?.activeLeafId
+        ),
+        isGenerating: false,
+        activeGenerationId: null,
+        researchProgressByMessageId
+      }
+    })
   },
 
   regenerate: async (assistantMessageId: string) => {
@@ -710,11 +756,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (researchPlan) {
           researchProgressByMessageId = {
             ...researchProgressByMessageId,
-            [messageId]: { plan: researchPlan, steps: [] }
+            [messageId]: {
+              plan: researchPlan,
+              steps: seedPendingStepsFromPlan(researchPlan),
+              phase: 'searching'
+            }
           }
         }
         if (researchStep) {
-          const current = researchProgressByMessageId[messageId] || { steps: [] }
+          const current = researchProgressByMessageId[messageId] || {
+            steps: [],
+            phase: 'searching' as const
+          }
           const existingSteps = current.steps
           const idx = existingSteps.findIndex((s) => s.stepIndex === researchStep.stepIndex)
           const newSteps =
@@ -723,7 +776,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
               : [...existingSteps, researchStep]
           researchProgressByMessageId = {
             ...researchProgressByMessageId,
-            [messageId]: { ...current, steps: newSteps }
+            [messageId]: {
+              ...current,
+              steps: newSteps,
+              phase: current.phase === 'planning' ? 'searching' : current.phase
+            }
+          }
+        }
+
+        const existingResearch = researchProgressByMessageId[messageId]
+        if (
+          existingResearch &&
+          (contentDelta || correctedContent !== undefined) &&
+          (existingResearch.phase === 'searching' || existingResearch.phase === 'planning')
+        ) {
+          researchProgressByMessageId = {
+            ...researchProgressByMessageId,
+            [messageId]: { ...existingResearch, phase: 'synthesizing' }
+          }
+        }
+        if (existingResearch && done) {
+          researchProgressByMessageId = {
+            ...researchProgressByMessageId,
+            [messageId]: {
+              ...researchProgressByMessageId[messageId],
+              phase: error ? 'error' : 'done'
+            }
           }
         }
 
@@ -772,6 +850,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const arts = await window.goltiAPI.listArtifacts(id)
     if (seq !== artifactsSeq || get().currentConversationId !== id) return
     set({ artifacts: arts })
+  },
+
+  createOrSelectShell: (shellData) => {
+    const existing = get().artifacts.find(
+      (a) =>
+        a.messageId === shellData.messageId &&
+        (a.content.trim() === shellData.content.trim() || a.language === shellData.language)
+    )
+    if (existing) {
+      useInspectorStore.getState().selectShell(existing.id)
+      return existing.id
+    }
+
+    const newShell: Artifact = {
+      id: `art_dyn_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      conversationId: shellData.conversationId,
+      messageId: shellData.messageId,
+      type: shellData.type,
+      title: shellData.title,
+      language: shellData.language,
+      content: shellData.content,
+      version: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    set((state) => ({
+      artifacts: [...state.artifacts, newShell]
+    }))
+
+    useInspectorStore.getState().selectShell(newShell.id)
+    return newShell.id
   },
 
   refreshBudget: async (draft) => {

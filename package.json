@@ -23,6 +23,7 @@
     "adm-zip": "^0.5.16",
     "better-sqlite3": "^12.11.1",
     "lucide-react": "^0.475.0",
+    "mermaid": "^11.16.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.3",

@@ -224,7 +224,26 @@ export async function startDeepResearch(
   }
 
   // 3. Synthesis Phase
-  if (controller.signal.aborted) return
+  if (controller.signal.aborted) {
+    const stoppedText =
+      allResults.length > 0
+        ? `(deep research stopped after gathering ${allResults.length} sources)`
+        : '(deep research stopped)'
+    dbMessages.update(assistantMsgId, {
+      content: stoppedText,
+      isDeepResearch: true
+    })
+    sendChunk(win, {
+      conversationId,
+      messageId: assistantMsgId,
+      generationId,
+      contentDelta: '',
+      correctedContent: stoppedText,
+      done: true,
+      eventType: 'done'
+    })
+    return
+  }
 
   const searchPreamble = allResults.length > 0
     ? 'Deep Research gathered sources (Cite these sources in your answer using inline bracketed numbers like [1], [2]):\n\n' +

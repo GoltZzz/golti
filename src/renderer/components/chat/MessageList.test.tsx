@@ -15,6 +15,7 @@ vi.mock('../../stores/chatStore', () => ({
     const mockStore = {
       regenerate: vi.fn(),
       editAndResend: vi.fn(),
+      sendMessage: vi.fn(),
       selectBranch: vi.fn(),
       stopGeneration: vi.fn(),
       isGenerating: false,
@@ -59,16 +60,16 @@ describe('MessageList', () => {
     expect(screen.getByText('Hello! How can I help you today?')).toBeTruthy()
   })
 
-  it('shows scroll to bottom button when user scrolls up', () => {
+  it('does not render scroll to bottom button when user scrolls up', () => {
     render(<MessageList messages={dummyMessages} />)
     const transcript = screen.getByRole('log')
     
     // Simulate user scrolling up via mouse wheel
     fireEvent.wheel(transcript, { deltaY: -50 })
 
-    expect(screen.getByText(/AI responding/i)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /scroll to bottom/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /scroll to bottom/i })).toBeNull()
   })
 })
+
 
 

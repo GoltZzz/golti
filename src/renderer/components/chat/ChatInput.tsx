@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
+import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { ContextTray } from './ContextTray'
 import { UsageMeter } from './UsageMeter'
 import { Tooltip } from './Tooltip'
@@ -47,9 +48,29 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     draftRedoStack,
     generationSettings,
     setGenerationSettings,
-    tokenBudget
+    tokenBudget,
+    visibleMessages,
+    researchProgressByMessageId
   } = useChatStore()
   const { runtimeState, progress, setupListeners } = useSearchRuntimeStore()
+
+  const activeResearchProgress = (() => {
+    if (!isGenerating) return null
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+      const msg = visibleMessages[i]
+      if (msg.role !== 'assistant') continue
+      const progress = researchProgressByMessageId[msg.id]
+      if (progress && progress.phase !== 'done' && progress.phase !== 'error') {
+        return progress
+      }
+    }
+    return null
+  })()
+  const researchFooterLabel = activeResearchProgress
+    ? getResearchPhaseLabel(activeResearchProgress)
+    : deepResearchEnabled
+      ? 'Deep Research mode'
+      : null
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [showSettings, setShowSettings] = useState(false)
@@ -422,9 +443,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                 </button>
               </Tooltip>
               <UsageMeter compact />
-              {deepResearchEnabled ? (
+              {researchFooterLabel ? (
                 <span style={{ fontSize: 11, color: 'var(--accent-purple)', fontWeight: 500 }}>
-                  Deep Research mode
+                  {researchFooterLabel}
                 </span>
               ) : webSearchEnabled && (
                 <span style={{ fontSize: 11, color: 'var(--accent-cyan)' }}>
