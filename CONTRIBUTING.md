@@ -54,9 +54,15 @@ Before submitting code, please ensure that type checks and tests pass:
 
 ## 🔀 Branching Model & Pull Requests
 
+ [!IMPORTANT]
+ **Branch Protection Enforced:** Direct pushes to **`main`** and **`dev`** are strictly disabled on GitHub. All contributions must be submitted via a Pull Request (PR) and require:
+ 1. Passing automated CI status checks (`npm run typecheck` & `npm run test`).
+ 2. At least one approving review from a repository maintainer before merging.
+
 This project uses a dual-branch model:
 - **`main`**: The stable production branch. This is what users consume.
 - **`dev`**: The active development branch. All new features and regular bug fixes are merged here.
+
 
 ### Regular Features & Bug Fixes
 
