@@ -15,6 +15,7 @@ import {
 import { EggLogo } from '../brand/EggLogo'
 import { useChatStore } from '../../stores/chatStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
+import { useSidebarStore } from '../../stores/sidebarStore'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { ContextTray } from './ContextTray'
 import { UsageMeter } from './UsageMeter'
@@ -42,6 +43,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     composerMode,
     cycleComposerMode,
     searchSetupError,
+    repairWebSearchSetup,
     addContext,
     addContextPaths,
     addContextUrl,
@@ -57,6 +59,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     researchProgressByMessageId
   } = useChatStore()
   const { runtimeState, progress, setupListeners } = useSearchRuntimeStore()
+  const openSettings = useSidebarStore((s) => s.openSettings)
 
   const activeResearchProgress = (() => {
     if (!isGenerating) return null
@@ -336,17 +339,37 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
               {searchSetupError ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                   <span>{searchSetupError}</span>
-                  <button
-                    className="chat-ghost-btn"
-                    onClick={() => setWebSearchEnabled(true)}
-                    style={{ fontSize: 11 }}
-                  >
-                    Retry
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button
+                      className="chat-ghost-btn"
+                      onClick={() => setWebSearchEnabled(true)}
+                      style={{ fontSize: 11 }}
+                    >
+                      Retry
+                    </button>
+                    <button
+                      className="chat-ghost-btn"
+                      onClick={() => repairWebSearchSetup()}
+                      style={{ fontSize: 11 }}
+                    >
+                      Repair
+                    </button>
+                    <button
+                      className="chat-ghost-btn"
+                      onClick={() => openSettings('general')}
+                      style={{ fontSize: 11 }}
+                    >
+                      Settings
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <span>
-                  Setting up Web Search
+                  {progress?.speed === 'Downloading…'
+                    ? 'Downloading Web Search'
+                    : progress?.speed === 'Installing…' || progress?.speed === 'Extracting…'
+                      ? 'Installing Web Search'
+                      : 'Setting up Web Search'}
                   {progress ? `… ${progress.percent}%` : '…'}
                 </span>
               )}

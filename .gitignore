@@ -5,6 +5,7 @@ node_modules/
 out/
 dist/
 release/
+build/search-runtime-bundle/
 
 # Logs
 *.log

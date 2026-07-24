@@ -103,6 +103,7 @@ interface ChatState {
   undoAction: () => Promise<void>
   redoAction: () => Promise<void>
   setWebSearchEnabled: (enabled: boolean) => Promise<void>
+  repairWebSearchSetup: () => Promise<void>
   setForceWebSearchNext: (force: boolean) => void
   setDeepResearchEnabled: (enabled: boolean) => Promise<void>
   setComposerMode: (mode: ComposerMode) => void
@@ -1079,15 +1080,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const status = await window.goltiAPI.getSearchRuntimeStatus()
       if (status.status === 'running' && status.apiHealthy) return
-      if (status.status === 'not-installed' || status.status === 'error') {
-        await window.goltiAPI.installSearchRuntime()
-      } else {
-        await window.goltiAPI.startSearchRuntime()
+      const next =
+        status.status === 'not-installed' || status.status === 'error'
+          ? await window.goltiAPI.installSearchRuntime()
+          : await window.goltiAPI.startSearchRuntime()
+      if (next.status === 'error' || !next.apiHealthy) {
+        set({
+          searchSetupError: next.error || 'Web Search could not start. Please try again.'
+        })
       }
     } catch (err: any) {
       set({
-        searchSetupError:
-          err?.message || 'Web Search could not start. Open Settings to retry.'
+        searchSetupError: err?.message || 'Web Search could not start. Please try again.'
+      })
+    }
+  },
+
+  repairWebSearchSetup: async () => {
+    set({ searchSetupError: null, webSearchEnabled: true })
+    window.goltiAPI
+      .updateSettings({
+        webSearchEnabled: true,
+        defaultWebSearchMode: 'auto'
+      })
+      .catch(() => {})
+    try {
+      const next = await window.goltiAPI.repairSearchRuntime()
+      if (next.status === 'error' || !next.apiHealthy) {
+        set({
+          searchSetupError: next.error || 'Web Search could not start. Please try again.'
+        })
+      }
+    } catch (err: any) {
+      set({
+        searchSetupError: err?.message || 'Web Search could not start. Please try again.'
       })
     }
   },

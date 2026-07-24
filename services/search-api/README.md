@@ -22,6 +22,14 @@ npm run build:search-runtime
 
 Produces zips under `dist/search-runtime/` for macOS arm64/x64, Windows x64, and Linux x64.
 
+Packaged Electron builds stage the host platform zip into `build/search-runtime-bundle/bundle.zip` via:
+
+```bash
+npm run stage:search-runtime
+```
+
+`build:mac` / `build:win` / `build:linux` run staging first so the runtime ships as `extraResources` and installs offline when Web Search is enabled.
+
 ## Tests
 
 ```bash

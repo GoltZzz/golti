@@ -5,11 +5,13 @@ import { EggLogo } from "../brand/EggLogo";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useSearchRuntimeStore } from "../../stores/searchRuntimeStore";
+import { useSidebarStore, type SettingsSubTab } from "../../stores/sidebarStore";
 
 export const SettingsView: React.FC = () => {
-  const [activeSubTab, setActiveSubTab] = useState<
-    "providers" | "engine" | "general" | "about"
-  >("providers");
+  const settingsFocus = useSidebarStore((s) => s.settingsSubTab);
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(
+    () => useSidebarStore.getState().settingsSubTab ?? "providers"
+  );
   const { settings, fetchSettings, updateSettings } = useSettingsStore();
   const {
     engineState,
@@ -50,6 +52,10 @@ export const SettingsView: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (settingsFocus) setActiveSubTab(settingsFocus);
+  }, [settingsFocus]);
+
+  useEffect(() => {
     if (settings?.systemPrompt) {
       setSystemPrompt(settings.systemPrompt);
     }
@@ -58,7 +64,11 @@ export const SettingsView: React.FC = () => {
   const webSearchReady = runtimeState.status === "running" && runtimeState.apiHealthy;
 
   const friendlyStatus = () => {
-    if (runtimeState.status === "downloading") return "Downloading Web Search…";
+    if (runtimeState.status === "downloading") {
+      return progress?.speed === "Installing…" || progress?.speed === "Extracting…"
+        ? "Installing Web Search…"
+        : "Downloading Web Search…";
+    }
     if (runtimeState.status === "starting") return "Starting Web Search…";
     if (webSearchReady) return "Ready — Web Search is available";
     if (runtimeState.status === "error") return runtimeState.error || "Web Search needs attention";
@@ -480,8 +490,8 @@ export const SettingsView: React.FC = () => {
                   marginBottom: "var(--space-3)",
                 }}
               >
-                Self-hosted on your computer. Turn on the Web Search switch in chat — Golti sets it up
-                automatically. No API keys required.
+                Self-hosted on your computer. Turn on Web Search in chat to install and start it —
+                this page is for repair and advanced options. No API keys required.
               </p>
               <div
                 style={{

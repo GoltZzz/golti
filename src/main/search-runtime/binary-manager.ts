@@ -74,7 +74,19 @@ export function isSearchRuntimeInstalled(): boolean {
 export function getLocalBundlePath(): string | null {
   const key = getPlatformKey()
   const filename = `golti-search-runtime-${SEARCH_RUNTIME_VERSION}-${key}.zip`
+  const resourcesPath =
+    typeof process.resourcesPath === 'string' && process.resourcesPath
+      ? process.resourcesPath
+      : null
   const candidates = [
+    // Packaged app: electron-builder extraResources → Resources/search-runtime/
+    ...(resourcesPath
+      ? [
+          path.join(resourcesPath, 'search-runtime', 'bundle.zip'),
+          path.join(resourcesPath, 'search-runtime', filename)
+        ]
+      : []),
+    // Dev / local builds
     path.join(process.cwd(), 'dist', 'search-runtime', filename),
     path.join(app.getAppPath(), 'dist', 'search-runtime', filename),
     path.join(path.dirname(app.getAppPath()), 'dist', 'search-runtime', filename)
