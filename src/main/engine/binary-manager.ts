@@ -25,6 +25,28 @@ export function getBinaryFilename(): string {
   return process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'
 }
 
+/**
+ * Environment for spawning llama-server.
+ *
+ * The upstream Linux release binaries carry a RUNPATH baked from the machine that
+ * built them (`/home/runner/work/llama.cpp/...`), so the .so files sitting right
+ * next to the executable are never found. Point the loader at the binary's own
+ * directory. macOS builds resolve via @loader_path and Windows searches the exe
+ * directory automatically, so neither strictly needs this.
+ */
+export function getEngineSpawnEnv(
+  binaryPath: string,
+  baseEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv }
+  if (process.platform === 'win32') return env
+
+  const libDir = path.dirname(binaryPath)
+  const key = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH'
+  env[key] = env[key] ? `${libDir}${path.delimiter}${env[key]}` : libDir
+  return env
+}
+
 export function getEngineDir(): string {
   const userData = app.getPath('userData')
   const dir = path.join(userData, 'golti-engine')

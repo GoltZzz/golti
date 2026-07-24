@@ -80,6 +80,22 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
       const { stdout } = await execAsync('sysctl -n hw.physicalcpu')
       physicalCores = parseInt(stdout.trim(), 10) || cores
     } catch {}
+  } else if (platform === 'linux') {
+    // os.cpus() counts threads; derive real cores from the (socket, core) pairs.
+    try {
+      const cpuinfo = await fs.promises.readFile('/proc/cpuinfo', 'utf8')
+      const pairs = new Set<string>()
+      let physicalId = ''
+      for (const line of cpuinfo.split('\n')) {
+        const [rawKey, rawValue] = line.split(':')
+        if (!rawValue) continue
+        const key = rawKey.trim()
+        const value = rawValue.trim()
+        if (key === 'physical id') physicalId = value
+        if (key === 'core id') pairs.add(`${physicalId}/${value}`)
+      }
+      if (pairs.size > 0) physicalCores = pairs.size
+    } catch {}
   }
   
   const speedGHz = cpus[0]?.speed ? cpus[0].speed / 1000 : 0
@@ -145,11 +161,35 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
   } else if (platform === 'win32' || platform === 'linux') {
     try {
       const { stdout } = await execAsync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits')
-      const [name, memStr] = stdout.trim().split(',')
+      // Hybrid laptops list several GPUs; the first is the discrete one.
+      const [name, memStr] = stdout.trim().split('\n')[0].split(',')
       gpuName = name.trim()
       vramGB = parseInt(memStr.trim(), 10) / 1024
     } catch {
       gpuName = 'Generic GPU'
+    }
+
+    // No NVIDIA card — try AMD, which is common enough on Linux to be worth probing.
+    if (vramGB === null && platform === 'linux') {
+      try {
+        const { stdout } = await execAsync('rocm-smi --showproductname --showmeminfo vram --csv')
+        const vramBytes = stdout.match(/(\d{7,})/)?.[1]
+        const cardName = stdout.match(/Card series[^,]*,\s*([^\n,]+)/i)?.[1]
+        if (cardName) gpuName = cardName.trim()
+        if (vramBytes) vramGB = parseInt(vramBytes, 10) / (1024 * 1024 * 1024)
+      } catch {}
+    }
+
+    // Last resort on Linux: at least name the card so the UI isn't showing "Generic GPU".
+    if (gpuName === 'Generic GPU' && platform === 'linux') {
+      try {
+        const { stdout } = await execAsync('lspci -mm')
+        const line = stdout
+          .split('\n')
+          .find((l) => /"(VGA compatible controller|3D controller|Display controller)"/.test(l))
+        const fields = line?.match(/"([^"]*)"/g)?.map((f) => f.slice(1, -1))
+        if (fields && fields.length >= 4) gpuName = `${fields[2]} ${fields[3]}`.trim()
+      } catch {}
     }
   }
   

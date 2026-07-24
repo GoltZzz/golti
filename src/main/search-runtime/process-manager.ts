@@ -5,6 +5,7 @@ import {
   getApiBinaryPath,
   getInstalledVersion,
   getSearxLauncherPath,
+  getSearxSettingsPath,
   isSearchRuntimeInstalled
 } from './binary-manager'
 import { getOrCreateSearchToken } from './token'
@@ -195,13 +196,18 @@ export async function startSearchRuntime(options?: {
 
   let searxUrl = ''
   if (searxLauncher) {
+    const searxEnv: NodeJS.ProcessEnv = { ...process.env, PORT: String(searxPort) }
+    const settingsPath = getSearxSettingsPath()
+    if (settingsPath) {
+      searxEnv.SEARXNG_SETTINGS_PATH = settingsPath
+    } else {
+      // Don't let a host-level setting leak in and repoint the sidecar.
+      delete searxEnv.SEARXNG_SETTINGS_PATH
+    }
+
     searxProcess = spawn(searxLauncher, [], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        SEARXNG_SETTINGS_PATH: undefined,
-        PORT: String(searxPort)
-      }
+      env: searxEnv
     })
     searxProcess.stdout?.on('data', (d) => {
       updateState({ lastLog: String(d).slice(0, 240) })

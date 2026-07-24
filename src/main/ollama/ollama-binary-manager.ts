@@ -39,8 +39,21 @@ export function getBinaryFilename(): string {
   return process.platform === 'win32' ? 'ollama.exe' : 'ollama'
 }
 
+/** Mirrors Electron's own userData resolution, for the rare call before `app` is ready. */
+function fallbackUserDataDir(): string {
+  const home = process.env.HOME || process.env.USERPROFILE
+  if (!home) return '.'
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'golti')
+  }
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'golti')
+  }
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'golti')
+}
+
 export function getOllamaDir(): string {
-  const userData = app?.getPath ? app.getPath('userData') : (process.env.HOME ? path.join(process.env.HOME, 'Library', 'Application Support', 'golti') : '.')
+  const userData = app?.getPath ? app.getPath('userData') : fallbackUserDataDir()
   const dir = path.join(userData, 'ollama-bin')
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
@@ -118,10 +131,85 @@ export function getSystemBinaryPath(): string | null {
   return null
 }
 
-export function findRunningOllamaProcessInfo(port: number = 11434): { pid?: number; binaryPath?: string } {
+export interface RunningOllamaInfo {
+  pid?: number
+  binaryPath?: string
+  /** systemd unit owning the process, when it is managed as a Linux service. */
+  serviceUnit?: string
+  /** True when the unit lives in the system scope, so stopping it needs privileges. */
+  needsPrivilegedStop?: boolean
+}
+
+const SYSTEMD_UNIT_CANDIDATES = ['ollama.service', 'ollama-user.service']
+
+function run(command: string): string {
+  return execSync(command, {
+    encoding: 'utf8',
+    timeout: 2000,
+    stdio: ['ignore', 'pipe', 'ignore']
+  }).trim()
+}
+
+/**
+ * Resolve the executable behind a PID.
+ *
+ * On Linux `ps -o comm=` only yields a bare process name, so /proc is the only way
+ * to get a real path — but the readlink needs ptrace access, which we lack for a
+ * daemon running under its own service user. macOS `ps -o comm=` does return a
+ * full path, so it stays the fallback.
+ */
+function resolveBinaryPathFromPid(pid: number): string | undefined {
+  if (process.platform === 'linux') {
+    try {
+      const exe = fs.readlinkSync(`/proc/${pid}/exe`)
+      if (exe && fs.existsSync(exe)) return exe
+    } catch {}
+  }
+  try {
+    const comm = run(`ps -p ${pid} -o comm=`)
+    if (comm.includes(path.sep) && fs.existsSync(comm)) return comm
+  } catch {}
+  return undefined
+}
+
+/**
+ * Ask systemd directly. This is the only detection path that works when Ollama was
+ * installed as a service: the listening socket belongs to another user, so `lsof`
+ * and `ss` report nothing back to us.
+ */
+function findSystemdOllama(): RunningOllamaInfo | null {
+  if (process.platform !== 'linux') return null
+
+  for (const scope of ['--system', '--user'] as const) {
+    for (const unit of SYSTEMD_UNIT_CANDIDATES) {
+      try {
+        const output = run(`systemctl ${scope} show -p MainPID -p ExecStart -p ActiveState ${unit}`)
+        const read = (key: string) =>
+          output.split('\n').find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1) ?? ''
+
+        if (read('ActiveState') !== 'active') continue
+        const pid = parseInt(read('MainPID'), 10)
+        if (!Number.isFinite(pid) || pid <= 0) continue
+
+        // ExecStart looks like: { path=/usr/local/bin/ollama ; argv[]=... ; ... }
+        const execPath = read('ExecStart').match(/path=([^;]+)/)?.[1]?.trim()
+        const binaryPath =
+          execPath && fs.existsSync(execPath) ? execPath : resolveBinaryPathFromPid(pid)
+
+        return { pid, binaryPath, serviceUnit: unit, needsPrivilegedStop: scope === '--system' }
+      } catch {}
+    }
+  }
+  return null
+}
+
+export function findRunningOllamaProcessInfo(port: number = 11434): RunningOllamaInfo {
+  const fromSystemd = findSystemdOllama()
+  if (fromSystemd) return fromSystemd
+
   try {
     if (process.platform === 'win32') {
-      const output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' })
+      const output = run(`netstat -ano | findstr :${port}`)
       const match = output.split('\n').find(line => line.includes('LISTENING'))
       if (match) {
         const parts = match.trim().split(/\s+/)
@@ -131,24 +219,41 @@ export function findRunningOllamaProcessInfo(port: number = 11434): { pid?: numb
         }
       }
     } else {
-      const output = execSync(`lsof -i :${port} -sTCP:LISTEN -Fp`, { encoding: 'utf8' })
+      const output = run(`lsof -i :${port} -sTCP:LISTEN -Fp`)
       const match = output.split('\n').find(line => line.startsWith('p'))
       if (match) {
         const pid = parseInt(match.substring(1), 10)
         if (!isNaN(pid)) {
-          let binaryPath: string | undefined
-          try {
-            const procPath = execSync(`ps -p ${pid} -o comm=`, { encoding: 'utf8' }).trim()
-            if (procPath && fs.existsSync(procPath)) {
-              binaryPath = procPath
-            }
-          } catch {}
-          return { pid, binaryPath }
+          return { pid, binaryPath: resolveBinaryPathFromPid(pid) }
         }
       }
     }
   } catch {}
   return {}
+}
+
+/**
+ * Stop a systemd-managed Ollama. System-scope units need root, which we will not
+ * escalate to on the user's behalf — the caller surfaces the manual command instead.
+ */
+export function stopSystemdOllama(
+  info: Pick<RunningOllamaInfo, 'serviceUnit' | 'needsPrivilegedStop'>
+): { ok: boolean; message: string } {
+  if (!info.serviceUnit) return { ok: false, message: 'Not a systemd-managed process' }
+
+  if (info.needsPrivilegedStop) {
+    return {
+      ok: false,
+      message: `Ollama runs as the system service ${info.serviceUnit}. Stop it with: sudo systemctl stop ${info.serviceUnit}`
+    }
+  }
+
+  try {
+    run(`systemctl --user stop ${info.serviceUnit}`)
+    return { ok: true, message: `Stopped ${info.serviceUnit}` }
+  } catch (err: any) {
+    return { ok: false, message: `Failed to stop ${info.serviceUnit}: ${err?.message || 'unknown error'}` }
+  }
 }
 
 export function getBinaryPath(): string {

@@ -6,11 +6,11 @@
   "author": "golti",
   "homepage": "https://github.com/golti/golti",
   "scripts": {
-    "dev": "npx @electron/rebuild -f -w better-sqlite3 && electron-vite dev",
+    "dev": "npx @electron/rebuild -f -w better-sqlite3 && node scripts/dev.js",
     "build": "npm run typecheck && electron-builder install-app-deps && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
-    "test": "npm rebuild better-sqlite3 && vitest run",
+    "test": "node scripts/prepare-test-native.js && vitest run",
     "test:watch": "vitest",
     "test:go": "cd services/search-api && go test ./...",
     "build:search-runtime": "bash scripts/search-runtime/build.sh",
@@ -89,8 +89,10 @@
     "linux": {
       "target": [
         "AppImage",
-        "deb"
+        "deb",
+        "tar.gz"
       ],
+      "category": "Development",
       "icon": "build/icon.png"
     }
   }

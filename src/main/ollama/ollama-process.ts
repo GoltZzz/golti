@@ -1,6 +1,12 @@
 import { spawn, ChildProcess } from 'child_process'
 import fs from 'fs'
-import { getBinaryPath, isBinaryInstalled, getSystemBinaryPath, findRunningOllamaProcessInfo } from './ollama-binary-manager'
+import {
+  getBinaryPath,
+  isBinaryInstalled,
+  getSystemBinaryPath,
+  findRunningOllamaProcessInfo,
+  stopSystemdOllama
+} from './ollama-binary-manager'
 import { mainWindow } from '../index'
 
 let ollamaProcess: ChildProcess | null = null
@@ -14,16 +20,21 @@ export interface OllamaState {
   port?: number
   pid?: number | null
   isSystemProcess?: boolean
+  /** systemd unit owning the process, when Ollama is installed as a Linux service. */
+  serviceUnit?: string
+  /** True when stopping the owning unit requires root. */
+  needsPrivilegedStop?: boolean
   host?: string
   version?: string
   logs?: string[]
 }
 
+// Resolved lazily by getOllamaState(): the disk probes below need
+// `app.getPath('userData')`, which is unavailable at module import time.
 let currentState: OllamaState = {
-  status: isBinaryInstalled() ? 'stopped' : 'not-installed',
+  status: 'not-installed',
   port: 11434,
-  host: 'http://127.0.0.1:11434',
-  binaryPath: getSystemBinaryPath() || getBinaryPath()
+  host: 'http://127.0.0.1:11434'
 }
 
 function appendLog(line: string) {
@@ -75,6 +86,8 @@ export function getOllamaState(): OllamaState {
             version: health.version || currentState.version,
             pid: procInfo.pid || currentState.pid,
             binaryPath: procInfo.binaryPath || currentState.binaryPath || getSystemBinaryPath() || getBinaryPath(),
+            serviceUnit: procInfo.serviceUnit,
+            needsPrivilegedStop: procInfo.needsPrivilegedStop,
             port: currentState.port || 11434,
             host: `http://127.0.0.1:${currentState.port || 11434}`
           })
@@ -84,7 +97,9 @@ export function getOllamaState(): OllamaState {
           ...currentState,
           status: 'stopped',
           isSystemProcess: false,
-          pid: undefined
+          pid: undefined,
+          serviceUnit: undefined,
+          needsPrivilegedStop: undefined
         })
       }
     }).catch(() => {})
@@ -120,8 +135,12 @@ export async function startOllama(port = 11434): Promise<boolean> {
   // Check if system Ollama is already running on port
   const health = await checkOllamaHealth(port)
   if (health.isRunning) {
-    appendLog(`Detected existing Ollama service running on port ${port} (v${health.version || 'unknown'})`)
     const procInfo = findRunningOllamaProcessInfo(port)
+    appendLog(
+      procInfo.serviceUnit
+        ? `Detected Ollama running as systemd unit ${procInfo.serviceUnit} on port ${port} (v${health.version || 'unknown'})`
+        : `Detected existing Ollama service running on port ${port} (v${health.version || 'unknown'})`
+    )
     broadcastState({
       status: 'running',
       port,
@@ -129,6 +148,8 @@ export async function startOllama(port = 11434): Promise<boolean> {
       isSystemProcess: true,
       version: health.version,
       pid: procInfo.pid,
+      serviceUnit: procInfo.serviceUnit,
+      needsPrivilegedStop: procInfo.needsPrivilegedStop,
       binaryPath: procInfo.binaryPath || sysBinary || binaryPath
     })
     return true
@@ -260,6 +281,36 @@ export function stopOllama(): boolean {
     }, 2000)
     return true
   }
+
+  // We never spawned it, so there is no child to signal. A systemd-managed daemon
+  // has to be stopped through systemd, and reporting success here would leave the
+  // UI claiming "stopped" while Ollama keeps serving.
+  if (currentState.serviceUnit) {
+    const result = stopSystemdOllama(currentState)
+    appendLog(result.message)
+    if (!result.ok) {
+      broadcastState({ ...currentState, error: result.message })
+      return false
+    }
+    broadcastState({
+      ...currentState,
+      status: 'stopped',
+      pid: undefined,
+      isSystemProcess: false,
+      serviceUnit: undefined,
+      needsPrivilegedStop: undefined,
+      error: undefined
+    })
+    return true
+  }
+
+  if (currentState.isSystemProcess) {
+    const message = `Ollama is running outside Golti (PID ${currentState.pid ?? 'unknown'}); stop it where you started it.`
+    appendLog(message)
+    broadcastState({ ...currentState, error: message })
+    return false
+  }
+
   if (currentState.status !== 'stopped' && currentState.status !== 'not-installed') {
     broadcastState({ ...currentState, status: 'stopped', pid: undefined })
   }

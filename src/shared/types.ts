@@ -25,6 +25,10 @@ export interface OllamaState {
   port?: number
   pid?: number | null
   isSystemProcess?: boolean
+  /** systemd unit owning the process, when Ollama is installed as a Linux service. */
+  serviceUnit?: string
+  /** True when stopping the owning unit requires root. */
+  needsPrivilegedStop?: boolean
   host?: string
   version?: string
   logs?: string[]
