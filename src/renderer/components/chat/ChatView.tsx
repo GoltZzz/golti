@@ -3,6 +3,7 @@ import { Zap, PanelRight, Undo2, Redo2, MessageSquarePlus, Code2, Sparkles, Laye
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { InspectorPanel } from './InspectorPanel'
+import { EggLogo } from '../brand/EggLogo'
 import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
 
@@ -147,6 +148,12 @@ export const ChatView: React.FC = () => {
         ) : isLanding ? (
           <div className="chat-landing-container animate-fade-in">
             <div className="chat-landing-center">
+              <div className="golti-mark" aria-hidden>
+                <div className="golti-mark-glow" />
+                <div className="golti-mark-inner">
+                  <EggLogo size={32} />
+                </div>
+              </div>
               <ChatInput isLanding={true} />
               <div className="chat-landing-pills">
                 {quickPillActions.map((pill, idx) => (
@@ -158,9 +165,6 @@ export const ChatView: React.FC = () => {
                   >
                     <span className="chat-landing-pill-icon">{pill.icon}</span>
                     <span>{pill.label}</span>
-                    {pill.shortcut && (
-                      <span className="chat-landing-pill-shortcut">{pill.shortcut}</span>
-                    )}
                   </button>
                 ))}
               </div>

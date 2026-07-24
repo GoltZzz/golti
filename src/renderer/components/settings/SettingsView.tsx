@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Server, Sliders, Info, Shield, Zap, Play, Square, Download, Trash2, CheckCircle2, Globe } from "lucide-react";
+import { Server, Sliders, Info, Zap, Play, Square, Download, Trash2, CheckCircle2, Globe } from "lucide-react";
 import { ProviderConfig } from "./ProviderConfig";
+import { EggLogo } from "../brand/EggLogo";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useSearchRuntimeStore } from "../../stores/searchRuntimeStore";
@@ -744,7 +745,7 @@ export const SettingsView: React.FC = () => {
                   margin: "0 auto var(--space-3) auto",
                 }}
               >
-                <Shield size={24} />
+                <EggLogo size={24} title="Golti" />
               </div>
               <h3 style={{ fontSize: "18px", fontWeight: 600 }}>
                 Golti AI Workspace

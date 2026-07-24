@@ -10,9 +10,9 @@ import {
   Undo2,
   Redo2,
   Plus,
-  MessageSquare,
-  Bot
+  MessageSquare
 } from 'lucide-react'
+import { EggLogo } from '../brand/EggLogo'
 import { useChatStore } from '../../stores/chatStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
@@ -462,7 +462,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                   onClick={() => cycleComposerMode()}
                   aria-label={`Composer mode: ${composerMode === 'agent' ? 'Agent' : 'Chat'}. Press Shift+Tab to switch.`}
                 >
-                  {composerMode === 'agent' ? <Bot size={12} /> : <MessageSquare size={12} />}
+                  {composerMode === 'agent' ? <EggLogo size={12} /> : <MessageSquare size={12} />}
                   <span>{composerMode === 'agent' ? 'Agent' : 'Chat'}</span>
                 </button>
               </Tooltip>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Sparkles, Minus, Square, X, Monitor } from 'lucide-react'
+import { Minus, Square, X, Monitor } from 'lucide-react'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { EggLogo } from '../brand/EggLogo'
 
 export const TitleBar: React.FC = () => {
   const [detectedPlatform, setDetectedPlatform] = useState<'darwin' | 'win32' | 'linux'>('darwin')
@@ -53,9 +54,10 @@ export const TitleBar: React.FC = () => {
       className="drag-region"
     >
       {/* Title & Brand */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        <span style={{ fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px', color: 'var(--text-primary)' }}>
-          GOLTI 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', color: 'var(--text-primary)' }}>
+        <EggLogo size={14} title="Golti" />
+        <span style={{ fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px' }}>
+          GOLTI
         </span>
 
         {/* OS Platform Badge & Dev Toggle */}

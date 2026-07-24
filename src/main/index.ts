@@ -60,6 +60,9 @@ import { getOllamaState, startOllama, stopOllama, getOllamaLogs } from './ollama
 
 const execAsync = promisify(exec)
 
+/** Show "Golti" in the menu / dock instead of "Electron" during development. */
+app.setName('Golti')
+
 async function getFullSystemInfo(): Promise<SystemInfoFull> {
   const totalMem = os.totalmem()
   const freeMem = os.freemem()
@@ -222,17 +225,33 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
 
 export let mainWindow: BrowserWindow | null = null
 
+/** App icon for window chrome (Win/Linux) and macOS dock during dev. */
+function resolveAppIcon(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '../../build/icon.png'),
+    path.join(process.resourcesPath, 'build/icon.png'),
+    path.join(process.resourcesPath, 'icon.png')
+  ]
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return undefined
+}
+
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
+  const iconPath = resolveAppIcon()
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 830,
     minWidth: 900,
     minHeight: 600,
+    title: 'Golti',
     frame: false, // Custom title bar across platforms
     titleBarStyle: isMac ? 'hiddenInset' : undefined,
     trafficLightPosition: isMac ? { x: 14, y: 12 } : undefined,
     backgroundColor: '#0b0c10',
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -248,6 +267,12 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  const iconPath = resolveAppIcon()
+  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS — set it explicitly.
+  if (iconPath && process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(iconPath)
+  }
+
   initDatabase()
   setupIpcHandlers()
   createWindow()

@@ -5,7 +5,6 @@ import { useShallow } from 'zustand/react/shallow'
 import {
   Copy,
   Check,
-  Bot,
   User,
   Pencil,
   RefreshCw,
@@ -19,6 +18,7 @@ import {
   Loader2,
   AlertCircle
 } from 'lucide-react'
+import { EggLogo } from '../brand/EggLogo'
 import type { Message } from '../../../shared/types'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { useChatStore } from '../../stores/chatStore'
@@ -105,7 +105,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
       <div className={`msg-row ${isUser ? 'is-user' : 'is-assistant'}`}>
         {!isUser && (
           <div className="msg-avatar is-assistant" aria-hidden>
-            <Bot size={16} />
+            <EggLogo size={16} />
           </div>
         )}
 
