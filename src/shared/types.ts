@@ -18,6 +18,8 @@ export interface EngineState {
   vramUsage?: string
   /** Backend of the running engine binary: 'metal' | 'vulkan' | 'cpu'. */
   backend?: string
+  /** Human-readable name of the GPU the engine is offloading to, when any. */
+  gpuDevice?: string
   /** GPU layers the engine was started with (-1 = all, 0 = CPU-only). */
   gpuLayers?: number
   /** Set when the engine fell back to fewer layers / CPU after a GPU failure. */
@@ -480,7 +482,10 @@ export interface Settings {
   engineEnabled: boolean
   engineModelDir?: string
   enginePort: number
+  /** GPU layers to offload. Negative = Auto (size from VRAM), 0 = CPU-only, N = exact. */
   engineGpuLayers: number
+  /** GPU offload target: 'auto' (pick discrete GPU), 'cpu' (no offload), or a device id like 'Vulkan1'. */
+  engineDevice?: string
   webSearch?: WebSearchSettings
   /** When true, composer Web Search toggle is on (Auto intent). */
   webSearchEnabled?: boolean

@@ -45,7 +45,10 @@ import {
   deletePartialModel,
   pauseModelDownload,
   cancelModelDownload,
-  loadModelInEngine
+  loadModelInEngine,
+  listEngineDevices,
+  getBinaryPath,
+  isBinaryInstalled
 } from './engine'
 import {
   getSearchRuntimeState,
@@ -67,6 +70,24 @@ const execAsync = promisify(exec)
 
 /** Show "Golti" in the menu / dock instead of "Electron" during development. */
 app.setName('Golti')
+
+/**
+ * Turns the persisted engine settings into concrete offload args:
+ *   engineDevice 'cpu'  → no GPU layers
+ *   engineDevice 'auto' → auto-pick discrete GPU + auto-size layers
+ *   engineDevice 'VulkanN' → force that device
+ * engineGpuLayers < 0 means "Auto" (size from VRAM); >= 0 is an explicit count.
+ */
+function resolveEngineOffload(settings: {
+  engineGpuLayers: number
+  engineDevice?: string
+}): { layers: number | undefined; device: string | undefined } {
+  const choice = settings.engineDevice || 'auto'
+  if (choice === 'cpu') return { layers: 0, device: undefined }
+  const layers = settings.engineGpuLayers < 0 ? undefined : settings.engineGpuLayers
+  const device = choice === 'auto' ? undefined : choice
+  return { layers, device }
+}
 
 async function getFullSystemInfo(): Promise<SystemInfoFull> {
   const totalMem = os.totalmem()
@@ -925,7 +946,8 @@ function setupIpcHandlers(): void {
     const settings = dbSettings.get()
     const models = listLocalModels()
     const defaultModel = models.length > 0 ? models[0].filepath : undefined
-    return await startEngine(defaultModel, settings.enginePort, settings.engineGpuLayers)
+    const { layers, device } = resolveEngineOffload(settings)
+    return await startEngine(defaultModel, settings.enginePort, layers, device)
   })
 
   ipcMain.handle('engine:stop', async () => {
@@ -934,7 +956,13 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('engine:load-model', async (_, ggufPath: string) => {
     const settings = dbSettings.get()
-    return await loadModelInEngine(ggufPath, settings.enginePort, settings.engineGpuLayers)
+    const { layers, device } = resolveEngineOffload(settings)
+    return await loadModelInEngine(ggufPath, settings.enginePort, layers, device)
+  })
+
+  ipcMain.handle('engine:list-devices', async () => {
+    if (!isBinaryInstalled()) return []
+    return await listEngineDevices(getBinaryPath())
   })
 
   ipcMain.handle('engine:download-model', async (_, url: string, filename: string) => {

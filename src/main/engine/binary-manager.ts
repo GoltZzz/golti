@@ -144,8 +144,12 @@ export function isBinaryInstalled(): boolean {
   const binaryPath = getBinaryPath()
   if (!fs.existsSync(binaryPath)) return false
   try {
+    // Guard against a truncated/partial download. Note the threshold is small:
+    // modern llama.cpp ships `llama-server` as a thin (~18 KB) launcher that
+    // links the heavy code from `libllama-server-impl.so`, so the old ">100 KB"
+    // check wrongly reported these installs as missing.
     const stats = fs.statSync(binaryPath)
-    return stats.size > 100000
+    return stats.size > 4096
   } catch {
     return false
   }

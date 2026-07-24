@@ -5,7 +5,9 @@ import {
   loadModelInEngine,
   getEngineState,
   onEngineStatusChange,
-  checkEngineHealth
+  checkEngineHealth,
+  listEngineDevices,
+  type EngineDevice
 } from './engine-process'
 import {
   downloadModel,
@@ -55,6 +57,8 @@ export {
   getEngineState,
   onEngineStatusChange,
   checkEngineHealth,
+  listEngineDevices,
+  type EngineDevice,
   downloadModel,
   listLocalModels,
   deleteLocalModel,

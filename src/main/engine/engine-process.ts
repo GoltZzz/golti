@@ -1,8 +1,11 @@
 import fs from 'fs'
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, execFile, ChildProcess } from 'child_process'
+import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
-import { detectGpu } from './gpu-detect'
+import { detectGpu, GpuVendor } from './gpu-detect'
 import { EngineState } from '../../shared/types'
+
+const execFileAsync = promisify(execFile)
 
 let currentProcess: ChildProcess | null = null
 let currentState: EngineState = {
@@ -61,13 +64,57 @@ const NOMINAL_LAYERS = 32
 /** VRAM (GB) held back for the framebuffer, driver, and KV cache. */
 const VRAM_RESERVE_GB = 0.9
 
+export interface EngineDevice {
+  /** Backend device id, e.g. "Vulkan1", used with `--device`. */
+  id: string
+  name: string
+  totalMiB: number
+  freeMiB: number
+}
+
+/** Asks the engine binary which offload devices it can see. */
+export async function listEngineDevices(binaryPath: string): Promise<EngineDevice[]> {
+  try {
+    const { stdout, stderr } = await execFileAsync(binaryPath, ['--list-devices'], {
+      env: getEngineSpawnEnv(binaryPath),
+      timeout: 10000
+    })
+    const devices: EngineDevice[] = []
+    for (const line of `${stdout}\n${stderr}`.split('\n')) {
+      // "  Vulkan1: NVIDIA GeForce GTX 1650 (4342 MiB, 3918 MiB free)"
+      const m = line.match(/^\s*(\S+):\s+(.*?)\s+\((\d+)\s*MiB,\s*(\d+)\s*MiB free\)/)
+      if (m) devices.push({ id: m[1], name: m[2], totalMiB: +m[3], freeMiB: +m[4] })
+    }
+    return devices
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Picks the discrete GPU to offload to on multi-GPU machines. On hybrid boxes
+ * the Vulkan runtime otherwise defaults to device 0, which is often the
+ * integrated GPU (sharing slow system RAM) rather than the discrete card.
+ */
+export function pickEngineDevice(devices: EngineDevice[], vendor: GpuVendor): EngineDevice | null {
+  if (devices.length === 0) return null
+  const match = (re: RegExp) => devices.filter((d) => re.test(d.name))
+  let candidates: EngineDevice[] = []
+  if (vendor === 'nvidia') candidates = match(/nvidia|geforce|rtx|gtx|quadro|tesla/i)
+  else if (vendor === 'amd') candidates = match(/radeon|amd|rx\s*\d/i)
+  else if (vendor === 'intel') candidates = match(/intel|arc/i)
+  if (candidates.length === 0) return null
+  // Prefer the one with the most dedicated VRAM (discrete over integrated).
+  return candidates.sort((a, b) => b.totalMiB - a.totalMiB)[0]
+}
+
 /**
  * Decides how many layers to offload to the GPU for `modelPath`, from the
  * detected backend and VRAM. Returns -1 (all), 0 (CPU-only), or a positive
  * partial count. A conservative estimate — the fallback in `startEngine`
  * corrects it downward if the GPU still runs out of memory.
  */
-export async function computeGpuLayers(modelPath?: string): Promise<number> {
+export async function computeGpuLayers(modelPath?: string, vramGBOverride?: number): Promise<number> {
   const backend = getInstalledBackend()
   if (backend === 'cpu') return 0
 
@@ -76,9 +123,10 @@ export async function computeGpuLayers(modelPath?: string): Promise<number> {
   if (backend === 'metal' || gpu.vendor === 'apple') return -1
   if (gpu.vendor === 'none') return 0
 
+  const vramGB = vramGBOverride ?? gpu.vramGB
   // VRAM unknown (e.g. detected via lspci only): try full offload and let the
   // fallback path shed layers if it doesn't fit.
-  if (!gpu.vramGB || !modelPath) return -1
+  if (!vramGB || !modelPath) return -1
 
   let fileGB = 0
   try {
@@ -88,7 +136,7 @@ export async function computeGpuLayers(modelPath?: string): Promise<number> {
   }
   if (fileGB <= 0) return -1
 
-  const usable = gpu.vramGB - VRAM_RESERVE_GB
+  const usable = vramGB - VRAM_RESERVE_GB
   if (usable <= 0.5) return 0 // Not enough headroom to be worth it.
   if (usable >= fileGB * 1.05) return -1 // Whole model fits in VRAM.
 
@@ -166,7 +214,8 @@ function spawnAttempt(binaryPath: string, args: string[]): AttemptResult {
 export async function startEngine(
   modelPath?: string,
   port: number = 8391,
-  gpuLayers?: number
+  gpuLayers?: number,
+  preferredDeviceId?: string
 ): Promise<EngineState> {
   if (currentProcess) {
     if (modelPath && currentState.loadedModel !== modelPath) {
@@ -184,15 +233,36 @@ export async function startEngine(
   const binaryPath = getBinaryPath()
   const backend = getInstalledBackend() ?? undefined
 
+  // On a GPU backend, pick the discrete device explicitly (hybrid machines
+  // otherwise default to the integrated GPU) and size offload from *its* free
+  // VRAM rather than a system-wide probe.
+  let device: EngineDevice | null = null
+  if (backend === 'vulkan') {
+    const devices = await listEngineDevices(binaryPath)
+    // Honour an explicit device choice when it's still present; otherwise
+    // auto-pick the discrete GPU for the detected vendor.
+    if (preferredDeviceId) {
+      device = devices.find((d) => d.id === preferredDeviceId) ?? null
+    }
+    if (!device) {
+      const gpu = await detectGpu()
+      device = pickEngineDevice(devices, gpu.vendor)
+    }
+    if (device) {
+      console.log(`[GoltiEngine] Offloading to ${device.id} (${device.name}, ${device.freeMiB} MiB free)`)
+    }
+  }
+
   // Resolve the starting offload: explicit value wins, otherwise auto-size.
-  let layers = gpuLayers ?? (await computeGpuLayers(modelPath))
+  let layers = gpuLayers ?? (await computeGpuLayers(modelPath, device ? device.freeMiB / 1024 : undefined))
   let fellBack = false
 
-  updateState({ status: 'starting', port, error: undefined, backend })
+  updateState({ status: 'starting', port, error: undefined, backend, gpuDevice: device?.name })
 
   while (true) {
     const args: string[] = ['--host', '127.0.0.1', '--port', String(port), '--ctx-size', '4096']
     if (modelPath) args.push('--model', modelPath)
+    if (device) args.push('--device', device.id)
     args.push('--n-gpu-layers', String(layers))
 
     let attempt: AttemptResult
@@ -249,6 +319,7 @@ export async function startEngine(
       status: 'running',
       loadedModel: modelPath,
       backend,
+      gpuDevice: device?.name,
       gpuLayers: layers,
       fellBackToCpu: fellBack
     })
@@ -273,7 +344,12 @@ export async function stopEngine(): Promise<EngineState> {
   return currentState
 }
 
-export async function loadModelInEngine(modelPath: string, port: number = 8391, gpuLayers?: number): Promise<EngineState> {
+export async function loadModelInEngine(
+  modelPath: string,
+  port: number = 8391,
+  gpuLayers?: number,
+  preferredDeviceId?: string
+): Promise<EngineState> {
   await stopEngine()
-  return startEngine(modelPath, port, gpuLayers)
+  return startEngine(modelPath, port, gpuLayers, preferredDeviceId)
 }
