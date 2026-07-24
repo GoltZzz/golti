@@ -16,6 +16,12 @@ export interface EngineState {
   isSystemProcess?: boolean
   host?: string
   vramUsage?: string
+  /** Backend of the running engine binary: 'metal' | 'vulkan' | 'cpu'. */
+  backend?: string
+  /** GPU layers the engine was started with (-1 = all, 0 = CPU-only). */
+  gpuLayers?: number
+  /** Set when the engine fell back to fewer layers / CPU after a GPU failure. */
+  fellBackToCpu?: boolean
 }
 
 export interface OllamaState {
