@@ -57,7 +57,10 @@ function newId(prefix: string): string {
 }
 
 function sendChunk(win: BrowserWindow | null, chunk: StreamChunkPayload): void {
-  win?.webContents.send('ai:stream-chunk', chunk)
+  // Guard against the window/webContents being torn down mid-stream (e.g. on quit).
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send('ai:stream-chunk', chunk)
+  }
 }
 
 function buildContextBlock(conversationId: string, contextItemIds?: string[]): string {
@@ -89,6 +92,19 @@ export function cancelConversationGenerations(conversationId: string): void {
       gen.controller.abort()
       activeGenerations.delete(id)
     }
+  }
+}
+
+/** True when at least one chat/deep-research generation is still streaming. */
+export function hasActiveGenerations(): boolean {
+  return activeGenerations.size > 0
+}
+
+/** Abort every in-flight generation (used when the app is quitting). */
+export function cancelAllGenerations(): void {
+  for (const [id, gen] of activeGenerations) {
+    gen.controller.abort()
+    activeGenerations.delete(id)
   }
 }
 
