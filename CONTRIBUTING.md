@@ -54,9 +54,15 @@ Before submitting code, please ensure that type checks and tests pass:
 
 ## 🔀 Branching Model & Pull Requests
 
+ [!IMPORTANT]
+ **Branch Protection Enforced:** Direct pushes to **`main`** and **`dev`** are strictly disabled on GitHub. All contributions must be submitted via a Pull Request (PR) and require:
+ 1. Passing automated CI status checks (`npm run typecheck` & `npm run test`).
+ 2. At least one approving review from a repository maintainer before merging.
+
 This project uses a dual-branch model:
 - **`main`**: The stable production branch. This is what users consume.
 - **`dev`**: The active development branch. All new features and regular bug fixes are merged here.
+
 
 ### Regular Features & Bug Fixes
 
@@ -70,9 +76,13 @@ This project uses a dual-branch model:
 3. **Review AI Output:** Thoroughly inspect and verify any AI-assisted code or docs before opening a PR.
 4. **Push & Create PR:** Push your branch to GitHub and open a Pull Request targeting the **`dev`** branch.
 
-### Releases
+### Releases (Merging `dev` into `main`)
 
-When features in `dev` are stable and ready for users, a periodic release Pull Request is created to merge `dev` into `main`.
+When all new features and fixes on the `dev` branch are thoroughly tested and ready for production:
+1. The repository maintainer creates a **Release Pull Request** comparing `dev` into `main` (`base: main` ← `compare: dev`).
+2. Automated CI checks (`typecheck` and `unit tests`) run against the Release PR.
+3. Once verified, the maintainer merges the Release PR into `main` and creates a tagged release on GitHub (e.g. `v1.0.0`).
+4. `main` now represents the latest stable release for all users.
 
 ### Hotfixes
 

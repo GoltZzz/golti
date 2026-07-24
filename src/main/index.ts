@@ -13,8 +13,10 @@ import {
 } from './db/database'
 import { getAllModels } from './ai/provider-manager'
 import {
+  cancelAllGenerations,
   cancelGeneration,
   getTokenBudgetForConversation,
+  hasActiveGenerations,
   startChatGeneration
 } from './ai/chat-runtime'
 import {
@@ -268,6 +270,18 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
 
 export let mainWindow: BrowserWindow | null = null
 
+/**
+ * Send an IPC message to the renderer, but only if the window and its
+ * webContents are still alive. During quit the process `exit` events can fire
+ * after the window is destroyed; `mainWindow?.` alone doesn't catch that and
+ * throws "Object has been destroyed".
+ */
+function sendToRenderer(channel: string, ...args: unknown[]): void {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(channel, ...args)
+  }
+}
+
 /** App icon for window chrome (Win/Linux) and macOS dock during dev. */
 function resolveAppIcon(): string | undefined {
   const candidates = [
@@ -302,6 +316,30 @@ function createWindow(): void {
     }
   })
 
+  // Prompt before closing the window while a generation is still streaming.
+  // This covers the custom title-bar close button and OS window close, which
+  // otherwise tear the window down before `before-quit` can warn the user.
+  mainWindow.on('close', (event) => {
+    if (cleanupComplete || !hasActiveGenerations()) return
+    const choice = dialog.showMessageBoxSync(mainWindow!, {
+      type: 'question',
+      buttons: ['Quit anyway', 'Keep working'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Generation in progress',
+      message: 'A response is still being generated.',
+      detail: 'If you quit now, the in-progress generation will be stopped.'
+    })
+    if (choice === 1) {
+      event.preventDefault()
+      return
+    }
+    // User confirmed — abort generations so the before-quit handler doesn't
+    // prompt a second time and cleanup can run.
+    cancelAllGenerations()
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -322,11 +360,11 @@ app.whenReady().then(() => {
 
   // Subscribe engine status changes to send to renderer
   onEngineStatusChange((state) => {
-    mainWindow?.webContents.send('engine:status-change', state)
+    sendToRenderer('engine:status-change', state)
   })
 
   onSearchRuntimeStatusChange((state) => {
-    mainWindow?.webContents.send('search-runtime:status-change', state)
+    sendToRenderer('search-runtime:status-change', state)
   })
 
   // Auto-init engine if enabled
@@ -342,8 +380,42 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', async () => {
-  await Promise.all([stopEngine(), stopSearchRuntime(), stopOllama()])
+// Set once cleanup has run so the re-entrant before-quit (fired by app.quit()
+// below) is allowed to proceed instead of looping.
+let cleanupComplete = false
+
+app.on('before-quit', (event) => {
+  if (cleanupComplete) return
+
+  // Cancel the default quit; we drive it ourselves once cleanup finishes so the
+  // child processes are actually stopped before the app exits.
+  event.preventDefault()
+
+  // Warn the user if a response is still being generated.
+  if (hasActiveGenerations() && mainWindow && !mainWindow.isDestroyed()) {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'question',
+      buttons: ['Quit anyway', 'Keep working'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Generation in progress',
+      message: 'A response is still being generated.',
+      detail: 'If you quit now, the in-progress generation will be stopped.'
+    })
+    if (choice === 1) {
+      // Keep working — quit stays cancelled.
+      return
+    }
+    cancelAllGenerations()
+  }
+
+  Promise.all([stopEngine(), stopSearchRuntime(), stopOllama()])
+    .catch((err) => console.warn('[Quit cleanup]', err))
+    .finally(() => {
+      cleanupComplete = true
+      app.quit()
+    })
 })
 
 function setupIpcHandlers(): void {
