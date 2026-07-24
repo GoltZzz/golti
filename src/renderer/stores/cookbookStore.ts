@@ -251,9 +251,23 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
 
     cancelPull: async (ollamaTag: string) => {
       try {
-        await window.goltiAPI.cancelOllamaPull(ollamaTag)
+        const result = await window.goltiAPI.cancelOllamaPull(ollamaTag)
+        if (result && result.success === false) {
+          set((state) => ({
+            pullErrors: {
+              ...state.pullErrors,
+              [ollamaTag]: result.error || 'Could not cancel — try again'
+            }
+          }))
+        }
       } catch (err: any) {
         console.warn('[CookbookStore] Failed to cancel pull:', err)
+        set((state) => ({
+          pullErrors: {
+            ...state.pullErrors,
+            [ollamaTag]: err.message || 'Could not cancel — try again'
+          }
+        }))
       }
     },
 

@@ -642,24 +642,35 @@ function setupIpcHandlers(): void {
     return installedList
   })
 
-  // Active Ollama pulls keyed by model tag (supports cancel)
-  const activeOllamaPulls = new Map<string, AbortController>()
+  // Active Ollama pulls keyed by normalized tag (supports cancel)
+  type ActiveOllamaPull = {
+    controller: AbortController
+    reader: ReadableStreamDefaultReader<Uint8Array> | null
+  }
+  const activeOllamaPulls = new Map<string, ActiveOllamaPull>()
 
   // Cookbook Ollama Model Pull
   ipcMain.handle('cookbook:ollama-pull', async (_, modelTag: string) => {
     const providers = dbProviders.list()
     const ollamaProvider = providers.find(p => p.type === 'ollama')
     const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
+    const pullKey = normalizeOllamaTag(modelTag)
 
     // Abort any existing pull for the same tag before starting a new one
-    const existing = activeOllamaPulls.get(modelTag)
+    const existing = activeOllamaPulls.get(pullKey)
     if (existing) {
-      existing.abort()
-      activeOllamaPulls.delete(modelTag)
+      existing.controller.abort()
+      try {
+        void existing.reader?.cancel('superseded')
+      } catch {
+        // ignore
+      }
+      activeOllamaPulls.delete(pullKey)
     }
 
     const controller = new AbortController()
-    activeOllamaPulls.set(modelTag, controller)
+    const pullEntry: ActiveOllamaPull = { controller, reader: null }
+    activeOllamaPulls.set(pullKey, pullEntry)
 
     try {
       const response = await fetch(`${endpoint}/api/pull`, {
@@ -673,11 +684,12 @@ function setupIpcHandlers(): void {
       })
 
       if (!response.ok || !response.body) {
-        activeOllamaPulls.delete(modelTag)
+        activeOllamaPulls.delete(pullKey)
         throw new Error(`Ollama error (${response.status}): ${await response.text()}`)
       }
 
       const reader = response.body.getReader()
+      pullEntry.reader = reader
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
       let lastProgress = { completed: 0, total: 0, percent: 0 }
@@ -686,6 +698,8 @@ function setupIpcHandlers(): void {
       ;(async () => {
         try {
           while (true) {
+            if (controller.signal.aborted) break
+
             const { done, value } = await reader.read()
             if (done) break
 
@@ -762,16 +776,16 @@ function setupIpcHandlers(): void {
             error: streamErr.message
           })
         } finally {
-          if (activeOllamaPulls.get(modelTag) === controller) {
-            activeOllamaPulls.delete(modelTag)
+          if (activeOllamaPulls.get(pullKey) === pullEntry) {
+            activeOllamaPulls.delete(pullKey)
           }
         }
       })()
 
       return { success: true }
     } catch (err: any) {
-      if (activeOllamaPulls.get(modelTag) === controller) {
-        activeOllamaPulls.delete(modelTag)
+      if (activeOllamaPulls.get(pullKey) === pullEntry) {
+        activeOllamaPulls.delete(pullKey)
       }
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         mainWindow?.webContents.send('cookbook:pull-progress', {
@@ -789,9 +803,15 @@ function setupIpcHandlers(): void {
   })
 
   ipcMain.handle('cookbook:ollama-pull-cancel', (_, modelTag: string) => {
-    const controller = activeOllamaPulls.get(modelTag)
-    if (!controller) return { success: false, error: 'No active pull for this model' }
-    controller.abort()
+    const pullKey = normalizeOllamaTag(modelTag)
+    const entry = activeOllamaPulls.get(pullKey)
+    if (!entry) return { success: false, error: 'No active pull for this model' }
+    entry.controller.abort()
+    try {
+      void entry.reader?.cancel('user-cancel')
+    } catch {
+      // ignore
+    }
     return { success: true }
   })
 

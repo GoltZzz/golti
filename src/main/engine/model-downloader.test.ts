@@ -6,9 +6,18 @@ import path from 'path'
  * Stream that waits on `releaseFirst` before the first chunk, then
  * waits on `releaseRest` before subsequent chunks — so tests can
  * pause/cancel after partial progress.
+ *
+ * When `throwOnAbort` is false, abort never rejects `read()` — the
+ * downloader must exit via its own paused/cancelled loop checks.
  */
-function createTwoPhaseBody(chunks: Uint8Array[], signal?: AbortSignal | null) {
+function createTwoPhaseBody(
+  chunks: Uint8Array[],
+  signal?: AbortSignal | null,
+  options?: { throwOnAbort?: boolean }
+) {
+  const throwOnAbort = options?.throwOnAbort !== false
   let index = 0
+  let cancelled = false
   let releaseFirst!: () => void
   let releaseRest!: () => void
   const firstGate = new Promise<void>((resolve) => {
@@ -18,6 +27,14 @@ function createTwoPhaseBody(chunks: Uint8Array[], signal?: AbortSignal | null) {
     releaseRest = resolve
   })
 
+  const maybeAbort = () => {
+    if (throwOnAbort && (signal?.aborted || cancelled)) {
+      const err = new Error('aborted')
+      err.name = 'AbortError'
+      throw err
+    }
+  }
+
   return {
     releaseFirst: () => releaseFirst(),
     releaseRest: () => releaseRest(),
@@ -25,24 +42,21 @@ function createTwoPhaseBody(chunks: Uint8Array[], signal?: AbortSignal | null) {
       getReader() {
         return {
           async read() {
-            if (signal?.aborted) {
-              const err = new Error('aborted')
-              err.name = 'AbortError'
-              throw err
-            }
+            maybeAbort()
             if (index === 0) await firstGate
             else if (index === 1) await restGate
 
-            if (signal?.aborted) {
-              const err = new Error('aborted')
-              err.name = 'AbortError'
-              throw err
-            }
+            maybeAbort()
             if (index >= chunks.length) {
               return { done: true, value: undefined }
             }
             const value = chunks[index++]
             return { done: false, value }
+          },
+          async cancel() {
+            cancelled = true
+            releaseFirst()
+            releaseRest()
           },
           releaseLock() {}
         }
@@ -164,6 +178,69 @@ describe('model-downloader pause/resume/cancel', () => {
     expect(fs.existsSync(path.join(modelsDir, 'pause-model.gguf'))).toBe(false)
   })
 
+  it('applies pending cancel when cancel runs before download registers', async () => {
+    const { downloadModel, cancelModelDownload, getPartialDownloadBytes } =
+      await import('./model-downloader')
+
+    expect(cancelModelDownload('pending-model.gguf')).toBe(true)
+
+    fetchMock.mockImplementation(() => {
+      throw new Error('fetch should not be called after pending cancel')
+    })
+
+    const result = await downloadModel(
+      'https://example.com/model.gguf',
+      'pending-model.gguf'
+    )
+    expect(result.status).toBe('cancelled')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(getPartialDownloadBytes('pending-model.gguf')).toBe(0)
+  })
+
+  it('pauses via loop flag without relying on AbortError', async () => {
+    const { downloadModel, pauseModelDownload, getPartialDownloadBytes } =
+      await import('./model-downloader')
+
+    const chunk = new Uint8Array(1024).fill(3)
+    let phase: ReturnType<typeof createTwoPhaseBody> | null = null
+    let completed = 0
+
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      // Reader never throws AbortError — downloader must break on active.paused
+      phase = createTwoPhaseBody([chunk, chunk, chunk, chunk], init?.signal, {
+        throwOnAbort: false
+      })
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string) => (name.toLowerCase() === 'content-length' ? '4096' : null)
+        },
+        body: phase.body
+      })
+    })
+
+    const downloadPromise = downloadModel(
+      'https://example.com/model.gguf',
+      'flag-pause.gguf',
+      (p) => {
+        completed = p.completed
+      }
+    )
+
+    await vi.waitFor(() => expect(phase).not.toBeNull())
+    phase!.releaseFirst()
+    await vi.waitFor(() => expect(completed).toBeGreaterThan(0))
+
+    expect(pauseModelDownload('flag-pause.gguf')).toBe(true)
+    phase!.releaseRest()
+
+    const result = await downloadPromise
+    expect(result.status).toBe('paused')
+    expect(fs.existsSync(path.join(modelsDir, 'flag-pause.gguf.tmp'))).toBe(true)
+    expect(getPartialDownloadBytes('flag-pause.gguf')).toBeGreaterThan(0)
+  })
+
   it('resumes from .tmp using HTTP Range and appends bytes', async () => {
     const { downloadModel, getPartialDownloadBytes, deletePartialModel } =
       await import('./model-downloader')
@@ -197,6 +274,7 @@ describe('model-downloader pause/resume/cancel', () => {
                 done = true
                 return { done: false, value: remaining }
               },
+              async cancel() {},
               releaseLock() {}
             }
           }
@@ -230,9 +308,21 @@ describe('model-downloader pause/resume/cancel', () => {
     expect(fs.existsSync(gguf)).toBe(false)
   })
 
-  it('returns false when pausing with no active download', async () => {
-    const { pauseModelDownload, cancelModelDownload } = await import('./model-downloader')
-    expect(pauseModelDownload('missing.gguf')).toBe(false)
-    expect(cancelModelDownload('missing.gguf')).toBe(false)
+  it('records pending pause/cancel when no active download exists', async () => {
+    const { pauseModelDownload, cancelModelDownload, downloadModel } =
+      await import('./model-downloader')
+
+    expect(pauseModelDownload('soon.gguf')).toBe(true)
+
+    fetchMock.mockImplementation(() => {
+      throw new Error('fetch should not run after pending pause')
+    })
+
+    const paused = await downloadModel('https://example.com/model.gguf', 'soon.gguf')
+    expect(paused.status).toBe('paused')
+
+    expect(cancelModelDownload('soon2.gguf')).toBe(true)
+    const cancelled = await downloadModel('https://example.com/model.gguf', 'soon2.gguf')
+    expect(cancelled.status).toBe('cancelled')
   })
 })

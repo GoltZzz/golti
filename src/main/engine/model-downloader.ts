@@ -38,9 +38,14 @@ type ActiveDownload = {
   paused: boolean
   cancelled: boolean
   lastProgress: EngineDownloadProgress | null
+  reader: ReadableStreamDefaultReader<Uint8Array> | null
+  fileStream: fs.WriteStream | null
 }
 
+type PendingAction = 'pause' | 'cancel'
+
 const activeDownloads = new Map<string, ActiveDownload>()
+const pendingEngineActions = new Map<string, PendingAction>()
 
 function assertSafeGgufBasename(filename: string): string {
   const base = path.basename(filename)
@@ -77,6 +82,38 @@ function endStream(stream: fs.WriteStream): Promise<void> {
     }
     stream.end(() => resolve())
   })
+}
+
+function stopActiveTransfer(active: ActiveDownload, reason: 'user-pause' | 'user-cancel'): void {
+  active.controller.abort()
+  try {
+    void active.reader?.cancel(reason)
+  } catch {
+    // ignore
+  }
+  if (reason === 'user-cancel' && active.fileStream && !active.fileStream.destroyed) {
+    try {
+      active.fileStream.destroy()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function applyPendingAction(base: string, active: ActiveDownload): void {
+  const pending = pendingEngineActions.get(base)
+  if (!pending) return
+  pendingEngineActions.delete(base)
+
+  if (pending === 'cancel') {
+    active.cancelled = true
+    active.paused = false
+    stopActiveTransfer(active, 'user-cancel')
+  } else if (pending === 'pause') {
+    active.paused = true
+    active.cancelled = false
+    stopActiveTransfer(active, 'user-pause')
+  }
 }
 
 export function listLocalModels(): LocalModelFile[] {
@@ -138,9 +175,15 @@ export function getPartialDownloadBytes(filename: string): number {
 export function pauseModelDownload(filename: string): boolean {
   const base = assertSafeGgufBasename(filename)
   const active = activeDownloads.get(base)
-  if (!active || active.paused || active.cancelled) return false
-  active.paused = true
-  active.controller.abort()
+  if (active) {
+    if (active.paused || active.cancelled) return false
+    active.paused = true
+    stopActiveTransfer(active, 'user-pause')
+    return true
+  }
+
+  // Race: UI shows downloading before main registers the transfer
+  pendingEngineActions.set(base, 'pause')
   return true
 }
 
@@ -152,16 +195,18 @@ export function cancelModelDownload(filename: string): boolean {
   if (active) {
     active.cancelled = true
     active.paused = false
-    active.controller.abort()
+    stopActiveTransfer(active, 'user-cancel')
     return true
   }
 
-  // No active transfer — still clear any leftover partial
+  // Pending intent if download hasn't started yet
+  pendingEngineActions.set(base, 'cancel')
+
+  // Also clear any leftover partial
   if (fs.existsSync(tempPath)) {
     unlinkQuiet(tempPath)
-    return true
   }
-  return false
+  return true
 }
 
 export async function downloadModel(
@@ -173,6 +218,7 @@ export async function downloadModel(
   const { filepath: targetPath, tempPath } = resolveModelPath(base)
 
   if (fs.existsSync(targetPath)) {
+    pendingEngineActions.delete(base)
     return { status: 'complete', path: targetPath }
   }
 
@@ -185,9 +231,12 @@ export async function downloadModel(
     controller,
     paused: false,
     cancelled: false,
-    lastProgress: null
+    lastProgress: null,
+    reader: null,
+    fileStream: null
   }
   activeDownloads.set(base, active)
+  applyPendingAction(base, active)
 
   const emit = (progress: EngineDownloadProgress) => {
     active.lastProgress = progress
@@ -195,6 +244,37 @@ export async function downloadModel(
   }
 
   let existingBytes = getPartialDownloadBytes(base)
+
+  // Immediate cancel from pending intent before any network work
+  if (active.cancelled) {
+    unlinkQuiet(tempPath)
+    emit({
+      type: 'model',
+      name: base,
+      completed: 0,
+      total: 0,
+      percent: 0,
+      speed: 'Cancelled',
+      status: 'cancelled'
+    })
+    activeDownloads.delete(base)
+    return { status: 'cancelled' }
+  }
+
+  if (active.paused) {
+    const completed = existingBytes
+    emit({
+      type: 'model',
+      name: base,
+      completed,
+      total: Math.max(completed, 1),
+      percent: 0,
+      speed: 'Paused',
+      status: 'paused'
+    })
+    activeDownloads.delete(base)
+    return { status: 'paused' }
+  }
 
   emit({
     type: 'model',
@@ -217,6 +297,36 @@ export async function downloadModel(
       signal: controller.signal,
       headers
     })
+
+    // Re-check after await (pause/cancel during connect)
+    if (active.cancelled) {
+      unlinkQuiet(tempPath)
+      emit({
+        type: 'model',
+        name: base,
+        completed: 0,
+        total: 0,
+        percent: 0,
+        speed: 'Cancelled',
+        status: 'cancelled'
+      })
+      return { status: 'cancelled' }
+    }
+    if (active.paused) {
+      const completed = getPartialDownloadBytes(base)
+      const total = active.lastProgress?.total || completed
+      const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+      emit({
+        type: 'model',
+        name: base,
+        completed,
+        total,
+        percent,
+        speed: 'Paused',
+        status: 'paused'
+      })
+      return { status: 'paused' }
+    }
 
     // Server ignored Range — restart from scratch
     if (existingBytes > 0 && res.status === 200) {
@@ -251,11 +361,16 @@ export async function downloadModel(
       flags: existingBytes > 0 ? 'a' : 'w'
     })
     const reader = res.body.getReader()
+    active.fileStream = fileStream
+    active.reader = reader
 
     try {
       while (true) {
+        if (active.cancelled || active.paused) break
+
         const { done, value } = await reader.read()
         if (done) break
+        if (active.cancelled || active.paused) break
 
         const canContinue = fileStream.write(value)
         downloadedBytes += value.length
@@ -292,7 +407,11 @@ export async function downloadModel(
         }
       }
     } finally {
-      await endStream(fileStream)
+      active.reader = null
+      active.fileStream = null
+      if (!fileStream.destroyed) {
+        await endStream(fileStream)
+      }
       try {
         reader.releaseLock()
       } catch {
@@ -396,4 +515,5 @@ export async function downloadModel(
 /** Test helpers */
 export function _resetActiveDownloadsForTests(): void {
   activeDownloads.clear()
+  pendingEngineActions.clear()
 }

@@ -144,12 +144,31 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
         return
       }
 
-      // paused / cancelled — progress listener already updated status
       if (result?.status === 'cancelled') {
         set((state) => ({
           downloadingModels: removeDownloadingModel(state.downloadingModels, filename),
           downloadErrors: removeDownloadError(state.downloadErrors, filename)
         }))
+        return
+      }
+
+      if (result?.status === 'paused') {
+        // Keep entry; progress listener / pauseDownload already set status
+        set((state) => {
+          const existing = state.downloadingModels[filename]
+          if (!existing) return state
+          return {
+            downloadingModels: {
+              ...state.downloadingModels,
+              [filename]: {
+                ...existing,
+                status: 'paused',
+                speed: existing.speed === 'Paused' ? existing.speed : 'Paused'
+              }
+            }
+          }
+        })
+        return
       }
     } catch (err: any) {
       const message = err.message || String(err)
@@ -180,9 +199,44 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
 
   pauseDownload: async (filename: string) => {
     try {
-      await window.goltiAPI.pauseModelDownload(filename)
+      const result = await window.goltiAPI.pauseModelDownload(filename)
+      if (result?.success) {
+        set((state) => {
+          const existing = state.downloadingModels[filename]
+          return {
+            downloadingModels: {
+              ...state.downloadingModels,
+              [filename]: {
+                ...(existing || {
+                  type: 'model' as const,
+                  name: filename,
+                  completed: 0,
+                  total: 0,
+                  percent: 0
+                }),
+                status: 'paused' as const,
+                speed: 'Paused'
+              }
+            },
+            downloadErrors: removeDownloadError(state.downloadErrors, filename)
+          }
+        })
+      } else {
+        set((state) => ({
+          downloadErrors: {
+            ...state.downloadErrors,
+            [filename]: 'Could not pause download — try again'
+          }
+        }))
+      }
     } catch (err: any) {
       console.warn('[EngineStore] Failed to pause download:', err)
+      set((state) => ({
+        downloadErrors: {
+          ...state.downloadErrors,
+          [filename]: err.message || 'Could not pause download'
+        }
+      }))
     }
   },
 
@@ -192,13 +246,28 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
 
   cancelDownload: async (filename: string) => {
     try {
-      await window.goltiAPI.cancelModelDownload(filename)
-      set((state) => ({
-        downloadingModels: removeDownloadingModel(state.downloadingModels, filename),
-        downloadErrors: removeDownloadError(state.downloadErrors, filename)
-      }))
+      const result = await window.goltiAPI.cancelModelDownload(filename)
+      if (result?.success) {
+        set((state) => ({
+          downloadingModels: removeDownloadingModel(state.downloadingModels, filename),
+          downloadErrors: removeDownloadError(state.downloadErrors, filename)
+        }))
+      } else {
+        set((state) => ({
+          downloadErrors: {
+            ...state.downloadErrors,
+            [filename]: 'Could not cancel download — try again'
+          }
+        }))
+      }
     } catch (err: any) {
       console.warn('[EngineStore] Failed to cancel download:', err)
+      set((state) => ({
+        downloadErrors: {
+          ...state.downloadErrors,
+          [filename]: err.message || 'Could not cancel download'
+        }
+      }))
     }
   },
 
