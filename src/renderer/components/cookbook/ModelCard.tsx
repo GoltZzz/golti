@@ -446,14 +446,17 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
       {/* Requirements Info */}
       <div className="requirements-grid">
-        <div className="req-item">
+        <div
+          className="req-item"
+          title={`Minimum RAM needed (Model weights + ~4K KV context buffer). Recommended: ${model.ramRecommendedGB} GB for long context.`}
+        >
           <Cpu size={14} className="req-icon" />
           <div className="req-text">
             <span className="req-label">RAM Required</span>
             <span className="req-val">{model.ramRequiredGB} GB</span>
           </div>
         </div>
-        <div className="req-item">
+        <div className="req-item" title="Storage disk space required for GGUF model binary file">
           <HardDrive size={14} className="req-icon" />
           <div className="req-text">
             <span className="req-label">Disk Space</span>
