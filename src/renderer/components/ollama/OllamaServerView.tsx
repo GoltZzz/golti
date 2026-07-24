@@ -256,6 +256,12 @@ export const OllamaServerView: React.FC = () => {
           {processState.status === 'running' ? (
             <button
               onClick={() => stopOllama()}
+              disabled={processState.needsPrivilegedStop}
+              title={
+                processState.needsPrivilegedStop
+                  ? `Ollama runs as the system service ${processState.serviceUnit}. Stop it with: sudo systemctl stop ${processState.serviceUnit}`
+                  : undefined
+              }
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -267,7 +273,8 @@ export const OllamaServerView: React.FC = () => {
                 color: '#e06c75',
                 fontSize: '13px',
                 fontWeight: 600,
-                cursor: 'pointer'
+                cursor: processState.needsPrivilegedStop ? 'not-allowed' : 'pointer',
+                opacity: processState.needsPrivilegedStop ? 0.5 : 1
               }}
             >
               <Square size={15} /> Stop Server
@@ -398,7 +405,13 @@ export const OllamaServerView: React.FC = () => {
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-secondary)' }}>Execution Type:</span>{' '}
-                  <span>{processState.isSystemProcess ? 'System Daemon / External Service' : 'Golti Managed Process'}</span>
+                  <span>
+                    {processState.serviceUnit
+                      ? `systemd unit (${processState.serviceUnit})`
+                      : processState.isSystemProcess
+                        ? 'System Daemon / External Service'
+                        : 'Golti Managed Process'}
+                  </span>
                 </div>
               </div>
             </div>

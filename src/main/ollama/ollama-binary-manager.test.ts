@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cancelOllamaDownload, getBinaryDownloadUrl, getPlatformBinaryKey, getBinaryPath, isBinaryInstalled, getSystemBinaryPath } from './ollama-binary-manager'
+import { cancelOllamaDownload, getBinaryDownloadUrl, getPlatformBinaryKey, getBinaryPath, isBinaryInstalled, getSystemBinaryPath, stopSystemdOllama } from './ollama-binary-manager'
 
 describe('ollama binary manager', () => {
   it('returns a valid platform binary key', () => {
@@ -31,5 +31,19 @@ describe('ollama binary manager', () => {
     if (sysPath) {
       expect(sysPath).toMatch(/ollama(\.exe)?$/)
     }
+  })
+
+  describe('stopSystemdOllama', () => {
+    it('refuses to stop a non-systemd process', () => {
+      const result = stopSystemdOllama({})
+      expect(result.ok).toBe(false)
+      expect(result.message).toMatch(/not a systemd/i)
+    })
+
+    it('does not attempt to stop a privileged system unit, surfacing the manual command', () => {
+      const result = stopSystemdOllama({ serviceUnit: 'ollama.service', needsPrivilegedStop: true })
+      expect(result.ok).toBe(false)
+      expect(result.message).toContain('sudo systemctl stop ollama.service')
+    })
   })
 })

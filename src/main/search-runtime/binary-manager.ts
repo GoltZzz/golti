@@ -61,6 +61,14 @@ export function getSearxLauncherPath(): string | null {
   return null
 }
 
+/**
+ * The settings file shipped in the bundle, which is what pins SearXNG to
+ * 127.0.0.1. Without it a sidecar would start on upstream defaults.
+ */
+export function getSearxSettingsPath(): string | null {
+  return walkFind(path.join(getVersionDir(), 'config'), 'searxng.settings.yml')
+}
+
 export function isSearchRuntimeInstalled(): boolean {
   const p = getApiBinaryPath()
   if (!fs.existsSync(p)) return false

@@ -1,13 +1,26 @@
 import { spawn, ChildProcess } from 'child_process'
-import { getBinaryPath, isBinaryInstalled } from './binary-manager'
+import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled } from './binary-manager'
 import { EngineState, EngineStatus } from '../../shared/types'
 
 let currentProcess: ChildProcess | null = null
 let currentState: EngineState = {
-  status: isBinaryInstalled() ? 'stopped' : 'not-installed',
+  status: 'not-installed',
   port: 8391,
   loadedModel: undefined,
   error: undefined
+}
+
+/**
+ * Probing the disk needs `app.getPath('userData')`, which is not available while
+ * this module is being imported. Defer it to the first read instead.
+ */
+let initialStatusResolved = false
+function resolveInitialStatus(): void {
+  if (initialStatusResolved) return
+  initialStatusResolved = true
+  if (isBinaryInstalled()) {
+    currentState = { ...currentState, status: 'stopped' }
+  }
 }
 
 type StatusChangeListener = (state: EngineState) => void
@@ -26,6 +39,7 @@ function updateState(updates: Partial<EngineState>) {
 }
 
 export function getEngineState(): EngineState {
+  resolveInitialStatus()
   return currentState
 }
 
@@ -74,7 +88,8 @@ export async function startEngine(
   try {
     currentProcess = spawn(binaryPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false
+      detached: false,
+      env: getEngineSpawnEnv(binaryPath)
     })
 
     const pid = currentProcess.pid
