@@ -1,6 +1,7 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { SystemInfoFull } from '../../../shared/types'
 import { useCookbookStore } from '../../stores/cookbookStore'
+import { RamBreakdownModal } from './RamBreakdownModal'
 import {
   Cpu,
   Layers,
@@ -10,7 +11,8 @@ import {
   Gauge,
   ChevronDown,
   ChevronUp,
-  AlertCircle
+  AlertCircle,
+  HelpCircle
 } from 'lucide-react'
 
 interface HardwareCardProps {
@@ -46,6 +48,7 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
   onRescan
 }) => {
   const { isHardwareCardCollapsed, toggleHardwareCardCollapsed } = useCookbookStore()
+  const [isRamModalOpen, setIsRamModalOpen] = useState(false)
 
   const showSkeleton = !systemInfo && loading
   const showErrorOnly = !systemInfo && !!scanError && !loading
@@ -221,10 +224,36 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
             </div>
           </div>
 
-          <div className="hardware-item ram-item">
+          <div
+            className="hardware-item ram-item clickable-ram-item"
+            onClick={() => setIsRamModalOpen(true)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setIsRamModalOpen(true)
+              }
+            }}
+            title="Click to view detailed Memory (RAM) breakdown"
+          >
             <div className="item-header">
-              <Layers size={16} className="item-icon ram-icon" aria-hidden />
-              <h3>Memory (RAM)</h3>
+              <div className="header-title-with-badge">
+                <Layers size={16} className="item-icon ram-icon" aria-hidden />
+                <h3>Memory (RAM)</h3>
+              </div>
+              <button
+                type="button"
+                className="ram-info-icon-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setIsRamModalOpen(true)
+                }}
+                title="Why is RAM high? Click for breakdown"
+                aria-label="View Memory Breakdown"
+              >
+                <HelpCircle size={14} />
+              </button>
             </div>
             <div className="item-body">
               <div className="ram-details">
@@ -245,6 +274,34 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                   }}
                 />
               </div>
+              <div className="sub-specs" style={{ marginTop: '8px', fontSize: '11px' }}>
+                <span>
+                  Free: <span className="spec-num">{Math.max(0, ram.totalGB - parseFloat(ramUsedGB)).toFixed(1)} GB</span>
+                </span>
+                <span className="spec-dot">•</span>
+                <span>
+                  Max LLM Cap: <span className="spec-num">{(gpu.isAppleSilicon ? ram.totalGB * 0.75 : (gpu.vramGB || ram.totalGB * 0.70)).toFixed(1)} GB</span>
+                </span>
+              </div>
+              {ram.usedPercent > 85 ? (
+                <div className="hardware-inline-error" style={{ marginTop: '6px', fontSize: '11px', color: '#e5c07b' }}>
+                  <AlertCircle size={12} aria-hidden /> High RAM pressure ({ram.usedPercent}% used).{' '}
+                  <button
+                    type="button"
+                    className="ram-inline-breakdown-link"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setIsRamModalOpen(true)
+                    }}
+                  >
+                    Why is RAM high?
+                  </button>
+                </div>
+              ) : (
+                <div className="ram-click-hint">
+                  <HelpCircle size={11} /> Click card for detailed RAM breakdown
+                </div>
+              )}
             </div>
           </div>
 
@@ -293,6 +350,13 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
           </div>
         </div>
       </div>
+
+      <RamBreakdownModal
+        open={isRamModalOpen}
+        systemInfo={systemInfo}
+        onClose={() => setIsRamModalOpen(false)}
+        onRescan={onRescan}
+      />
     </div>
   )
 }

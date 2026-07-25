@@ -1,18 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { Server, Sliders, Info, Zap, Play, Square, Download, Trash2, CheckCircle2, Globe } from "lucide-react";
+import { Server, Sliders, Info, Zap, Play, Square, Download, Trash2, CheckCircle2, Globe, Copy, RefreshCw } from "lucide-react";
 import { ProviderConfig } from "./ProviderConfig";
 import { EggLogo } from "../brand/EggLogo";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useSearchRuntimeStore } from "../../stores/searchRuntimeStore";
 import { useSidebarStore, type SettingsSubTab } from "../../stores/sidebarStore";
+import { EngineStatusBadge } from "../common/EngineStatusBadge";
 
 export const SettingsView: React.FC = () => {
   const settingsFocus = useSidebarStore((s) => s.settingsSubTab);
   const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(
     () => useSidebarStore.getState().settingsSubTab ?? "providers"
   );
-  const { settings, fetchSettings, updateSettings } = useSettingsStore();
+  const { settings, fetchSettings, updateSettings, setupListeners: setupSettingsListeners } = useSettingsStore();
   const {
     engineState,
     localModels,
@@ -21,6 +22,7 @@ export const SettingsView: React.FC = () => {
     startEngine,
     stopEngine,
     installEngine,
+    reinstallEngine,
     fetchLocalModels,
     deleteLocalModel,
     loadModel
@@ -42,6 +44,7 @@ export const SettingsView: React.FC = () => {
   const [webSearchTestBusy, setWebSearchTestBusy] = useState(false);
   const [webSearchTestMessage, setWebSearchTestMessage] = useState<string | null>(null);
   const [webSearchTestOk, setWebSearchTestOk] = useState<boolean | null>(null);
+  const [copiedLogs, setCopiedLogs] = useState(false);
   const [showSearchAdvanced, setShowSearchAdvanced] = useState(false);
   const [gpuDevices, setGpuDevices] = useState<
     { id: string; name: string; totalMiB: number; freeMiB: number }[]
@@ -59,8 +62,12 @@ export const SettingsView: React.FC = () => {
   useEffect(() => {
     fetchSettings();
     fetchLocalModels();
-    const cleanup = setupListeners();
-    return () => cleanup();
+    const cleanupSearch = setupListeners();
+    const cleanupSettings = setupSettingsListeners();
+    return () => {
+      cleanupSearch();
+      cleanupSettings();
+    };
   }, []);
 
   // Refresh the offload device list once the engine binary is present.
@@ -218,7 +225,46 @@ export const SettingsView: React.FC = () => {
               gap: "var(--space-4)",
             }}
           >
+            {/* Engine UI Toggle Setting */}
+            <div
+              style={{
+                padding: "12px 16px",
+                borderRadius: "var(--radius-md)",
+                backgroundColor: "var(--bg-card)",
+                border: "1px solid var(--border-subtle)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>
+                  Show Golti Engine in UI
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+                  Display status banners and options in Hardware Cookbook and Status Bar.
+                </div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings?.engineEnabled ?? true}
+                  onChange={(e) => updateSettings({ engineEnabled: e.target.checked })}
+                />
+              </label>
+            </div>
+
             {/* Status Card */}
+            <EngineStatusBadge
+              engineState={engineState}
+              isInstallingBinary={isInstallingBinary}
+              onInstall={installEngine}
+              onReinstall={reinstallEngine}
+              onStart={startEngine}
+              onStop={stopEngine}
+            />
+
+              {/* Hardware & Acceleration Settings */}
             <div
               style={{
                 padding: "16px",
@@ -230,73 +276,10 @@ export const SettingsView: React.FC = () => {
                 gap: "12px"
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <h3 style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "6px" }}>
-                    <Zap size={16} style={{ color: "#e5c07b" }} /> Golti Engine Server
-                  </h3>
-                  <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
-                    Local standalone inference process running llama-server.
-                  </p>
-                </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  {engineState.status === "not-installed" ? (
-                    <button
-                      onClick={() => installEngine()}
-                      disabled={isInstallingBinary}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: "var(--radius-sm)",
-                        backgroundColor: "#e5c07b",
-                        color: "#1e1e1e",
-                        fontWeight: 600,
-                        fontSize: "12px"
-                      }}
-                    >
-                      {isInstallingBinary ? "Installing..." : "Install Engine"}
-                    </button>
-                  ) : engineState.status === "running" ? (
-                    <button
-                      onClick={() => stopEngine()}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: "var(--radius-sm)",
-                        backgroundColor: "rgba(224, 108, 117, 0.2)",
-                        color: "#e06c75",
-                        border: "1px solid rgba(224, 108, 117, 0.4)",
-                        fontSize: "12px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "4px"
-                      }}
-                    >
-                      <Square size={12} /> Stop Server
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => startEngine()}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: "var(--radius-sm)",
-                        backgroundColor: "rgba(152, 195, 121, 0.2)",
-                        color: "#98c379",
-                        border: "1px solid rgba(152, 195, 121, 0.4)",
-                        fontSize: "12px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "4px"
-                      }}
-                    >
-                      <Play size={12} /> Start Server
-                    </button>
-                  )}
-                </div>
-              </div>
-
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", background: "var(--bg-app)", padding: "12px", borderRadius: "6px" }}>
                 <div>
                   <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Status</span>
-                  <div style={{ fontSize: "13px", fontWeight: 500, color: engineState.status === "running" ? "#98c379" : "var(--text-primary)" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 500, color: engineState.status === "running" ? "#98c379" : engineState.status === "error" ? "#e06c75" : "var(--text-primary)" }}>
                     {engineState.status.toUpperCase()}
                   </div>
                 </div>
@@ -386,9 +369,97 @@ export const SettingsView: React.FC = () => {
                 </div>
               )}
 
-              {engineError && (
-                <div style={{ fontSize: "12px", color: "#e06c75", backgroundColor: "rgba(224, 108, 117, 0.1)", padding: "8px", borderRadius: "4px" }}>
-                  {engineError}
+              {(engineState.error || engineError || engineState.status === "error") && (
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: "#e06c75",
+                    backgroundColor: "rgba(224, 108, 117, 0.08)",
+                    border: "1px solid rgba(224, 108, 117, 0.3)",
+                    padding: "12px 14px",
+                    borderRadius: "6px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px"
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                    <div>
+                      <strong style={{ fontSize: "13px", display: "block", marginBottom: "4px" }}>
+                        Golti Engine Encountered an Error
+                      </strong>
+                      <span style={{ color: "var(--text-secondary)" }}>
+                        {engineState.error || engineError || "llama-server process reported a fault."}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+                      <button
+                        onClick={() => startEngine()}
+                        style={{
+                          padding: "5px 10px",
+                          borderRadius: "var(--radius-sm)",
+                          backgroundColor: "rgba(152, 195, 121, 0.2)",
+                          color: "#98c379",
+                          border: "1px solid rgba(152, 195, 121, 0.4)",
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px"
+                        }}
+                      >
+                        <RefreshCw size={12} /> Retry Launch
+                      </button>
+                      <button
+                        onClick={() => {
+                          const logsToCopy = engineState.lastLogs || engineState.error || engineError || "No detailed logs available";
+                          navigator.clipboard.writeText(logsToCopy);
+                          setCopiedLogs(true);
+                          setTimeout(() => setCopiedLogs(false), 2000);
+                        }}
+                        style={{
+                          padding: "5px 10px",
+                          borderRadius: "var(--radius-sm)",
+                          backgroundColor: "var(--bg-card)",
+                          color: "var(--text-primary)",
+                          border: "1px solid var(--border-subtle)",
+                          fontSize: "11px",
+                          fontWeight: 500,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px"
+                        }}
+                      >
+                        <Copy size={12} /> {copiedLogs ? "Copied Logs!" : "Copy Error Logs"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {(engineState.lastLogs || engineState.error) && (
+                    <div style={{ marginTop: "4px" }}>
+                      <span style={{ fontSize: "11px", color: "var(--text-muted)", display: "block", marginBottom: "4px" }}>
+                        Diagnostic Stderr Output:
+                      </span>
+                      <pre
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "11px",
+                          color: "#abb2bf",
+                          backgroundColor: "var(--bg-app)",
+                          padding: "8px 10px",
+                          borderRadius: "4px",
+                          maxHeight: "140px",
+                          overflowY: "auto",
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          margin: 0,
+                          border: "1px solid var(--border-subtle)"
+                        }}
+                      >
+                        {engineState.lastLogs || engineState.error}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -562,6 +633,39 @@ export const SettingsView: React.FC = () => {
                   onChange={(e) => updateSettings({ showThinkingProcess: e.target.checked })}
                 />
                 <span>Show AI thinking process in chat bubbles</span>
+              </label>
+            </div>
+
+            <div style={{ paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+              <h3
+                style={{
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
+                  marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}
+              >
+                <Zap size={16} /> Golti Engine Integration
+              </h3>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "var(--text-muted)",
+                  marginBottom: "var(--space-3)",
+                }}
+              >
+                Golti Engine runs local GGUF models on your machine. If you only use Cloud APIs (OpenAI, Gemini, Anthropic) or Ollama, you can hide Golti Engine status banners and options.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings?.engineEnabled ?? true}
+                  onChange={(e) => updateSettings({ engineEnabled: e.target.checked })}
+                />
+                <span>Show Golti Engine in Cookbook, Status Bar & Settings</span>
               </label>
             </div>
 

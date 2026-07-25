@@ -1,4 +1,5 @@
 import fs from 'fs'
+import net from 'net'
 import { spawn, execFile, ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
@@ -24,7 +25,7 @@ function resolveInitialStatus(): void {
   if (initialStatusResolved) return
   initialStatusResolved = true
   if (isBinaryInstalled()) {
-    currentState = { ...currentState, status: 'stopped' }
+    updateState({ status: 'stopped' })
   }
 }
 
@@ -36,7 +37,7 @@ export function onEngineStatusChange(listener: StatusChangeListener): () => void
   return () => listeners.delete(listener)
 }
 
-function updateState(updates: Partial<EngineState>) {
+export function updateState(updates: Partial<EngineState>) {
   currentState = { ...currentState, ...updates }
   for (const listener of listeners) {
     listener(currentState)
@@ -46,6 +47,27 @@ function updateState(updates: Partial<EngineState>) {
 export function getEngineState(): EngineState {
   resolveInitialStatus()
   return currentState
+}
+
+export async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    server.once('error', () => resolve(false))
+    server.once('listening', () => {
+      server.close(() => resolve(true))
+    })
+    server.listen(port, '127.0.0.1')
+  })
+}
+
+export async function findAvailablePort(startPort: number = 8391, maxAttempts: number = 5): Promise<number> {
+  for (let offset = 0; offset < maxAttempts; offset++) {
+    const candidate = startPort + offset
+    if (await isPortAvailable(candidate)) {
+      return candidate
+    }
+  }
+  return startPort
 }
 
 export async function checkEngineHealth(port: number = 8391): Promise<boolean> {
@@ -174,6 +196,7 @@ interface AttemptResult {
   process: ChildProcess
   /** Resolves true if the process died early with a GPU-allocation error. */
   earlyGpuFailure: Promise<boolean>
+  getStderr: () => string
 }
 
 /** Spawns one llama-server attempt and watches for an early GPU failure. */
@@ -208,7 +231,7 @@ function spawnAttempt(binaryPath: string, args: string[]): AttemptResult {
     setTimeout(() => resolve(false), 8000)
   })
 
-  return { process: proc, earlyGpuFailure }
+  return { process: proc, earlyGpuFailure, getStderr: () => stderrBuffer }
 }
 
 export async function startEngine(
@@ -228,6 +251,12 @@ export async function startEngine(
   if (!isBinaryInstalled()) {
     updateState({ status: 'not-installed', error: 'Engine binary not installed' })
     throw new Error('Engine binary not installed')
+  }
+
+  if (!modelPath) {
+    const noModelMsg = 'No GGUF model found. Please download a model from the Hardware Cookbook before starting Golti Engine.'
+    updateState({ status: 'error', error: noModelMsg })
+    throw new Error(noModelMsg)
   }
 
   const binaryPath = getBinaryPath()
@@ -257,10 +286,13 @@ export async function startEngine(
   let layers = gpuLayers ?? (await computeGpuLayers(modelPath, device ? device.freeMiB / 1024 : undefined))
   let fellBack = false
 
-  updateState({ status: 'starting', port, error: undefined, backend, gpuDevice: device?.name })
+  // Find available port to prevent port binding collisions.
+  const actualPort = await findAvailablePort(port)
+
+  updateState({ status: 'starting', port: actualPort, error: undefined, lastLogs: undefined, backend, gpuDevice: device?.name })
 
   while (true) {
-    const args: string[] = ['--host', '127.0.0.1', '--port', String(port), '--ctx-size', '4096']
+    const args: string[] = ['--host', '127.0.0.1', '--port', String(actualPort), '--ctx-size', '4096']
     if (modelPath) args.push('--model', modelPath)
     if (device) args.push('--device', device.id)
     args.push('--n-gpu-layers', String(layers))
@@ -269,7 +301,7 @@ export async function startEngine(
     try {
       attempt = spawnAttempt(binaryPath, args)
     } catch (err: any) {
-      updateState({ status: 'error', error: err.message })
+      updateState({ status: 'error', error: err.message, lastLogs: err.stack || err.message })
       throw err
     }
 
@@ -285,7 +317,7 @@ export async function startEngine(
         while (attempts < 16) {
           await new Promise((r) => setTimeout(r, 500))
           attempts++
-          if (await checkEngineHealth(port)) return false
+          if (await checkEngineHealth(actualPort)) return false
           if (!currentProcess) return true // exited underneath us
         }
         return false
@@ -303,16 +335,43 @@ export async function startEngine(
       continue
     }
 
+    // Verify health
+    const isHealthy = await checkEngineHealth(actualPort)
+    if (!isHealthy) {
+      const stderr = attempt.getStderr().trim()
+      if (layers !== 0) {
+        console.warn(`[GoltiEngine] Health check failed at ${layers} layers, falling back to CPU`)
+        try { currentProcess?.kill('SIGKILL') } catch {}
+        currentProcess = null
+        layers = 0
+        fellBack = true
+        continue
+      }
+      const errorMsg = stderr || 'llama-server failed to start or health check timed out.'
+      console.error('[GoltiEngine] Server failed health check:', errorMsg)
+      try { currentProcess?.kill('SIGKILL') } catch {}
+      currentProcess = null
+      updateState({ status: 'error', error: errorMsg, lastLogs: stderr || errorMsg, pid: undefined })
+      throw new Error(errorMsg)
+    }
+
     // Committed to this process — attach the long-lived listeners.
     currentProcess.on('exit', (code, signal) => {
       console.log(`[llama-server] process exited with code ${code}, signal ${signal}`)
+      const isUnexpected = code !== 0 && code !== null && signal === null
+      const stderrMsg = attempt.getStderr().trim()
       currentProcess = null
-      updateState({ status: 'stopped', pid: undefined, loadedModel: undefined })
+      if (isUnexpected) {
+        const errStr = stderrMsg || `Engine process exited unexpectedly with code ${code}`
+        updateState({ status: 'error', error: errStr, lastLogs: stderrMsg || errStr, pid: undefined, loadedModel: undefined })
+      } else {
+        updateState({ status: 'stopped', pid: undefined, loadedModel: undefined })
+      }
     })
     currentProcess.on('error', (err) => {
       console.error('[llama-server error]', err)
       currentProcess = null
-      updateState({ status: 'error', error: err.message, pid: undefined })
+      updateState({ status: 'error', error: err.message, lastLogs: err.stack || err.message, pid: undefined })
     })
 
     updateState({

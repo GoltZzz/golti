@@ -90,7 +90,9 @@ export const ProviderConfig: React.FC = () => {
 
       {/* Provider Cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {providers.map(p => (
+        {providers
+          .filter((p) => p.type !== 'golti-engine' && p.id !== 'golti-engine-local' && !p.id.startsWith('golti-engine_'))
+          .map(p => (
           <div
             key={p.id}
             style={{

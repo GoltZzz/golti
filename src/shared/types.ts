@@ -24,6 +24,8 @@ export interface EngineState {
   gpuLayers?: number
   /** Set when the engine fell back to fewer layers / CPU after a GPU failure. */
   fellBackToCpu?: boolean
+  /** Last stderr output lines for error diagnostic log copying. */
+  lastLogs?: string
 }
 
 export interface OllamaState {
@@ -362,7 +364,7 @@ export type ModelCompatibility = 'great' | 'runs' | 'tight' | 'wont_fit'
 
 export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative' | 'agentic'
 
-export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'glm' | 'falcon' | 'smollm' | 'internlm' | 'command-r' | 'devstral' | 'kimi' | 'other'
+export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'glm' | 'falcon' | 'smollm' | 'internlm' | 'command-r' | 'devstral' | 'kimi' | 'hermes' | 'other'
 
 export type ModelSizeTier = 'tiny' | 'small' | 'medium' | 'large' | 'xl' | 'xxl' | 'datacenter'
 

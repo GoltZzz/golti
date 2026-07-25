@@ -38,7 +38,9 @@ import {
   startEngine,
   getEngineState,
   onEngineStatusChange,
+  updateState,
   downloadEngineBinary,
+  deleteEngineBinary,
   downloadModel,
   listLocalModels,
   deleteLocalModel,
@@ -89,9 +91,65 @@ function resolveEngineOffload(settings: {
   return { layers, device }
 }
 
+/**
+ * Calculates true available physical memory (in bytes).
+ * On macOS and Linux, standard os.freemem() only accounts for strictly unallocated pages,
+ * ignoring reclaimable inactive/speculative/purgeable cache pages. This function reads OS memory
+ * statistics to include reclaimable cache in available RAM.
+ */
+async function getAvailableMemoryBytes(): Promise<number> {
+  const platform = os.platform()
+  const fallback = os.freemem()
+
+  if (platform === 'darwin') {
+    try {
+      const { stdout } = await execAsync('vm_stat')
+      let pageSize = 4096
+      const pageSizeMatch = stdout.match(/page size of (\d+) bytes/)
+      if (pageSizeMatch) {
+        pageSize = parseInt(pageSizeMatch[1], 10)
+      }
+
+      const getValue = (key: string): number => {
+        const match = stdout.match(new RegExp(`${key}:\\s*(\\d+)`))
+        return match ? parseInt(match[1], 10) : 0
+      }
+
+      const freePages = getValue('Pages free')
+      const inactivePages = getValue('Pages inactive')
+      const speculativePages = getValue('Pages speculative')
+      const purgeablePages = getValue('Pages purgeable')
+
+      const availablePages = freePages + inactivePages + speculativePages + purgeablePages
+      const availableBytes = availablePages * pageSize
+
+      if (availableBytes > 0 && availableBytes <= os.totalmem()) {
+        return availableBytes
+      }
+    } catch {
+      // Ignore error and fall back
+    }
+  } else if (platform === 'linux') {
+    try {
+      const meminfo = await fs.promises.readFile('/proc/meminfo', 'utf8')
+      const match = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB$/m)
+      if (match) {
+        const availableBytes = parseInt(match[1], 10) * 1024
+        if (availableBytes > 0 && availableBytes <= os.totalmem()) {
+          return availableBytes
+        }
+      }
+    } catch {
+      // Ignore error and fall back
+    }
+  }
+
+  return fallback
+}
+
 async function getFullSystemInfo(): Promise<SystemInfoFull> {
   const totalMem = os.totalmem()
-  const freeMem = os.freemem()
+  const freeMem = await getAvailableMemoryBytes()
   const cpus = os.cpus()
   
   const platform = os.platform()
@@ -129,7 +187,7 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
   // RAM
   const totalGB = totalMem / (1024 * 1024 * 1024)
   const freeGB = freeMem / (1024 * 1024 * 1024)
-  const usedPercent = ((totalMem - freeMem) / totalMem) * 100
+  const usedPercent = Math.max(0, Math.min(100, ((totalMem - freeMem) / totalMem) * 100))
   
   // GPU details
   let gpuName = 'Unknown GPU'
@@ -550,8 +608,24 @@ function setupIpcHandlers(): void {
 
   // DB Providers
   ipcMain.handle('db:providers:list', () => dbProviders.list())
-  ipcMain.handle('db:providers:upsert', (_, provider: any) => dbProviders.upsert(provider))
-  ipcMain.handle('db:providers:delete', (_, id: string) => dbProviders.delete(id))
+  ipcMain.handle('db:providers:upsert', (_, provider: any) => {
+    const res = dbProviders.upsert(provider)
+    sendToRenderer('providers:updated')
+    return res
+  })
+  ipcMain.handle('db:providers:delete', async (_, id: string) => {
+    const provider = dbProviders.list().find((p) => p.id === id || (p.type === 'golti-engine' && id.includes('golti-engine')))
+    const isGoltiEngine = provider?.type === 'golti-engine' || id === 'golti-engine' || id.startsWith('golti-engine_')
+
+    if (isGoltiEngine) {
+      console.warn('[GoltiEngine] Prevented deletion of protected Golti Engine provider:', id)
+      return false
+    }
+
+    const res = dbProviders.delete(id)
+    sendToRenderer('providers:updated')
+    return res
+  })
 
   // Settings
   ipcMain.handle('settings:get', () => dbSettings.get())
@@ -601,9 +675,9 @@ function setupIpcHandlers(): void {
   })
 
   // System Info
-  ipcMain.handle('system:info', () => {
+  ipcMain.handle('system:info', async () => {
     const totalMem = os.totalmem()
-    const freeMem = os.freemem()
+    const freeMem = await getAvailableMemoryBytes()
     const cpus = os.cpus()
     return {
       platform: os.platform(),
@@ -937,9 +1011,76 @@ function setupIpcHandlers(): void {
   ipcMain.handle('engine:status', () => getEngineState())
   
   ipcMain.handle('engine:install', async () => {
-    return await downloadEngineBinary((progress) => {
-      mainWindow?.webContents.send('engine:download-progress', progress)
-    })
+    updateState({ status: 'downloading', error: undefined })
+    sendToRenderer('engine:status-change', getEngineState())
+    try {
+      const res = await downloadEngineBinary((progress) => {
+        mainWindow?.webContents.send('engine:download-progress', progress)
+      })
+      const providers = dbProviders.list()
+      const existing = providers.find((p) => p.type === 'golti-engine')
+      if (!existing) {
+        dbProviders.upsert({
+          id: `golti-engine_${Date.now()}`,
+          type: 'golti-engine',
+          name: 'Golti Engine Local',
+          endpoint: 'http://127.0.0.1:8391',
+          apiKey: '',
+          isActive: true,
+          models: []
+        })
+      } else if (!existing.isActive) {
+        dbProviders.upsert({ ...existing, isActive: true })
+      }
+      sendToRenderer('providers:updated')
+
+      updateState({ status: 'stopped', error: undefined })
+      sendToRenderer('engine:status-change', getEngineState())
+      return res
+    } catch (err: any) {
+      updateState({ status: 'error', error: err.message || String(err) })
+      sendToRenderer('engine:status-change', getEngineState())
+      throw err
+    }
+  })
+
+  ipcMain.handle('engine:reinstall', async () => {
+    updateState({ status: 'downloading', error: undefined })
+    sendToRenderer('engine:status-change', getEngineState())
+    try {
+      await stopEngine()
+    } catch {}
+    deleteEngineBinary()
+
+    try {
+      const res = await downloadEngineBinary((progress) => {
+        mainWindow?.webContents.send('engine:download-progress', progress)
+      })
+      const providers = dbProviders.list()
+      const existing = providers.find((p) => p.type === 'golti-engine')
+      if (!existing) {
+        dbProviders.upsert({
+          id: `golti-engine_${Date.now()}`,
+          type: 'golti-engine',
+          name: 'Golti Engine Local',
+          endpoint: 'http://127.0.0.1:8391',
+          apiKey: '',
+          isActive: true,
+          models: []
+        })
+      } else if (!existing.isActive) {
+        dbProviders.upsert({ ...existing, isActive: true })
+      }
+      sendToRenderer('providers:updated')
+
+      updateState({ status: 'stopped', error: undefined })
+      sendToRenderer('engine:status-change', getEngineState())
+      return res
+    } catch (err: any) {
+      updateState({ status: 'error', error: err.message || String(err) })
+      sendToRenderer('engine:status-change', getEngineState())
+      throw err
+    }
   })
 
   ipcMain.handle('engine:start', async () => {

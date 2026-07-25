@@ -2,6 +2,8 @@ import React, { useEffect } from 'react'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useEngineStore } from '../../stores/engineStore'
 import { useOllamaProcessStore } from '../../stores/ollamaProcessStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { EngineStatusBadge } from '../common/EngineStatusBadge'
 import { HardwareCard } from './HardwareCard'
 import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
@@ -30,10 +32,12 @@ export const CookbookView: React.FC = () => {
     setupPullListeners
   } = useCookbookStore()
 
-  const { engineState, localModels, setupListeners, installEngine, isInstallingBinary } = useEngineStore()
+  const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary } = useEngineStore()
   const { processState: ollamaState, isInstallingBinary: isInstallingOllama, downloadProgress: ollamaProgress, setupListeners: setupOllamaListeners, installOllama, startOllama, stopOllama } = useOllamaProcessStore()
+  const { settings, fetchSettings } = useSettingsStore()
 
   useEffect(() => {
+    fetchSettings()
     scanHardware()
     checkOllama()
     fetchInstalled()
@@ -207,57 +211,17 @@ export const CookbookView: React.FC = () => {
         />
 
         {/* Golti Engine Status Banner */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: 'rgba(229, 192, 123, 0.08)',
-            border: '1px solid rgba(229, 192, 123, 0.25)',
-            borderRadius: '8px',
-            padding: '12px 16px',
-            marginBottom: '16px'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Zap size={20} style={{ color: '#e5c07b' }} />
-            <div>
-              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#e5c07b' }}>
-                Golti Engine (Built-in Local AI)
-              </h3>
-              <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
-                {engineState.status === 'running'
-                  ? `Running on port ${engineState.port || 8391} ${engineState.loadedModel ? `• Loaded: ${engineState.loadedModel.split(/[\/\\]/).pop()}` : ''}`
-                  : engineState.status === 'not-installed'
-                  ? 'Run models locally without installing Ollama or terminal setup.'
-                  : `Status: ${engineState.status}`}
-              </p>
-            </div>
-          </div>
-
-          {engineState.status === 'not-installed' ? (
-            <button
-              onClick={() => installEngine()}
-              disabled={isInstallingBinary}
-              style={{
-                backgroundColor: '#e5c07b',
-                color: '#1e1e1e',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '6px 14px',
-                fontWeight: 600,
-                fontSize: '12px',
-                cursor: 'pointer'
-              }}
-            >
-              {isInstallingBinary ? 'Installing Engine...' : '1-Click Install Engine'}
-            </button>
-          ) : (
-            <span style={{ fontSize: '12px', color: '#98c379', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <CheckCircle2 size={14} /> Installed
-            </span>
-          )}
-        </div>
+        {settings?.engineEnabled !== false && (
+          <EngineStatusBadge
+            engineState={engineState}
+            isInstallingBinary={isInstallingBinary}
+            onInstall={installEngine}
+            onReinstall={reinstallEngine}
+            onStart={startEngine}
+            onStop={stopEngine}
+            style={{ marginBottom: '16px' }}
+          />
+        )}
 
         {/* ELI5 Manual Setup Guide & Offline Banner */}
         {(!ollamaOnline && ollamaState.status !== 'running' && ollamaState.status !== 'starting') && (
