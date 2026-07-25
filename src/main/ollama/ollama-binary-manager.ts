@@ -4,10 +4,11 @@ import { app } from 'electron'
 import AdmZip from 'adm-zip'
 import { EngineDownloadProgress } from '../../shared/types'
 
-import { execSync } from 'child_process'
+import { execSync, spawn, ChildProcess } from 'child_process'
 
 const GITHUB_RELEASE_BASE = 'https://github.com/ollama/ollama/releases/download'
 const DEFAULT_OLLAMA_VERSION = 'v0.5.12'
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 export async function fetchLatestOllamaTag(): Promise<string> {
   try {
@@ -150,33 +151,29 @@ function run(command: string): string {
   }).trim()
 }
 
-/**
- * Resolve the executable behind a PID.
- *
- * On Linux `ps -o comm=` only yields a bare process name, so /proc is the only way
- * to get a real path — but the readlink needs ptrace access, which we lack for a
- * daemon running under its own service user. macOS `ps -o comm=` does return a
- * full path, so it stays the fallback.
- */
 function resolveBinaryPathFromPid(pid: number): string | undefined {
-  if (process.platform === 'linux') {
-    try {
-      const exe = fs.readlinkSync(`/proc/${pid}/exe`)
-      if (exe && fs.existsSync(exe)) return exe
-    } catch {}
-  }
   try {
-    const comm = run(`ps -p ${pid} -o comm=`)
-    if (comm.includes(path.sep) && fs.existsSync(comm)) return comm
+    if (process.platform === 'linux') {
+      const target = fs.readlinkSync(`/proc/${pid}/exe`)
+      if (target && fs.existsSync(target)) return target
+    } else if (process.platform === 'darwin') {
+      const output = run(`lsof -p ${pid} -F n`)
+      const match = output.split('\n').find((line) => line.startsWith('n') && line.endsWith('/ollama'))
+      if (match) {
+        const p = match.substring(1)
+        if (fs.existsSync(p)) return p
+      }
+    } else if (process.platform === 'win32') {
+      const output = run(`wmic process where "ProcessId=${pid}" get ExecutablePath`)
+      const lines = output.split('\n').map((l) => l.trim()).filter(Boolean)
+      if (lines.length >= 2 && fs.existsSync(lines[1])) {
+        return lines[1]
+      }
+    }
   } catch {}
   return undefined
 }
 
-/**
- * Ask systemd directly. This is the only detection path that works when Ollama was
- * installed as a service: the listening socket belongs to another user, so `lsof`
- * and `ss` report nothing back to us.
- */
 function findSystemdOllama(): RunningOllamaInfo | null {
   if (process.platform !== 'linux') return null
 
@@ -232,10 +229,6 @@ export function findRunningOllamaProcessInfo(port: number = 11434): RunningOllam
   return {}
 }
 
-/**
- * Stop a systemd-managed Ollama. System-scope units need root, which we will not
- * escalate to on the user's behalf — the caller surfaces the manual command instead.
- */
 export function stopSystemdOllama(
   info: Pick<RunningOllamaInfo, 'serviceUnit' | 'needsPrivilegedStop'>
 ): { ok: boolean; message: string } {
@@ -256,7 +249,15 @@ export function stopSystemdOllama(
   }
 }
 
-export function getBinaryPath(): string {
+export function getBinaryPath(customModelPath?: string): string {
+  if (customModelPath && customModelPath.trim()) {
+    const trimmed = customModelPath.trim()
+    if (fs.existsSync(trimmed)) {
+      const foundInCustom = findExecutable(trimmed)
+      if (foundInCustom) return foundInCustom
+    }
+  }
+
   const baseDir = getOllamaDir()
   if (fs.existsSync(baseDir)) {
     const entries = fs.readdirSync(baseDir, { withFileTypes: true })
@@ -274,8 +275,8 @@ export function getBinaryPath(): string {
   return path.join(getVersionDir(), getBinaryFilename())
 }
 
-export function isBinaryInstalled(): boolean {
-  const binaryPath = getBinaryPath()
+export function isBinaryInstalled(customModelPath?: string): boolean {
+  const binaryPath = getBinaryPath(customModelPath)
   if (!fs.existsSync(binaryPath)) return false
   try {
     const stats = fs.statSync(binaryPath)
@@ -304,28 +305,212 @@ export function getBinaryDownloadUrl(version: string = DEFAULT_OLLAMA_VERSION): 
 }
 
 let currentAbortController: AbortController | null = null
+let currentChildProcess: ChildProcess | null = null
+
+function createInstallLogger(targetDir: string) {
+  const logPath = path.join(targetDir, 'ollama-install.log')
+  return (msg: string, err?: any) => {
+    const timestamp = new Date().toISOString()
+    const errStr = err ? `\n  Error Details: ${err.stack || err.message || String(err)}` : ''
+    const logLine = `[${timestamp}] ${msg}${errStr}\n`
+    console.log(`[OllamaInstall] ${msg}`)
+    try {
+      fs.appendFileSync(logPath, logLine, 'utf8')
+    } catch (e) {
+      console.error('Failed writing to ollama-install.log:', e)
+    }
+  }
+}
 
 export function cancelOllamaDownload(): boolean {
+  let cancelled = false
   if (currentAbortController) {
     currentAbortController.abort()
     currentAbortController = null
-    return true
+    cancelled = true
   }
-  return false
+  if (currentChildProcess) {
+    try {
+      currentChildProcess.kill('SIGTERM')
+    } catch {}
+    currentChildProcess = null
+    cancelled = true
+  }
+  return cancelled
+}
+
+async function extractZipNative(
+  zipFilePath: string,
+  destDir: string,
+  logInstall: (msg: string, err?: any) => void
+): Promise<void> {
+  logInstall(`Initiating native zip extraction of "${zipFilePath}" into "${destDir}".`)
+
+  // 1. On Windows, try native tar.exe first (built-in C++ stream extractor for .zip on Windows 10/11)
+  if (process.platform === 'win32') {
+    try {
+      logInstall('Attempting extraction using native Windows tar...')
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('tar', ['-xf', zipFilePath, '-C', destDir], {
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+        currentChildProcess = child
+        let stderr = ''
+        const timer = setTimeout(() => {
+          try { child.kill('SIGKILL') } catch {}
+          currentChildProcess = null
+          reject(new Error('Native tar extraction timed out after 180 seconds'))
+        }, 180000)
+
+        child.stderr?.on('data', (d) => { stderr += d.toString() })
+        child.on('close', (code) => {
+          clearTimeout(timer)
+          currentChildProcess = null
+          if (code === 0) resolve()
+          else reject(new Error(`Tar extraction exited with code ${code}: ${stderr.trim()}`))
+        })
+        child.on('error', (err) => {
+          clearTimeout(timer)
+          currentChildProcess = null
+          reject(err)
+        })
+      })
+      logInstall('Native Windows tar extraction completed successfully.')
+      return
+    } catch (tarErr: any) {
+      logInstall('Native tar extraction failed or unavailable, trying PowerShell Expand-Archive...', tarErr)
+    }
+
+    // 2. PowerShell Expand-Archive fallback on Windows
+    try {
+      logInstall('Attempting extraction using PowerShell Expand-Archive...')
+      await new Promise<void>((resolve, reject) => {
+        const psCmd = `Expand-Archive -Force -Path '${zipFilePath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}'`
+        const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+        currentChildProcess = child
+        let stderr = ''
+        const timer = setTimeout(() => {
+          try { child.kill('SIGKILL') } catch {}
+          currentChildProcess = null
+          reject(new Error('PowerShell Expand-Archive timed out after 180 seconds'))
+        }, 180000)
+
+        child.stderr?.on('data', (d) => { stderr += d.toString() })
+        child.on('close', (code) => {
+          clearTimeout(timer)
+          currentChildProcess = null
+          if (code === 0) resolve()
+          else reject(new Error(`PowerShell Expand-Archive exited with code ${code}: ${stderr.trim()}`))
+        })
+        child.on('error', (err) => {
+          clearTimeout(timer)
+          currentChildProcess = null
+          reject(err)
+        })
+      })
+      logInstall('PowerShell Expand-Archive extraction completed successfully.')
+      return
+    } catch (psErr: any) {
+      logInstall('PowerShell Expand-Archive failed, falling back to AdmZip async...', psErr)
+    }
+  } else {
+    // macOS / Linux native unzip
+    try {
+      logInstall('Attempting extraction using native unzip command...')
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('unzip', ['-o', zipFilePath, '-d', destDir], {
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+        currentChildProcess = child
+        let stderr = ''
+        const timer = setTimeout(() => {
+          try { child.kill('SIGKILL') } catch {}
+          currentChildProcess = null
+          reject(new Error('Native unzip timed out after 180 seconds'))
+        }, 180000)
+
+        child.stderr?.on('data', (d) => { stderr += d.toString() })
+        child.on('close', (code) => {
+          clearTimeout(timer)
+          currentChildProcess = null
+          if (code === 0) resolve()
+          else reject(new Error(`Unzip exited with code ${code}: ${stderr.trim()}`))
+        })
+        child.on('error', (err) => {
+          clearTimeout(timer)
+          currentChildProcess = null
+          reject(err)
+        })
+      })
+      logInstall('Native unzip extraction completed successfully.')
+      return
+    } catch (unzipErr: any) {
+      logInstall('Native unzip failed, falling back to AdmZip async...', unzipErr)
+    }
+  }
+
+  // 3. AdmZip async fallback
+  logInstall('Extracting zip using AdmZip async fallback...')
+  const zip = new AdmZip(zipFilePath)
+  await new Promise<void>((resolve, reject) => {
+    zip.extractAllToAsync(destDir, true, false, (err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+  logInstall('AdmZip extraction completed successfully.')
 }
 
 export async function downloadOllamaBinary(
-  onProgress?: (progress: EngineDownloadProgress) => void
+  onProgress?: (progress: EngineDownloadProgress) => void,
+  customModelPath?: string
 ): Promise<string> {
   currentAbortController = new AbortController()
   const signal = currentAbortController.signal
 
   let targetVersion = await fetchLatestOllamaTag()
-  const engineDir = getOllamaDir()
+  const targetBaseDir = customModelPath && customModelPath.trim() ? customModelPath.trim() : getOllamaDir()
+  if (!fs.existsSync(targetBaseDir)) {
+    fs.mkdirSync(targetBaseDir, { recursive: true })
+  }
+
+  const logInstall = createInstallLogger(targetBaseDir)
+  logInstall(`Installation process initiated. Target directory: "${targetBaseDir}", version: "${targetVersion}".`)
+
+  // Requirement 1: Check for existing Ollama models/binaries first!
+  const versionDir = path.join(targetBaseDir, targetVersion)
+  const existingBinary = findExecutable(versionDir) || findExecutable(targetBaseDir) || getBinaryPath()
+  if (existingBinary && fs.existsSync(existingBinary)) {
+    try {
+      const stats = fs.statSync(existingBinary)
+      if (stats.isFile() && stats.size > 100 * 1024) {
+        logInstall(`Valid existing Ollama binary detected at "${existingBinary}" (${(stats.size / (1024 * 1024)).toFixed(2)} MB). Skipping download & extraction.`)
+        onProgress?.({
+          type: 'binary',
+          name: 'Ollama Backend',
+          completed: 100,
+          total: 100,
+          percent: 100,
+          speed: 'Binary already present, skipping download'
+        })
+        return existingBinary
+      }
+    } catch {}
+  }
+
+  const tempDir = path.join(targetBaseDir, '.download_tmp')
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true })
+  }
+
   let downloadUrl = getBinaryDownloadUrl(targetVersion)
   let isZip = downloadUrl.endsWith('.zip')
   let isTgz = downloadUrl.endsWith('.tgz') || downloadUrl.endsWith('.tar.gz')
-  const tempFile = path.join(engineDir, isZip ? 'ollama_download.tmp.zip' : isTgz ? 'ollama_download.tmp.tgz' : 'ollama_download.tmp')
+  const tempFile = path.join(tempDir, isZip ? 'ollama_download.tmp.zip' : isTgz ? 'ollama_download.tmp.tgz' : 'ollama_download.tmp')
+
+  logInstall(`Download URL resolved: "${downloadUrl}". Downloading temporary file to "${tempFile}".`)
 
   onProgress?.({
     type: 'binary',
@@ -336,12 +521,14 @@ export async function downloadOllamaBinary(
     speed: 'Starting...'
   })
 
+  let lastCheckpointLogged = 0
+
   try {
     let res = await fetch(downloadUrl, { signal })
     
     // Automatic fallback if latest release tag download returns 404
     if (res.status === 404 && targetVersion !== DEFAULT_OLLAMA_VERSION) {
-      console.warn(`Ollama release ${targetVersion} download returned 404, falling back to default ${DEFAULT_OLLAMA_VERSION}`)
+      logInstall(`Release tag ${targetVersion} download returned HTTP 404. Falling back to default ${DEFAULT_OLLAMA_VERSION}.`)
       targetVersion = DEFAULT_OLLAMA_VERSION
       downloadUrl = getBinaryDownloadUrl(targetVersion)
       isZip = downloadUrl.endsWith('.zip')
@@ -350,7 +537,9 @@ export async function downloadOllamaBinary(
     }
 
     if (!res.ok || !res.body) {
-      throw new Error(`Failed to download Ollama binary: HTTP ${res.status} ${res.statusText}`)
+      const errMessage = `Failed to download Ollama binary: HTTP ${res.status} ${res.statusText}`
+      logInstall(errMessage)
+      throw new Error(errMessage)
     }
 
     const totalBytes = Number(res.headers.get('content-length') || 0)
@@ -364,6 +553,7 @@ export async function downloadOllamaBinary(
     try {
       while (true) {
         if (signal.aborted) {
+          logInstall('Download process was cancelled by user signal.')
           throw new Error('Download cancelled by user')
         }
         const { done, value } = await reader.read()
@@ -380,6 +570,17 @@ export async function downloadOllamaBinary(
           const speedMBs = (bytesPerSec / (1024 * 1024)).toFixed(1)
           const isArchive = isZip || isTgz
           const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * (isArchive ? 90 : 100)) : (isArchive ? 45 : 90)
+
+          if (percent >= 25 && lastCheckpointLogged < 25) {
+            logInstall(`Progress checkpoint: 25% completed (${(downloadedBytes / 1024 / 1024).toFixed(1)} MB)`)
+            lastCheckpointLogged = 25
+          } else if (percent >= 50 && lastCheckpointLogged < 50) {
+            logInstall(`Progress checkpoint: 50% completed (${(downloadedBytes / 1024 / 1024).toFixed(1)} MB)`)
+            lastCheckpointLogged = 50
+          } else if (percent >= 75 && lastCheckpointLogged < 75) {
+            logInstall(`Progress checkpoint: 75% completed (${(downloadedBytes / 1024 / 1024).toFixed(1)} MB)`)
+            lastCheckpointLogged = 75
+          }
 
           onProgress?.({
             type: 'binary',
@@ -399,12 +600,21 @@ export async function downloadOllamaBinary(
     }
 
     await new Promise<void>((resolve) => fileStream.on('finish', () => resolve()))
+    logInstall(`Download completed (${downloadedBytes} bytes downloaded). Finalizing target folder setup.`)
 
-    const versionDir = getVersionDir(targetVersion)
     if (fs.existsSync(versionDir)) {
-      fs.rmSync(versionDir, { recursive: true, force: true })
+      try { fs.rmSync(versionDir, { recursive: true, force: true }) } catch {}
     }
     fs.mkdirSync(versionDir, { recursive: true })
+
+    if (signal.aborted) {
+      logInstall('Process aborted prior to extraction.')
+      throw new Error('Download cancelled by user')
+    }
+
+    await yieldToEventLoop()
+
+    logInstall(`Progress checkpoint: 95% completed - Beginning archive extraction into "${versionDir}".`)
 
     if (isZip) {
       onProgress?.({
@@ -413,11 +623,16 @@ export async function downloadOllamaBinary(
         completed: downloadedBytes,
         total: downloadedBytes,
         percent: 95,
-        speed: 'Extracting zip archive...'
+        speed: 'Extracting zip archive with native tools...'
       })
+      await yieldToEventLoop()
 
-      const zip = new AdmZip(tempFile)
-      zip.extractAllTo(versionDir, true)
+      try {
+        await extractZipNative(tempFile, versionDir, logInstall)
+      } catch (extractErr: any) {
+        logInstall('Zip extraction error encountered.', extractErr)
+        throw new Error(`Failed to extract zip archive: ${extractErr?.message || extractErr}`)
+      }
     } else if (isTgz) {
       onProgress?.({
         type: 'binary',
@@ -427,42 +642,116 @@ export async function downloadOllamaBinary(
         percent: 95,
         speed: 'Extracting tgz archive...'
       })
+      await yieldToEventLoop()
 
-      execSync(`tar -xzf "${tempFile}" -C "${versionDir}"`)
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn('tar', ['-xzf', tempFile, '-C', versionDir], {
+            stdio: ['ignore', 'pipe', 'pipe']
+          })
+          currentChildProcess = child
+          let stderr = ''
+          const timer = setTimeout(() => {
+            try { child.kill('SIGKILL') } catch {}
+            currentChildProcess = null
+            reject(new Error('Tar extraction timed out after 180 seconds'))
+          }, 180000)
+
+          child.stderr?.on('data', (d) => { stderr += d.toString() })
+
+          child.on('close', (code) => {
+            clearTimeout(timer)
+            currentChildProcess = null
+            if (code === 0) resolve()
+            else reject(new Error(`Tar extraction failed with exit code ${code}: ${stderr.trim()}`))
+          })
+
+          child.on('error', (err) => {
+            clearTimeout(timer)
+            currentChildProcess = null
+            reject(err)
+          })
+        })
+        logInstall('Tgz archive extraction completed successfully.')
+      } catch (extractErr: any) {
+        logInstall('Tgz extraction error encountered.', extractErr)
+        throw new Error(`Failed to extract tar archive: ${extractErr?.message || extractErr}`)
+      }
     } else {
       const finalDest = path.join(versionDir, getBinaryFilename())
-      fs.copyFileSync(tempFile, finalDest)
+      logInstall(`Copying standalone binary to "${finalDest}".`)
+      try {
+        await fs.promises.copyFile(tempFile, finalDest)
+        logInstall('Standalone binary copy completed.')
+      } catch (copyErr: any) {
+        logInstall('Binary copy error encountered.', copyErr)
+        throw new Error(`Failed to copy binary file: ${copyErr?.message || copyErr}`)
+      }
     }
 
     if (fs.existsSync(tempFile)) {
-      fs.unlinkSync(tempFile)
+      try { await fs.promises.unlink(tempFile) } catch {}
     }
 
-    const targetPath = getBinaryPath()
-    if (!fs.existsSync(targetPath)) {
-      throw new Error(`Executable ${getBinaryFilename()} not found after extraction`)
+    if (fs.existsSync(tempDir)) {
+      try { await fs.promises.rm(tempDir, { recursive: true, force: true }) } catch {}
     }
+
+    if (signal.aborted) {
+      logInstall('Process aborted after extraction.')
+      throw new Error('Download cancelled by user')
+    }
+
+    await yieldToEventLoop()
+    logInstall('Progress checkpoint: 98% completed - Verifying binary executable location.')
+
+    onProgress?.({
+      type: 'binary',
+      name: 'Ollama Backend',
+      completed: downloadedBytes,
+      total: downloadedBytes,
+      percent: 98,
+      speed: 'Verifying binary installation...'
+    })
+    await yieldToEventLoop()
+
+    const targetPath = findExecutable(versionDir) || getBinaryPath()
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      const notFoundErr = `Executable ${getBinaryFilename()} not found after extraction in ${versionDir}`
+      logInstall(notFoundErr)
+      throw new Error(notFoundErr)
+    }
+
+    logInstall(`Binary verified at path: "${targetPath}".`)
 
     if (process.platform !== 'win32') {
       const makeExecutable = (dir: string) => {
-        const entries = fs.readdirSync(dir, { withFileTypes: true })
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name)
-          if (entry.isDirectory()) {
-            makeExecutable(fullPath)
-          } else if (entry.isFile()) {
-            fs.chmodSync(fullPath, 0o755)
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true })
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name)
+            if (entry.isDirectory()) {
+              makeExecutable(fullPath)
+            } else if (entry.isFile()) {
+              try { fs.chmodSync(fullPath, 0o755) } catch {}
+            }
           }
-        }
+        } catch {}
       }
       makeExecutable(versionDir)
 
       if (process.platform === 'darwin') {
         try {
-          execSync(`xattr -dr com.apple.quarantine "${versionDir}"`)
+          execSync(`xattr -dr com.apple.quarantine "${versionDir}"`, {
+            timeout: 10000,
+            stdio: 'pipe'
+          })
+          logInstall('Cleared macOS quarantine attribute.')
         } catch {}
       }
     }
+
+    logInstall('Progress checkpoint: 100% completed - Ollama installation finished successfully!')
 
     onProgress?.({
       type: 'binary',
@@ -475,11 +764,17 @@ export async function downloadOllamaBinary(
 
     return targetPath
   } catch (err: any) {
-    if (fs.existsSync(tempFile)) {
-      try { fs.unlinkSync(tempFile) } catch {}
+    logInstall('Ollama installation failed.', err)
+    if (fs.existsSync(tempDir)) {
+      try { await fs.promises.rm(tempDir, { recursive: true, force: true }) } catch {}
+    }
+    const versionDir = path.join(targetBaseDir, targetVersion)
+    if (fs.existsSync(versionDir)) {
+      try { await fs.promises.rm(versionDir, { recursive: true, force: true }) } catch {}
     }
     throw err
   } finally {
     currentAbortController = null
+    currentChildProcess = null
   }
 }

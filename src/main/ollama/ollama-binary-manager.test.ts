@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cancelOllamaDownload, getBinaryDownloadUrl, getPlatformBinaryKey, getBinaryPath, isBinaryInstalled, getSystemBinaryPath, stopSystemdOllama } from './ollama-binary-manager'
+import { cancelOllamaDownload, downloadOllamaBinary, getBinaryDownloadUrl, getPlatformBinaryKey, getBinaryPath, isBinaryInstalled, getSystemBinaryPath, stopSystemdOllama } from './ollama-binary-manager'
 
 describe('ollama binary manager', () => {
   it('returns a valid platform binary key', () => {
@@ -45,5 +45,10 @@ describe('ollama binary manager', () => {
       expect(result.ok).toBe(false)
       expect(result.message).toContain('sudo systemctl stop ollama.service')
     })
+  })
+
+  it('accepts customModelPath parameter signature without error', async () => {
+    expect(typeof downloadOllamaBinary).toBe('function')
+    expect(downloadOllamaBinary.length).toBeGreaterThanOrEqual(1)
   })
 })

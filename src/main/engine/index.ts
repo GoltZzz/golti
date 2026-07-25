@@ -22,14 +22,14 @@ import {
 import { EngineDownloadProgress, EngineState } from '../../shared/types'
 import { dbProviders } from '../db/database'
 
-export async function initEngine(): Promise<EngineState> {
+export async function initEngine(customDir?: string): Promise<EngineState> {
   const isInstalled = isBinaryInstalled()
   if (!isInstalled) {
     return getEngineState()
   }
 
   // Check if any local GGUF models exist
-  const models = listLocalModels()
+  const models = listLocalModels(customDir)
   const defaultModelPath = models.length > 0 ? models[0].filepath : undefined
 
   // Ensure Golti Engine provider is active in DB
@@ -40,7 +40,7 @@ export async function initEngine(): Promise<EngineState> {
   }
 
   try {
-    const state = await startEngine(defaultModelPath)
+    const state = await startEngine(defaultModelPath, 8391, undefined, undefined, customDir)
     return state
   } catch (e) {
     console.warn('[GoltiEngine] Failed to auto-start engine on init:', e)

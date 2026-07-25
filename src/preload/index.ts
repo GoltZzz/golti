@@ -141,10 +141,12 @@ const api = {
   getSystemInfoFull: () => ipcRenderer.invoke('system:info:full'),
   getOllamaStatus: () => ipcRenderer.invoke('cookbook:ollama-status'),
   getOllamaProcessState: (): Promise<OllamaState> => ipcRenderer.invoke('ollama:status'),
-  installOllamaProcess: () => ipcRenderer.invoke('ollama:install'),
-  startOllamaProcess: () => ipcRenderer.invoke('ollama:start'),
+  installOllamaProcess: (customModelPath?: string) => ipcRenderer.invoke('ollama:install', customModelPath),
+  cancelOllamaInstallProcess: () => ipcRenderer.invoke('ollama:cancel-install'),
+  startOllamaProcess: (customModelPath?: string) => ipcRenderer.invoke('ollama:start', customModelPath),
   stopOllamaProcess: () => ipcRenderer.invoke('ollama:stop'),
   getOllamaLogs: (): Promise<string[]> => ipcRenderer.invoke('ollama:logs'),
+  selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-directory'),
   onOllamaProgress: (callback: (data: any) => void) => {
     const listener = (_: any, data: any) => callback(data)
     ipcRenderer.on('ollama:download-progress', listener)
@@ -178,7 +180,7 @@ const api = {
   getEngineStatus: () => ipcRenderer.invoke('engine:status'),
   installEngine: () => ipcRenderer.invoke('engine:install'),
   reinstallEngine: () => ipcRenderer.invoke('engine:reinstall'),
-  startEngine: () => ipcRenderer.invoke('engine:start'),
+  startEngine: (customModelDir?: string) => ipcRenderer.invoke('engine:start', customModelDir),
   stopEngine: () => ipcRenderer.invoke('engine:stop'),
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
   listEngineDevices: () =>
@@ -196,7 +198,7 @@ const api = {
       success: boolean
       error?: string
     }>,
-  listLocalModels: () => ipcRenderer.invoke('engine:list-models'),
+  listLocalModels: (customDir?: string) => ipcRenderer.invoke('engine:list-models', customDir),
   deleteLocalModel: (filename: string) =>
     ipcRenderer.invoke('engine:delete-model', filename) as Promise<{ success: boolean; error?: string }>,
   onEngineProgress: (callback: (data: any) => void) => {

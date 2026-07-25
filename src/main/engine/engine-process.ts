@@ -234,11 +234,14 @@ function spawnAttempt(binaryPath: string, args: string[]): AttemptResult {
   return { process: proc, earlyGpuFailure, getStderr: () => stderrBuffer }
 }
 
+import { listLocalModels } from './model-downloader'
+
 export async function startEngine(
   modelPath?: string,
   port: number = 8391,
   gpuLayers?: number,
-  preferredDeviceId?: string
+  preferredDeviceId?: string,
+  customModelDir?: string
 ): Promise<EngineState> {
   if (currentProcess) {
     if (modelPath && currentState.loadedModel !== modelPath) {
@@ -254,9 +257,15 @@ export async function startEngine(
   }
 
   if (!modelPath) {
-    const noModelMsg = 'No GGUF model found. Please download a model from the Hardware Cookbook before starting Golti Engine.'
-    updateState({ status: 'error', error: noModelMsg })
-    throw new Error(noModelMsg)
+    const models = listLocalModels(customModelDir)
+    if (models.length > 0) {
+      modelPath = models[0].filepath
+      console.log(`[GoltiEngine] Auto-resolved model from directory "${customModelDir || 'default'}": ${modelPath}`)
+    } else {
+      const noModelMsg = 'No GGUF model found. Please download a model from the Hardware Cookbook or select a directory with GGUF / Ollama models before starting Golti Engine.'
+      updateState({ status: 'error', error: noModelMsg })
+      throw new Error(noModelMsg)
+    }
   }
 
   const binaryPath = getBinaryPath()

@@ -12,10 +12,13 @@ import { MODEL_CATALOG } from '../../../shared/model-catalog'
 import { getCompatibility } from '../../../shared/compatibility'
 import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
 import { CookbookModel } from '../../../shared/types'
-import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
+import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive, FolderOpen } from 'lucide-react'
+import { CancelInstallModal } from './CancelInstallModal'
 
 export const CookbookView: React.FC = () => {
   const [showManualGuide, setShowManualGuide] = React.useState(true)
+  const [customModelPath, setCustomModelPath] = React.useState<string>('')
+  const [showCancelInstallModal, setShowCancelInstallModal] = React.useState(false)
   const {
     systemInfo,
     loadingInfo,
@@ -32,9 +35,28 @@ export const CookbookView: React.FC = () => {
     setupPullListeners
   } = useCookbookStore()
 
-  const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary } = useEngineStore()
-  const { processState: ollamaState, isInstallingBinary: isInstallingOllama, downloadProgress: ollamaProgress, setupListeners: setupOllamaListeners, installOllama, startOllama, stopOllama } = useOllamaProcessStore()
+  const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary, fetchLocalModels } = useEngineStore()
+  const { processState: ollamaState, isInstallingBinary: isInstallingOllama, downloadProgress: ollamaProgress, setupListeners: setupOllamaListeners, installOllama, cancelOllamaInstall, startOllama, stopOllama } = useOllamaProcessStore()
   const { settings, fetchSettings } = useSettingsStore()
+
+  const handleBrowseDirectory = async () => {
+    if (window.goltiAPI?.selectDirectory) {
+      const selected = await window.goltiAPI.selectDirectory()
+      if (selected) {
+        setCustomModelPath(selected)
+      }
+    }
+  }
+
+  useEffect(() => {
+    useOllamaProcessStore.getState().setCustomModelPath(customModelPath)
+    useEngineStore.getState().setCustomModelDir(customModelPath)
+    fetchLocalModels(customModelPath)
+    checkOllama()
+    fetchInstalled()
+    useOllamaProcessStore.getState().fetchState()
+    useEngineStore.getState().fetchStatus()
+  }, [customModelPath])
 
   useEffect(() => {
     fetchSettings()
@@ -159,10 +181,69 @@ export const CookbookView: React.FC = () => {
           </div>
           
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-            {ollamaState.status === 'not-installed' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                type="text"
+                placeholder="Model Path (OLLAMA_MODELS)"
+                value={customModelPath}
+                onChange={(e) => setCustomModelPath(e.target.value)}
+                style={{
+                  backgroundColor: 'var(--card-bg)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  color: 'var(--text-primary)',
+                  width: '200px'
+                }}
+              />
               <button
-                onClick={() => installOllama()}
-                disabled={isInstallingOllama}
+                onClick={handleBrowseDirectory}
+                title="Browse for custom model directory"
+                style={{
+                  backgroundColor: 'var(--card-bg)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <FolderOpen size={12} />
+                Browse
+              </button>
+            </div>
+
+            {isInstallingOllama ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: '#98c379', fontWeight: 600 }}>
+                  Installing Ollama... {ollamaProgress ? ollamaProgress.percent + '%' : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelInstallModal(true)}
+                  style={{
+                    backgroundColor: 'rgba(224, 108, 117, 0.15)',
+                    color: '#e06c75',
+                    border: '1px solid rgba(224, 108, 117, 0.3)',
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel Installation
+                </button>
+              </div>
+            ) : ollamaState.status === 'not-installed' ? (
+              <button
+                onClick={() => installOllama(customModelPath)}
                 style={{
                   backgroundColor: '#98c379',
                   color: '#1e1e1e',
@@ -171,10 +252,10 @@ export const CookbookView: React.FC = () => {
                   padding: '6px 14px',
                   fontWeight: 600,
                   fontSize: '12px',
-                  cursor: isInstallingOllama ? 'not-allowed' : 'pointer'
+                  cursor: 'pointer'
                 }}
               >
-                {isInstallingOllama ? `Installing Ollama... ${ollamaProgress ? ollamaProgress.percent + '%' : ''}` : 'Install Built-in Ollama'}
+                Install Built-in Ollama
               </button>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -182,7 +263,7 @@ export const CookbookView: React.FC = () => {
                   Ollama Status: {ollamaState.status === 'running' ? 'Running' : ollamaState.status === 'stopped' ? 'Stopped' : 'Starting...'}
                 </span>
                 <button
-                  onClick={() => ollamaState.status === 'running' ? stopOllama() : startOllama()}
+                  onClick={() => ollamaState.status === 'running' ? stopOllama() : startOllama(customModelPath)}
                   disabled={ollamaState.status === 'starting'}
                   style={{
                     backgroundColor: ollamaState.status === 'running' ? 'rgba(224, 108, 117, 0.1)' : 'rgba(152, 195, 121, 0.1)',
@@ -217,7 +298,7 @@ export const CookbookView: React.FC = () => {
             isInstallingBinary={isInstallingBinary}
             onInstall={installEngine}
             onReinstall={reinstallEngine}
-            onStart={startEngine}
+            onStart={() => startEngine(customModelPath)}
             onStop={stopEngine}
             style={{ marginBottom: '16px' }}
           />
@@ -295,7 +376,9 @@ export const CookbookView: React.FC = () => {
                 <div className="banner-text">
                   <h3>Local Ollama Server Offline</h3>
                   <p>
-                    {ollamaState.status === 'not-installed' 
+                    {ollamaState.status === 'error'
+                      ? (ollamaState.error || "Installation failed. Check ollama-install.log in your selected folder for details.")
+                      : ollamaState.status === 'not-installed' 
                       ? "Ollama isn't installed. Click 'Install Built-in Ollama' above to download and run it directly within Golti, or follow the 3-step guide above."
                       : "The Ollama background process is stopped. Click 'Start' in the header to run it."
                     }
@@ -401,6 +484,15 @@ export const CookbookView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <CancelInstallModal
+        open={showCancelInstallModal}
+        onConfirm={async () => {
+          await cancelOllamaInstall()
+          setShowCancelInstallModal(false)
+        }}
+        onKeepInstalling={() => setShowCancelInstallModal(false)}
+      />
     </div>
   )
 }

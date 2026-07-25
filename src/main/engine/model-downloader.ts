@@ -116,27 +116,131 @@ function applyPendingAction(base: string, active: ActiveDownload): void {
   }
 }
 
-export function listLocalModels(): LocalModelFile[] {
-  const dir = getModelDir()
-  if (!fs.existsSync(dir)) return []
-
+function isGgufFile(filePath: string): boolean {
+  if (filePath.toLowerCase().endsWith('.gguf')) return true
   try {
-    const files = fs.readdirSync(dir)
-    return files
-      .filter((f) => f.endsWith('.gguf'))
-      .map((f) => {
-        const filepath = path.join(dir, f)
-        const stats = fs.statSync(filepath)
-        return {
-          filename: f,
-          filepath,
-          sizeBytes: stats.size,
-          sizeGB: Number((stats.size / (1024 * 1024 * 1024)).toFixed(2))
-        }
-      })
+    const stats = fs.statSync(filePath)
+    if (!stats.isFile() || stats.size < 10 * 1024 * 1024) return false
+    const fd = fs.openSync(filePath, 'r')
+    const buffer = Buffer.alloc(4)
+    fs.readSync(fd, buffer, 0, 4, 0)
+    fs.closeSync(fd)
+    return buffer.toString('utf8') === 'GGUF'
   } catch {
-    return []
+    return false
   }
+}
+
+function scanOllamaManifests(manifestsDir: string): Map<string, string> {
+  const map = new Map<string, string>()
+  if (!fs.existsSync(manifestsDir)) return map
+
+  function walk(dir: string, relPath: string) {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(full, relPath ? `${relPath}/${entry.name}` : entry.name)
+        } else if (entry.isFile()) {
+          try {
+            const content = fs.readFileSync(full, 'utf8')
+            const json = JSON.parse(content)
+            if (json.layers && Array.isArray(json.layers)) {
+              for (const layer of json.layers) {
+                if (layer.mediaType === 'application/vnd.ollama.image.model' && layer.digest) {
+                  const digest = String(layer.digest).replace(/^sha256:/, '').replace(/^sha256-/, '')
+                  const parts = (relPath ? `${relPath}/${entry.name}` : entry.name).split('/')
+                  const modelName = parts.slice(-2).join(':')
+                  map.set(digest, modelName)
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  walk(manifestsDir, '')
+  return map
+}
+
+export function listLocalModels(customDir?: string): LocalModelFile[] {
+  const dirsToScan: string[] = []
+  
+  if (customDir && customDir.trim()) {
+    const trimmed = customDir.trim()
+    if (fs.existsSync(trimmed)) {
+      dirsToScan.push(trimmed)
+      const blobsSub = path.join(trimmed, 'blobs')
+      if (fs.existsSync(blobsSub)) dirsToScan.push(blobsSub)
+    }
+  }
+
+  const defaultDir = getModelDir()
+  if (fs.existsSync(defaultDir) && !dirsToScan.includes(defaultDir)) {
+    dirsToScan.push(defaultDir)
+  }
+
+  if (process.env.OLLAMA_MODELS && fs.existsSync(process.env.OLLAMA_MODELS)) {
+    const envBlobs = path.join(process.env.OLLAMA_MODELS, 'blobs')
+    if (fs.existsSync(envBlobs) && !dirsToScan.includes(envBlobs)) {
+      dirsToScan.push(envBlobs)
+    }
+  } else {
+    const userHomeOllamaBlobs = path.join(os.homedir(), '.ollama', 'models', 'blobs')
+    if (fs.existsSync(userHomeOllamaBlobs) && !dirsToScan.includes(userHomeOllamaBlobs)) {
+      dirsToScan.push(userHomeOllamaBlobs)
+    }
+  }
+
+  const manifestMap = new Map<string, string>()
+  for (const scanDir of dirsToScan) {
+    const manifestDir = path.join(scanDir, 'manifests')
+    if (fs.existsSync(manifestDir)) {
+      const found = scanOllamaManifests(manifestDir)
+      found.forEach((v, k) => manifestMap.set(k, v))
+    }
+    const parentManifestDir = path.join(path.dirname(scanDir), 'manifests')
+    if (fs.existsSync(parentManifestDir)) {
+      const found = scanOllamaManifests(parentManifestDir)
+      found.forEach((v, k) => manifestMap.set(k, v))
+    }
+  }
+
+  const result: LocalModelFile[] = []
+  const seenPaths = new Set<string>()
+
+  for (const dir of dirsToScan) {
+    try {
+      const files = fs.readdirSync(dir)
+      for (const f of files) {
+        const filepath = path.join(dir, f)
+        if (seenPaths.has(filepath)) continue
+
+        if (isGgufFile(filepath)) {
+          seenPaths.add(filepath)
+          const stats = fs.statSync(filepath)
+          let friendlyName = f
+          const cleanDigest = f.replace(/^sha256[:-]/, '')
+          if (manifestMap.has(cleanDigest)) {
+            friendlyName = `${manifestMap.get(cleanDigest)}.gguf`
+          } else if (f.startsWith('sha256')) {
+            friendlyName = `ollama-${cleanDigest.slice(0, 8)}.gguf`
+          }
+
+          result.push({
+            filename: friendlyName,
+            filepath,
+            sizeBytes: stats.size,
+            sizeGB: Number((stats.size / (1024 * 1024 * 1024)).toFixed(2))
+          })
+        }
+      }
+    } catch {}
+  }
+
+  return result
 }
 
 export function deleteLocalModel(filename: string): boolean {

@@ -6,12 +6,15 @@ interface OllamaProcessState {
   isInstallingBinary: boolean
   downloadProgress: EngineDownloadProgress | null
   logs: string[]
+  customModelPath: string
   
   setupListeners: () => () => void
   fetchState: () => Promise<void>
   fetchLogs: () => Promise<void>
-  installOllama: () => Promise<void>
-  startOllama: () => Promise<void>
+  setCustomModelPath: (path: string) => void
+  installOllama: (customModelPath?: string) => Promise<void>
+  cancelOllamaInstall: () => Promise<void>
+  startOllama: (customModelPath?: string) => Promise<void>
   stopOllama: () => Promise<void>
 }
 
@@ -20,6 +23,7 @@ export const useOllamaProcessStore = create<OllamaProcessState>((set, get) => ({
   isInstallingBinary: false,
   downloadProgress: null,
   logs: [],
+  customModelPath: '',
 
   setupListeners: () => {
     get().fetchState()
@@ -62,25 +66,52 @@ export const useOllamaProcessStore = create<OllamaProcessState>((set, get) => ({
     }
   },
 
-  installOllama: async () => {
+  setCustomModelPath: (path: string) => {
+    set({ customModelPath: path })
+  },
+
+  installOllama: async (customModelPath?: string) => {
     if (get().isInstallingBinary) return
+    const targetPath = customModelPath || get().customModelPath
     set({ isInstallingBinary: true, downloadProgress: null })
     try {
-      await window.goltiAPI.installOllamaProcess()
+      await window.goltiAPI.installOllamaProcess(targetPath)
       await get().fetchState()
-      await get().startOllama()
+      await get().startOllama(targetPath)
     } catch (err: any) {
-      console.error('Failed to install Ollama', err)
-      set({ processState: { status: 'error', error: String(err?.message || err) } })
+      const errMsg = String(err?.message || err)
+      if (errMsg.toLowerCase().includes('cancelled')) {
+        set({ processState: { status: 'not-installed' } })
+      } else {
+        console.error('Failed to install Ollama', err)
+        set({ processState: { status: 'error', error: `Installation failed: ${errMsg}. Check ollama-install.log in your selected folder for details.` } })
+      }
     } finally {
       set({ isInstallingBinary: false, downloadProgress: null })
     }
   },
 
-  startOllama: async () => {
+  cancelOllamaInstall: async () => {
     try {
+      if (window.goltiAPI?.cancelOllamaInstallProcess) {
+        await window.goltiAPI.cancelOllamaInstallProcess()
+      }
+    } catch (err) {
+      console.error('Failed to cancel Ollama installation', err)
+    } finally {
+      set({
+        isInstallingBinary: false,
+        downloadProgress: null,
+        processState: { status: 'not-installed' }
+      })
+    }
+  },
+
+  startOllama: async (customModelPath?: string) => {
+    try {
+      const targetPath = customModelPath || get().customModelPath
       set((s) => ({ processState: { ...s.processState, status: 'starting' } }))
-      await window.goltiAPI.startOllamaProcess()
+      await window.goltiAPI.startOllamaProcess(targetPath)
       await get().fetchState()
     } catch (err) {
       console.error('Failed to start Ollama', err)

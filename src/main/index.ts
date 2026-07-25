@@ -985,18 +985,23 @@ function setupIpcHandlers(): void {
   // Ollama Background Process IPC Handlers
   ipcMain.handle('ollama:status', () => getOllamaState())
   
-  ipcMain.handle('ollama:install', async () => {
-    return await downloadOllamaBinary((progress) => {
-      mainWindow?.webContents.send('ollama:download-progress', progress)
-    })
+  ipcMain.handle('ollama:install', async (_evt, customModelPath?: string) => {
+    try {
+      return await downloadOllamaBinary((progress) => {
+        mainWindow?.webContents.send('ollama:download-progress', progress)
+      }, customModelPath)
+    } catch (err: any) {
+      console.error('Error during Ollama binary installation:', err)
+      throw err
+    }
   })
 
   ipcMain.handle('ollama:cancel-install', () => {
     return cancelOllamaDownload()
   })
 
-  ipcMain.handle('ollama:start', async () => {
-    return await startOllama()
+  ipcMain.handle('ollama:start', async (_evt, customModelPath?: string) => {
+    return await startOllama(11434, customModelPath)
   })
 
   ipcMain.handle('ollama:stop', async () => {
@@ -1005,6 +1010,17 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('ollama:logs', () => {
     return getOllamaLogs()
+  })
+
+  ipcMain.handle('dialog:select-directory', async () => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+    return result.filePaths[0]
   })
 
   // Golti Engine IPC Handlers
@@ -1083,12 +1099,12 @@ function setupIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('engine:start', async () => {
+  ipcMain.handle('engine:start', async (_evt, customModelDir?: string) => {
     const settings = dbSettings.get()
-    const models = listLocalModels()
+    const models = listLocalModels(customModelDir)
     const defaultModel = models.length > 0 ? models[0].filepath : undefined
     const { layers, device } = resolveEngineOffload(settings)
-    return await startEngine(defaultModel, settings.enginePort, layers, device)
+    return await startEngine(defaultModel, settings.enginePort, layers, device, customModelDir)
   })
 
   ipcMain.handle('engine:stop', async () => {
@@ -1136,7 +1152,7 @@ function setupIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('engine:list-models', () => listLocalModels())
+  ipcMain.handle('engine:list-models', (_evt, customDir?: string) => listLocalModels(customDir))
 
   ipcMain.handle('engine:delete-model', async (_, filename: string) => {
     const state = getEngineState()

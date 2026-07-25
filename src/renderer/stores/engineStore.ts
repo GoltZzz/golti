@@ -21,18 +21,20 @@ interface EngineStore {
   localModels: { filename: string; filepath: string; sizeBytes: number; sizeGB: number }[]
   isInstallingBinary: boolean
   error: string | null
+  customModelDir: string
 
   fetchStatus: () => Promise<void>
   installEngine: () => Promise<void>
   reinstallEngine: () => Promise<void>
-  startEngine: () => Promise<void>
+  setCustomModelDir: (dir: string) => void
+  startEngine: (customModelDir?: string) => Promise<void>
   stopEngine: () => Promise<void>
   downloadModel: (url: string, filename: string) => Promise<void>
   pauseDownload: (filename: string) => Promise<void>
   resumeDownload: (url: string, filename: string) => Promise<void>
   cancelDownload: (filename: string) => Promise<void>
   clearDownload: (filename: string) => Promise<void>
-  fetchLocalModels: () => Promise<void>
+  fetchLocalModels: (customDir?: string) => Promise<void>
   deleteLocalModel: (filename: string) => Promise<{ success: boolean; error?: string }>
   loadModel: (ggufPath: string) => Promise<void>
   setupListeners: () => () => void
@@ -66,6 +68,7 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
   localModels: [],
   isInstallingBinary: false,
   error: null,
+  customModelDir: '',
 
   fetchStatus: async () => {
     try {
@@ -74,6 +77,10 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
     } catch (err: any) {
       console.warn('[EngineStore] Failed to fetch engine status:', err)
     }
+  },
+
+  setCustomModelDir: (dir: string) => {
+    set({ customModelDir: dir })
   },
 
   installEngine: async () => {
@@ -119,10 +126,11 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
     }
   },
 
-  startEngine: async () => {
+  startEngine: async (customModelDir?: string) => {
     set({ error: null })
+    const targetDir = customModelDir || get().customModelDir
     try {
-      const state = await window.goltiAPI.startEngine()
+      const state = await window.goltiAPI.startEngine(targetDir)
       set({ engineState: state })
     } catch (err: any) {
       set({ error: err.message || String(err) })
@@ -312,9 +320,10 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
     }))
   },
 
-  fetchLocalModels: async () => {
+  fetchLocalModels: async (customDir?: string) => {
     try {
-      const models = await window.goltiAPI.listLocalModels()
+      const targetDir = customDir || get().customModelDir
+      const models = await window.goltiAPI.listLocalModels(targetDir)
       set({ localModels: models || [] })
     } catch (err: any) {
       console.warn('[EngineStore] Failed to fetch local models:', err)

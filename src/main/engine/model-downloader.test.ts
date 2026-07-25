@@ -325,4 +325,24 @@ describe('model-downloader pause/resume/cancel', () => {
     const cancelled = await downloadModel('https://example.com/model.gguf', 'soon2.gguf')
     expect(cancelled.status).toBe('cancelled')
   })
+
+  it('scans custom model directory and detects GGUF files and Ollama blobs', async () => {
+    const { listLocalModels } = await import('./model-downloader')
+    const customDir = fs.mkdtempSync(path.join(process.cwd(), '.tmp-custom-models-'))
+    const blobsDir = path.join(customDir, 'blobs')
+    fs.mkdirSync(blobsDir, { recursive: true })
+
+    const ggufFile = path.join(customDir, 'test-custom.gguf')
+    const ggufHeader = Buffer.concat([Buffer.from('GGUF'), Buffer.alloc(11 * 1024 * 1024)])
+    fs.writeFileSync(ggufFile, ggufHeader)
+
+    const blobFile = path.join(blobsDir, 'sha256-12345678abcdef')
+    fs.writeFileSync(blobFile, ggufHeader)
+
+    const found = listLocalModels(customDir)
+    expect(found.some((m) => m.filepath === ggufFile)).toBe(true)
+    expect(found.some((m) => m.filepath === blobFile)).toBe(true)
+
+    fs.rmSync(customDir, { recursive: true, force: true })
+  })
 })

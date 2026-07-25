@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import fs from 'fs'
+import path from 'path'
 import {
   getBinaryPath,
   isBinaryInstalled,
@@ -128,8 +129,8 @@ function broadcastState(state: OllamaState) {
   }
 }
 
-export async function startOllama(port = 11434): Promise<boolean> {
-  let binaryPath = getBinaryPath()
+export async function startOllama(port = 11434, customModelPath?: string): Promise<boolean> {
+  let binaryPath = getBinaryPath(customModelPath)
   let sysBinary = getSystemBinaryPath()
 
   // Check if system Ollama is already running on port
@@ -169,17 +170,25 @@ export async function startOllama(port = 11434): Promise<boolean> {
     return true
   }
 
+  const ollamaDir = path.dirname(binaryPath)
   broadcastState({ ...currentState, status: 'starting', port, host: `http://127.0.0.1:${port}` })
-  appendLog(`Starting Ollama server binary: ${binaryPath} on port ${port}`)
+  appendLog(`Starting Ollama server binary: ${binaryPath} in cwd: ${ollamaDir} on port ${port}${customModelPath ? ` with OLLAMA_MODELS=${customModelPath}` : ''}`)
 
   try {
+    const spawnEnv: Record<string, string | undefined> = {
+      ...process.env,
+      OLLAMA_HOST: `127.0.0.1:${port}`,
+      OLLAMA_ORIGINS: '*'
+    }
+
+    if (customModelPath && customModelPath.trim()) {
+      spawnEnv.OLLAMA_MODELS = customModelPath.trim()
+    }
+
     ollamaProcess = spawn(binaryPath, ['serve'], {
+      cwd: ollamaDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        OLLAMA_HOST: `127.0.0.1:${port}`,
-        OLLAMA_ORIGINS: '*'
-      }
+      env: spawnEnv
     })
 
     if (!ollamaProcess.pid) {
