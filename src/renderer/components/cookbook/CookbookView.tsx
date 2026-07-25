@@ -11,7 +11,7 @@ import { InstalledModelCard } from './InstalledModelCard'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
 import { getCompatibility } from '../../../shared/compatibility'
 import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
-import { CookbookModel } from '../../../shared/types'
+import { CookbookModel, ModelSource } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
 
 export const CookbookView: React.FC = () => {
@@ -69,28 +69,35 @@ export const CookbookView: React.FC = () => {
       if (!matchName && !matchDesc && !matchFam && !matchTag) return false
     }
 
-    // 2. Use Cases Filter
+    if (filters.sources.length > 0) {
+      const matchesSource = filters.sources.some((source) =>
+        source === 'golti-engine' ? !!model.ggufUrl : !!model.ollamaTag
+      )
+      if (!matchesSource) return false
+    }
+
+    // 3. Use Cases Filter
     if (filters.useCases.length > 0) {
       const hasOverlap = model.useCases.some(uc => filters.useCases.includes(uc))
       if (!hasOverlap) return false
     }
 
-    // 3. Family Filter
+    // 4. Family Filter
     if (filters.families.length > 0) {
       if (!filters.families.includes(model.family)) return false
     }
 
-    // 4. Size Tier Filter
+    // 5. Size Tier Filter
     if (filters.sizeTiers.length > 0) {
       if (!filters.sizeTiers.includes(model.sizeTier)) return false
     }
 
-    // 5. Quantization Filter
+    // 6. Quantization Filter
     if (filters.quantizations.length > 0) {
       if (!filters.quantizations.includes(model.quantization)) return false
     }
 
-    // 6. Compatibility Filter
+    // 7. Compatibility Filter
     if (filters.compatibleOnly && systemInfo) {
       const comp = getCompatibility(systemInfo, model)
       if (comp === 'wont_fit') return false
@@ -138,6 +145,13 @@ export const CookbookView: React.FC = () => {
   })
 
   const filteredInstalledLocal = detailedInstalledModels.filter((m) => {
+    if (
+      filters.sources.length > 0 &&
+      !filters.sources.includes(m.providerType as ModelSource)
+    ) {
+      return false
+    }
+
     if (!searchQuery.trim()) return true
     const q = searchQuery.toLowerCase()
     return (
@@ -339,7 +353,7 @@ export const CookbookView: React.FC = () => {
             ) : (
               <div className="empty-catalog-state small-empty" style={{ padding: '16px', textAlign: 'center' }}>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px' }}>
-                  No installed local models match your search query.
+                  No installed local models match your current filters.
                 </p>
               </div>
             )}
