@@ -1,5 +1,7 @@
 export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
 
+export type ModelSource = 'ollama' | 'golti-engine'
+
 /** Composer Chat vs Agent mode (Cursor-style Shift+Tab toggle). */
 export type ComposerMode = 'chat' | 'agent'
 

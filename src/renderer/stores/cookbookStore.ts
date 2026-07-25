@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, PullProgress, InstalledLocalModelInfo } from '../../shared/types'
+import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource, PullProgress, InstalledLocalModelInfo } from '../../shared/types'
 import { useChatStore } from './chatStore'
 import { useEngineStore } from './engineStore'
 
 interface CookbookFilters {
+  sources: ModelSource[]
   useCases: ModelUseCase[]
   families: ModelFamily[]
   sizeTiers: ModelSizeTier[]
@@ -72,6 +73,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     fetchingInstalled: false,
     isHardwareCardCollapsed: false,
     filters: {
+      sources: [],
       useCases: [],
       families: [],
       sizeTiers: [],
@@ -334,6 +336,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     resetFilters: () => {
       set({
         filters: {
+          sources: [],
           useCases: [],
           families: [],
           sizeTiers: [],
