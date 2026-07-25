@@ -15,7 +15,7 @@ import { CookbookModel, ModelSource } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
 
 export const CookbookView: React.FC = () => {
-  const [showManualGuide, setShowManualGuide] = React.useState(true)
+  const [showManualGuide, setShowManualGuide] = React.useState(false)
   const {
     systemInfo,
     loadingInfo,
@@ -33,7 +33,7 @@ export const CookbookView: React.FC = () => {
   } = useCookbookStore()
 
   const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary } = useEngineStore()
-  const { processState: ollamaState, isInstallingBinary: isInstallingOllama, downloadProgress: ollamaProgress, setupListeners: setupOllamaListeners, installOllama, startOllama, stopOllama } = useOllamaProcessStore()
+  const { processState: ollamaState, setupListeners: setupOllamaListeners, startOllama, stopOllama } = useOllamaProcessStore()
   const { settings, fetchSettings } = useSettingsStore()
 
   useEffect(() => {
@@ -173,24 +173,7 @@ export const CookbookView: React.FC = () => {
           </div>
           
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-            {ollamaState.status === 'not-installed' ? (
-              <button
-                onClick={() => installOllama()}
-                disabled={isInstallingOllama}
-                style={{
-                  backgroundColor: '#98c379',
-                  color: '#1e1e1e',
-                  border: 'none',
-                  borderRadius: '6px',
-                  padding: '6px 14px',
-                  fontWeight: 600,
-                  fontSize: '12px',
-                  cursor: isInstallingOllama ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {isInstallingOllama ? `Installing Ollama... ${ollamaProgress ? ollamaProgress.percent + '%' : ''}` : 'Install Built-in Ollama'}
-              </button>
-            ) : (
+            {ollamaState.status !== 'not-installed' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Ollama Status: {ollamaState.status === 'running' ? 'Running' : ollamaState.status === 'stopped' ? 'Stopped' : 'Starting...'}
@@ -248,9 +231,9 @@ export const CookbookView: React.FC = () => {
               <div className="eli5-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span className="eli5-badge" style={{ backgroundColor: 'rgba(97, 175, 239, 0.15)', color: '#61afef', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    ELI5 Guide
+                    Advanced
                   </span>
-                  <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--text-primary)' }}>How to Download & Install Ollama Manually</h3>
+                  <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--text-primary)' }}>Optional: bring your own Ollama server</h3>
                 </div>
                 <button
                   onClick={() => setShowManualGuide(!showManualGuide)}
@@ -272,8 +255,9 @@ export const CookbookView: React.FC = () => {
               {showManualGuide && (
                 <div className="eli5-content animate-fade-in" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-color)' }}>
                   <p className="eli5-intro" style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: '1.5' }}>
-                    Think of <strong>Ollama</strong> as the engine that powers local AI models on your device.
-                    If automatic installation fails or you prefer managing it yourself, follow these 3 simple steps:
+                    You don't need this to run local models — <strong>Golti Engine</strong> handles that for you.
+                    But if you already use <strong>Ollama</strong>, or prefer to manage it yourself, these 3 steps
+                    connect it to Golti:
                   </p>
 
                   <div className="eli5-steps-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
@@ -312,8 +296,8 @@ export const CookbookView: React.FC = () => {
                 <div className="banner-text">
                   <h3>Local Ollama Server Offline</h3>
                   <p>
-                    {ollamaState.status === 'not-installed' 
-                      ? "Ollama isn't installed. Click 'Install Built-in Ollama' above to download and run it directly within Golti, or follow the 3-step guide above."
+                    {ollamaState.status === 'not-installed'
+                      ? "Ollama isn't installed — that's fine, Golti Engine runs local models without it. To use Ollama anyway, follow the 3-step guide above; Golti auto-detects it once it's running."
                       : "The Ollama background process is stopped. Click 'Start' in the header to run it."
                     }
                   </p>
