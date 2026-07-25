@@ -373,11 +373,25 @@ export async function startChatGeneration(
 
     const streamParser = createThinkStreamParser()
 
+    const generationStartedAt = Date.now()
+    const promptTokens =
+      estimateTokens(historyForModel.map((m) => m.content).join('\n')) +
+      estimateTokens(effectiveSystem || '')
+    let firstTokenLogged = false
+    const markFirstToken = () => {
+      if (firstTokenLogged) return
+      firstTokenLogged = true
+      const ms = Date.now() - generationStartedAt
+      console.log(`[perf] ttft=${ms}ms prompt=~${promptTokens}tok model=${providerId}:${model}`)
+    }
+
     try {
       for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
         signal: controller.signal,
         generationSettings: mergedSettings
       })) {
+        if (event.type === 'thinking' || event.type === 'text') markFirstToken()
+
         if (event.type === 'thinking') {
           if (!thinkingStartTime) thinkingStartTime = Date.now()
           thinkingEndTime = Date.now()

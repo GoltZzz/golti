@@ -6,6 +6,7 @@ import {
   doneEvent,
   readLineStream,
   textEvent,
+  thinkingEvent,
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
@@ -127,6 +128,9 @@ export async function* streamGoltiEngineChat(
     if (!trimmed.startsWith('data: ')) continue
     try {
       const parsed = JSON.parse(trimmed.slice(6))
+      const reasoningDelta =
+        parsed.choices?.[0]?.delta?.reasoning_content || parsed.choices?.[0]?.delta?.reasoning
+      if (reasoningDelta) yield thinkingEvent(reasoningDelta)
       const delta = parsed.choices?.[0]?.delta?.content
       if (delta) yield textEvent(delta)
       if (parsed.usage) {

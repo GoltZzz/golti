@@ -292,7 +292,14 @@ export async function startEngine(
   updateState({ status: 'starting', port: actualPort, error: undefined, lastLogs: undefined, backend, gpuDevice: device?.name })
 
   while (true) {
-    const args: string[] = ['--host', '127.0.0.1', '--port', String(actualPort), '--ctx-size', '4096']
+    const args: string[] = [
+      '--host', '127.0.0.1',
+      '--port', String(actualPort),
+      '--ctx-size', '4096',
+      '--cache-reuse', '256',
+      '--jinja',
+      '--reasoning-format', 'deepseek'
+    ]
     if (modelPath) args.push('--model', modelPath)
     if (device) args.push('--device', device.id)
     args.push('--n-gpu-layers', String(layers))
