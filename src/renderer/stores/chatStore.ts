@@ -50,6 +50,9 @@ interface ChatState {
   conversationError: string | null
   isGenerating: boolean
   activeGenerationId: string | null
+  /** Every conversation with an in-flight generation, current or backgrounded,
+   *  so the sidebar can show a live indicator on each. */
+  generatingConversationIds: string[]
   contextItems: ContextItem[]
   artifacts: Artifact[]
   citations: Citation[]
@@ -180,6 +183,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversationError: null,
   isGenerating: false,
   activeGenerationId: null,
+  generatingConversationIds: [],
   contextItems: [],
   artifacts: [],
   citations: [],
@@ -275,6 +279,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             (m.providerId === conv.providerId && m.name === conv.model) || m.name === conv.model
         )
         if (matchingModel) set({ selectedModel: matchingModel })
+      }
+
+      // A generation may still be streaming in the background (the user switched
+      // away and came back). Re-sync so the partial text streamed while away is
+      // restored and the Stop control works again; the main process re-emits the
+      // accumulated content on the stream channel, and later deltas append to it.
+      const active = await window.goltiAPI.resyncGeneration(id)
+      if (seq !== selectSeq || get().currentConversationId !== id) return
+      if (active) {
+        set({ isGenerating: true, activeGenerationId: active.generationId })
       }
 
       await Promise.all([get().refreshContext(), get().refreshArtifacts(), get().refreshBudget()])
@@ -458,6 +472,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages,
         visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
         isGenerating: true,
+        generatingConversationIds: state.generatingConversationIds.includes(convId!)
+          ? state.generatingConversationIds
+          : [...state.generatingConversationIds, convId!],
         draft: '',
         draftUndoStack: [],
         draftRedoStack: [],
@@ -555,6 +572,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
         isGenerating: false,
         activeGenerationId: null,
+        generatingConversationIds: state.generatingConversationIds.filter(
+          (c) => c !== state.currentConversationId
+        ),
         researchProgressByMessageId
       }
     })
@@ -733,6 +753,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
         researchPlan,
         researchStep
       } = chunk
+
+      // Maintain the cross-conversation generating set for the sidebar indicator.
+      // This runs before the current-conversation guard so that generations
+      // running in backgrounded conversations are tracked (and cleared on done).
+      set((state) => {
+        const has = state.generatingConversationIds.includes(conversationId)
+        if (done && has) {
+          return {
+            generatingConversationIds: state.generatingConversationIds.filter(
+              (c) => c !== conversationId
+            )
+          }
+        }
+        if (!done && !has) {
+          return { generatingConversationIds: [...state.generatingConversationIds, conversationId] }
+        }
+        return {}
+      })
+
       if (get().currentConversationId !== conversationId) return
 
       set((state) => {

@@ -126,6 +126,10 @@ const api = {
     ipcRenderer.invoke('ai:chat', payload),
   cancelGeneration: (generationId: string): Promise<boolean> =>
     ipcRenderer.invoke('ai:chat:cancel', generationId),
+  resyncGeneration: (
+    conversationId: string
+  ): Promise<{ generationId: string; messageId: string } | null> =>
+    ipcRenderer.invoke('ai:chat:resync', conversationId),
   regenerateMessage: (
     payload: SendMessagePayload & { messageId: string }
   ): Promise<{ assistantMsgId: string; generationId: string }> =>
