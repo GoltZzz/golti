@@ -224,8 +224,11 @@ export const CookbookView: React.FC = () => {
           onRescan={scanHardware}
         />
 
-        {/* Golti Engine Status Banner */}
-        {settings?.engineEnabled !== false && (
+        {/* Golti Engine Status Banner — only surfaced once the user has a
+            Golti Engine model on disk (or is actively installing the engine).
+            Keeps the Cookbook uncluttered for newcomers, who discover the
+            engine by downloading a model from a catalog card below. */}
+        {settings?.engineEnabled !== false && (localModels.length > 0 || isInstallingBinary) && (
           <EngineStatusBadge
             engineState={engineState}
             isInstallingBinary={isInstallingBinary}
