@@ -4,6 +4,7 @@ import { spawn, execFile, ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
 import { detectGpu, GpuVendor } from './gpu-detect'
+import { computeContextSize, reduceContextSize, MIN_CONTEXT_SIZE } from './context-size'
 import { EngineState } from '../../shared/types'
 
 const execFileAsync = promisify(execFile)
@@ -286,6 +287,18 @@ export async function startEngine(
   let layers = gpuLayers ?? (await computeGpuLayers(modelPath, device ? device.freeMiB / 1024 : undefined))
   let fellBack = false
 
+  const sizing = await computeContextSize({
+    modelPath,
+    gpuLayers: layers,
+    freeVramGB: device ? device.freeMiB / 1024 : undefined
+  })
+  let contextSize = sizing.contextSize
+  console.log(
+    `[GoltiEngine] Context size ${contextSize}` +
+      (sizing.trainedContextSize ? ` (model trained for ${sizing.trainedContextSize}` : ' (model context unknown') +
+      (sizing.cappedByMemory ? ', capped by available memory)' : ')')
+  )
+
   // Find available port to prevent port binding collisions.
   const actualPort = await findAvailablePort(port)
 
@@ -295,7 +308,7 @@ export async function startEngine(
     const args: string[] = [
       '--host', '127.0.0.1',
       '--port', String(actualPort),
-      '--ctx-size', '4096',
+      '--ctx-size', String(contextSize),
       '--cache-reuse', '256',
       '--jinja',
       '--reasoning-format', 'deepseek'
@@ -314,7 +327,7 @@ export async function startEngine(
 
     currentProcess = attempt.process
     const pid = currentProcess.pid
-    updateState({ pid, binaryPath, binaryVersion: LLAMA_VERSION, backend, gpuLayers: layers, fellBackToCpu: fellBack })
+    updateState({ pid, binaryPath, binaryVersion: LLAMA_VERSION, backend, gpuLayers: layers, fellBackToCpu: fellBack, contextSize })
 
     // Race an early GPU failure against the health check.
     const gpuFailed = await Promise.race([
@@ -354,6 +367,14 @@ export async function startEngine(
         fellBack = true
         continue
       }
+      if (contextSize > MIN_CONTEXT_SIZE) {
+        const nextContext = reduceContextSize(contextSize)
+        console.warn(`[GoltiEngine] Health check failed at ctx-size ${contextSize}, retrying with ${nextContext}`)
+        try { currentProcess?.kill('SIGKILL') } catch {}
+        currentProcess = null
+        contextSize = nextContext
+        continue
+      }
       const errorMsg = stderr || 'llama-server failed to start or health check timed out.'
       console.error('[GoltiEngine] Server failed health check:', errorMsg)
       try { currentProcess?.kill('SIGKILL') } catch {}
@@ -387,7 +408,8 @@ export async function startEngine(
       backend,
       gpuDevice: device?.name,
       gpuLayers: layers,
-      fellBackToCpu: fellBack
+      fellBackToCpu: fellBack,
+      contextSize
     })
     return currentState
   }

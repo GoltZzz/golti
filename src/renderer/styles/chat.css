@@ -1087,13 +1087,41 @@
   height: 100%;
   transition: width var(--transition-normal), opacity var(--transition-normal);
   overflow: hidden;
+  position: relative;
+  min-width: 0;
 }
 
 .inspector.is-collapsed {
-  width: 0;
+  width: 0 !important;
   border-left: none;
   opacity: 0;
   pointer-events: none;
+}
+
+.inspector.is-resizing {
+  transition: none;
+  user-select: none;
+}
+
+.inspector-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.inspector-resize-handle:hover,
+.inspector-resize-handle:focus-visible,
+.inspector.is-resizing .inspector-resize-handle {
+  background: var(--accent-primary);
+  outline: none;
 }
 
 .inspector-header {

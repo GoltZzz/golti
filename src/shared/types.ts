@@ -26,6 +26,8 @@ export interface EngineState {
   gpuLayers?: number
   /** Set when the engine fell back to fewer layers / CPU after a GPU failure. */
   fellBackToCpu?: boolean
+  /** Context window the running engine was started with (`--ctx-size`). */
+  contextSize?: number
   /** Last stderr output lines for error diagnostic log copying. */
   lastLogs?: string
 }

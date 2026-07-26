@@ -22,6 +22,7 @@ import {
   getBranchPath
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
+import { resolveContextWindow } from './context-window'
 import {
   dbArtifacts,
   dbCitations,
@@ -570,7 +571,7 @@ export async function startChatGeneration(
   return { userMsgId, assistantMsgId, generationId }
 }
 
-export function getTokenBudgetForConversation(conversationId: string, draft = '') {
+export async function getTokenBudgetForConversation(conversationId: string, draft = '') {
   const settings = dbSettings.get()
   const conv = dbConversations.get(conversationId)
   const messages = dbMessages.listForConversation(conversationId)
@@ -578,8 +579,12 @@ export function getTokenBudgetForConversation(conversationId: string, draft = ''
   const history = getBranchPath(messages, leaf)
   const contextItems = dbContext.list(conversationId)
 
+  const resolved = conv
+    ? await resolveContextWindow(conv.providerId, conv.model)
+    : undefined
+
   return computeTokenBudget({
-    contextWindow: settings.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    contextWindow: resolved ?? settings.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
     reservedOutputTokens: settings.reservedOutputTokens ?? DEFAULT_RESERVED_OUTPUT,
     systemPrompt: conv?.systemPrompt || settings.systemPrompt,
     contextItems,

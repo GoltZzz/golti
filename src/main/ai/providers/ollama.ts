@@ -1,5 +1,6 @@
 import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
 import { extractThinkingTags } from '../../../shared/chat-utils'
+import { resolveContextWindow } from '../context-window'
 import {
   applyGenerationDefaults,
   doneEvent,
@@ -38,6 +39,7 @@ export async function* streamOllamaChat(
 ): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const endpoint = (provider.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
   const gen = applyGenerationDefaults(options?.generationSettings)
+  const numCtx = await resolveContextWindow(provider.id, model)
 
   const formattedMessages = messages.map((m) => ({
     role: m.role,
@@ -61,7 +63,8 @@ export async function* streamOllamaChat(
           temperature: gen.temperature,
           top_p: gen.topP,
           num_predict: gen.maxTokens,
-          stop: gen.stopSequences
+          stop: gen.stopSequences,
+          ...(numCtx ? { num_ctx: numCtx } : {})
         }
       }),
       signal: options?.signal
