@@ -58,6 +58,8 @@ export async function* streamAnthropicChat(
     throw new Error(`Anthropic error (${response.status}): ${await response.text()}`)
   }
 
+  let stopReason: string | undefined
+
   for await (const line of readLineStream(response, options?.signal)) {
     const trimmed = line.trim()
     if (!trimmed.startsWith('data: ')) continue
@@ -70,6 +72,9 @@ export async function* streamAnthropicChat(
           yield textEvent(parsed.delta.text)
         }
       }
+      if (parsed.type === 'message_delta' && parsed.delta?.stop_reason) {
+        stopReason = parsed.delta.stop_reason
+      }
       if (parsed.type === 'message_delta' && parsed.usage) {
         yield usageEvent({
           promptTokens: parsed.usage.input_tokens ?? 0,
@@ -79,7 +84,7 @@ export async function* streamAnthropicChat(
         })
       }
       if (parsed.type === 'message_stop') {
-        yield doneEvent('stop')
+        yield doneEvent(stopReason || 'stop')
       }
     } catch {
       // ignore

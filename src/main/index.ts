@@ -619,6 +619,13 @@ function setupIpcHandlers(): void {
     })
   })
 
+  ipcMain.handle('ai:chat:continue', async (_, payload: SendMessagePayload & { messageId: string }) => {
+    return startChatGeneration(mainWindow, {
+      ...payload,
+      continueMessageId: payload.messageId || payload.continueMessageId
+    })
+  })
+
   // System Info
   ipcMain.handle('system:info', async () => {
     const totalMem = os.totalmem()

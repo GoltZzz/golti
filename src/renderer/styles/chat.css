@@ -368,6 +368,60 @@
   padding: 2px 0;
 }
 
+.msg-truncated {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--accent-yellow);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.msg-truncated svg {
+  color: var(--accent-yellow);
+  flex-shrink: 0;
+}
+
+.msg-truncated-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-truncated-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.msg-truncated-btn:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-yellow);
+}
+
+.msg-truncated-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.msg-truncated-btn svg {
+  color: currentColor;
+}
+
 .msg-meta {
   display: flex;
   align-items: center;
@@ -376,6 +430,28 @@
   font-size: 11px;
   color: var(--text-muted);
   font-family: var(--font-mono);
+}
+
+.msg-model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated, transparent);
+  color: var(--text-secondary);
+  max-width: 260px;
+}
+
+.msg-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-meta-sep {
+  color: var(--text-muted);
 }
 
 .msg-actions {

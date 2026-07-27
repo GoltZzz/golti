@@ -1,5 +1,6 @@
 import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
-import { extractThinkingTags } from '../../../shared/chat-utils'
+import { estimateTokens, extractThinkingTags } from '../../../shared/chat-utils'
+import { resolveLocalMaxOutputTokens } from '../../../shared/output-tokens'
 import { resolveContextWindow } from '../context-window'
 import {
   applyGenerationDefaults,
@@ -50,6 +51,13 @@ export async function* streamOllamaChat(
     formattedMessages.unshift({ role: 'system', content: systemPrompt })
   }
 
+  const maxOutputTokens = resolveLocalMaxOutputTokens({
+    modelName: model,
+    requested: options?.generationSettings?.maxTokens,
+    contextWindow: numCtx,
+    promptTokens: estimateTokens(formattedMessages.map((m) => m.content).join('\n'))
+  })
+
   let response: Response
   try {
     response = await fetch(`${endpoint}/api/chat`, {
@@ -62,7 +70,7 @@ export async function* streamOllamaChat(
         options: {
           temperature: gen.temperature,
           top_p: gen.topP,
-          num_predict: gen.maxTokens,
+          num_predict: maxOutputTokens,
           stop: gen.stopSequences,
           ...(numCtx ? { num_ctx: numCtx } : {})
         }

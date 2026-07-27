@@ -177,12 +177,42 @@ describe('sqlite chat repos', () => {
     expect(listed.map((c) => c.id).sort()).toEqual(['iso-a', 'iso-b'])
   })
 
+  it('round-trips finishReason on create and update', () => {
+    chatConversations.create({
+      id: 'c9',
+      title: 'Truncation',
+      model: 'm',
+      providerId: 'p',
+      createdAt: 1,
+      updatedAt: 1,
+      pinned: false,
+      archived: false
+    })
+    chatMessages.create({
+      id: 'a9',
+      conversationId: 'c9',
+      role: 'assistant',
+      content: 'cut off here',
+      createdAt: 1,
+      parentId: null,
+      finishReason: 'length'
+    })
+
+    expect(chatMessages.get('a9')?.finishReason).toBe('length')
+
+    chatMessages.update('a9', { content: 'cut off here and resumed', finishReason: 'stop' })
+    expect(chatMessages.get('a9')?.finishReason).toBe('stop')
+
+    chatMessages.update('a9', { finishReason: undefined })
+    expect(chatMessages.get('a9')?.finishReason).toBeUndefined()
+  })
+
   it('runs migrations idempotently', () => {
     const db = new Database(path.join(dir, 'mig.sqlite'))
     migrate(db)
     migrate(db)
     const row = db.prepare('SELECT MAX(version) as v FROM schema_migrations').get() as { v: number }
-    expect(row.v).toBe(2)
+    expect(row.v).toBe(3)
     db.close()
   })
 })

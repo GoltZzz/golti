@@ -22,6 +22,7 @@ import {
   getBranchPath
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
+import { CONTINUE_INSTRUCTION, normalizeFinishReason } from '../../shared/finish-reason'
 import { resolveContextWindow } from './context-window'
 import {
   dbArtifacts,
@@ -129,19 +130,27 @@ export async function startChatGeneration(
     deepResearchEnabled,
     composerMode,
     contextItemIds,
-    generationSettings
+    generationSettings,
+    continueMessageId
   } = payload
 
   const settings = dbSettings.get()
   const conv = dbConversations.get(conversationId)
   const allMessages = dbMessages.listForConversation(conversationId)
 
+  const continuing = continueMessageId ? dbMessages.get(continueMessageId) : undefined
+  if (continueMessageId && (!continuing || continuing.role !== 'assistant')) {
+    throw new Error('Cannot continue: assistant message not found')
+  }
+
   let userMsgId: string | undefined
   let parentForAssistant: string | null = null
   let variantGroupId: string | null = null
   let variantIndex = 0
 
-  if (regenerateFromId) {
+  if (continuing) {
+    // Resuming in place — no new user or assistant row.
+  } else if (regenerateFromId) {
     // Regenerate: create a new assistant variant under the same parent as the original assistant
     const original = dbMessages.get(regenerateFromId)
     if (!original || original.role !== 'assistant') {
@@ -191,26 +200,44 @@ export async function startChatGeneration(
   }
 
   const generationId = newId('gen')
-  const assistantMsgId = newId('msg_a')
-  const assistantMsg: Message = {
-    id: assistantMsgId,
-    conversationId,
-    role: 'assistant',
-    content: '',
-    model,
-    createdAt: Date.now() + 1,
-    parentId: parentForAssistant,
-    variantGroupId,
-    variantIndex,
-    generationId,
-    isStreaming: true
-  }
-  dbMessages.create(assistantMsg)
-  dbConversations.update(conversationId, { activeLeafId: assistantMsgId })
+  const assistantMsgId = continuing ? continuing.id : newId('msg_a')
 
-  // Build history along branch (exclude empty assistant placeholder)
+  if (continuing) {
+    dbMessages.update(assistantMsgId, { generationId, finishReason: undefined, error: undefined })
+  } else {
+    const assistantMsg: Message = {
+      id: assistantMsgId,
+      conversationId,
+      role: 'assistant',
+      content: '',
+      model,
+      createdAt: Date.now() + 1,
+      parentId: parentForAssistant,
+      variantGroupId,
+      variantIndex,
+      generationId,
+      isStreaming: true
+    }
+    dbMessages.create(assistantMsg)
+    dbConversations.update(conversationId, { activeLeafId: assistantMsgId })
+  }
+
+  // Build history along branch. When continuing, the truncated assistant turn stays
+  // in the history and a synthetic user turn asks the model to pick up where it stopped.
   const refreshed = dbMessages.listForConversation(conversationId)
-  const branch = getBranchPath(refreshed, assistantMsgId).filter((m) => m.id !== assistantMsgId)
+  const branchPath = getBranchPath(refreshed, assistantMsgId)
+  const branch = continuing
+    ? [
+        ...branchPath,
+        {
+          id: 'continue_instruction',
+          conversationId,
+          role: 'user' as const,
+          content: CONTINUE_INSTRUCTION,
+          createdAt: Date.now()
+        }
+      ]
+    : branchPath.filter((m) => m.id !== assistantMsgId)
 
   const contextBlock = buildContextBlock(conversationId, contextItemIds)
   const effectiveSystem = [
@@ -244,8 +271,8 @@ export async function startChatGeneration(
     })
   }
 
-  if (mode === 'off') {
-    // Quiet when search is off
+  if (mode === 'off' || continuing) {
+    // Quiet when search is off; a continuation reuses the sources already attached.
   } else if (decision.skipped) {
     emitSearchStatus({
       state: 'skipped',
@@ -360,17 +387,19 @@ export async function startChatGeneration(
     ...generationSettings
   }
 
-  if (deepResearchEnabled) {
+  if (deepResearchEnabled && !continuing) {
     startDeepResearch(win, payload, assistantMsgId, generationId, branch, effectiveSystem, mergedSettings, controller)
     return { userMsgId, assistantMsgId, generationId }
   }
 
   ;(async () => {
-    let accumulated = ''
+    const priorContent = continuing?.content ?? ''
+    let generated = ''
     let reasoningAccumulated = ''
     let thinkingStartTime: number | null = null
     let thinkingEndTime: number | null = null
     let usage: TokenUsage | undefined
+    let finishReason: string | undefined
 
     const streamParser = createThinkStreamParser()
 
@@ -430,7 +459,7 @@ export async function startChatGeneration(
             if (thinkingStartTime && !thinkingEndTime) {
               thinkingEndTime = Date.now()
             }
-            accumulated += contentDelta
+            generated += contentDelta
             sendChunk(win, {
               conversationId,
               messageId: assistantMsgId,
@@ -442,30 +471,37 @@ export async function startChatGeneration(
           }
         } else if (event.type === 'usage') {
           usage = event.usage
+        } else if (event.type === 'done') {
+          // Providers may emit a real reason and then a generic [DONE]; keep the first.
+          if (event.finishReason && !finishReason) {
+            finishReason = normalizeFinishReason(event.finishReason)
+          }
         } else if (event.type === 'error') {
           throw new Error(event.error)
         }
       }
 
-      // Check if <think> tags exist in accumulated text (fallback parsing)
-      if (accumulated.includes('<think>')) {
-        const { reasoningText, cleanContent } = extractThinkingTags(accumulated)
+      // Check if <think> tags exist in generated text (fallback parsing)
+      if (generated.includes('<think>')) {
+        const { reasoningText, cleanContent } = extractThinkingTags(generated)
         if (reasoningText) {
           reasoningAccumulated = reasoningAccumulated
             ? `${reasoningAccumulated}\n${reasoningText}`
             : reasoningText
-          accumulated = cleanContent
+          generated = cleanContent
           sendChunk(win, {
             conversationId,
             messageId: assistantMsgId,
             generationId,
-            correctedContent: accumulated,
+            correctedContent: priorContent + generated,
             reasoningContent: reasoningAccumulated,
             done: false,
             eventType: 'correction'
           })
         }
       }
+
+      const accumulated = priorContent + generated
 
       const totalThinkingDurationMs =
         thinkingStartTime && thinkingEndTime ? thinkingEndTime - thinkingStartTime : undefined
@@ -480,8 +516,9 @@ export async function startChatGeneration(
         }
       }
 
-      // Extract shells
-      const extracted = extractShells(accumulated)
+      // Extract shells from the newly generated text only, so continuing a
+      // truncated message does not duplicate the shells from the first pass.
+      const extracted = extractShells(generated)
       const createdShells: Shell[] = []
       for (const [idx, ex] of extracted.entries()) {
         const shell: Shell = {
@@ -509,14 +546,17 @@ export async function startChatGeneration(
         })
       }
 
+      const shellIds = [...(continuing?.shellIds ?? []), ...createdShells.map((s) => s.id)]
+
       dbMessages.update(assistantMsgId, {
         content: accumulated,
         reasoningContent: reasoningAccumulated || undefined,
         thinkingDurationMs: totalThinkingDurationMs,
-        shellIds: createdShells.map((s) => s.id),
-        artifactIds: createdShells.map((s) => s.id),
+        shellIds,
+        artifactIds: shellIds,
         tokensIn: usage.promptTokens,
         tokensOut: usage.completionTokens,
+        finishReason,
         error: undefined
       })
 
@@ -528,17 +568,19 @@ export async function startChatGeneration(
         thinkingDurationMs: totalThinkingDurationMs,
         done: true,
         usage,
+        finishReason,
         eventType: 'done'
       })
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const totalThinkingDurationMs =
           thinkingStartTime ? (thinkingEndTime || Date.now()) - thinkingStartTime : undefined
+        const stoppedContent = priorContent + generated
         dbMessages.update(assistantMsgId, {
-          content: accumulated || '(generation stopped)',
+          content: stoppedContent || '(generation stopped)',
           reasoningContent: reasoningAccumulated || undefined,
           thinkingDurationMs: totalThinkingDurationMs,
-          tokensOut: estimateTokens(accumulated + reasoningAccumulated)
+          tokensOut: estimateTokens(generated + reasoningAccumulated)
         })
         sendChunk(win, {
           conversationId,
@@ -551,7 +593,8 @@ export async function startChatGeneration(
         })
       } else {
         console.error('[AI Chat Error]', err)
-        const errorText = accumulated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
+        const errorText =
+          priorContent + generated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
         dbMessages.update(assistantMsgId, { content: errorText, error: err.message })
         sendChunk(win, {
           conversationId,

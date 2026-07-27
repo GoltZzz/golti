@@ -53,7 +53,8 @@ function mapMessage(row: any): Message {
     error: row.error ?? undefined,
     generationId: row.generation_id ?? undefined,
     reasoningContent: row.reasoning_content ?? undefined,
-    thinkingDurationMs: row.thinking_duration_ms ?? undefined
+    thinkingDurationMs: row.thinking_duration_ms ?? undefined,
+    finishReason: row.finish_reason ?? undefined
   }
 }
 
@@ -319,8 +320,9 @@ export const chatMessages = {
     db.prepare(
       `INSERT INTO messages
         (id, conversation_id, role, content, model, tokens_in, tokens_out, created_at, updated_at,
-         parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms,
+         finish_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       msg.id,
       msg.conversationId,
@@ -337,7 +339,8 @@ export const chatMessages = {
       msg.error ?? null,
       msg.generationId ?? null,
       msg.reasoningContent ?? null,
-      msg.thinkingDurationMs ?? null
+      msg.thinkingDurationMs ?? null,
+      msg.finishReason ?? null
     )
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversationId)
     syncMessageFts(msg.id, msg.conversationId, msg.content)
@@ -354,7 +357,7 @@ export const chatMessages = {
       `UPDATE messages SET
         content = ?, model = ?, tokens_in = ?, tokens_out = ?, updated_at = ?,
         parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?,
-        reasoning_content = ?, thinking_duration_ms = ?
+        reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?
        WHERE id = ?`
     ).run(
       next.content,
@@ -369,6 +372,7 @@ export const chatMessages = {
       next.generationId ?? null,
       next.reasoningContent ?? null,
       next.thinkingDurationMs ?? null,
+      next.finishReason ?? null,
       id
     )
     syncMessageFts(id, next.conversationId, next.content)

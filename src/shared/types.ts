@@ -172,6 +172,7 @@ export interface Message {
   isDeepResearch?: boolean
   reasoningContent?: string
   thinkingDurationMs?: number
+  finishReason?: string
 }
 
 export interface MessageVersion {
@@ -275,6 +276,7 @@ export interface SendMessagePayload {
   composerMode?: ComposerMode
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
+  continueMessageId?: string
 }
 
 export type StreamEventType =
@@ -311,6 +313,7 @@ export interface StreamChunkPayload {
   researchPlan?: ResearchPlan
   researchStep?: ResearchStep
   eventType?: StreamEventType
+  finishReason?: string
 }
 
 export interface ChatRequestOptions {

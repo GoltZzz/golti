@@ -130,6 +130,10 @@ const api = {
     payload: SendMessagePayload & { messageId: string }
   ): Promise<{ assistantMsgId: string; generationId: string }> =>
     ipcRenderer.invoke('ai:chat:regenerate', payload),
+  continueMessage: (
+    payload: SendMessagePayload & { messageId: string }
+  ): Promise<{ assistantMsgId: string; generationId: string }> =>
+    ipcRenderer.invoke('ai:chat:continue', payload),
   onStreamChunk: (callback: (chunk: StreamChunkPayload) => void) => {
     const listener = (_: unknown, chunk: StreamChunkPayload) => callback(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)
