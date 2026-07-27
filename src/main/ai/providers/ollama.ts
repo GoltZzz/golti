@@ -2,6 +2,7 @@ import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../sh
 import { estimateTokens, extractThinkingTags } from '../../../shared/chat-utils'
 import { resolveLocalMaxOutputTokens } from '../../../shared/output-tokens'
 import { resolveContextWindow } from '../context-window'
+import { OLLAMA_KEEP_ALIVE } from '../../ollama/ollama-process'
 import {
   applyGenerationDefaults,
   doneEvent,
@@ -67,6 +68,7 @@ export async function* streamOllamaChat(
         model,
         messages: formattedMessages,
         stream: true,
+        keep_alive: OLLAMA_KEEP_ALIVE,
         options: {
           temperature: gen.temperature,
           top_p: gen.topP,

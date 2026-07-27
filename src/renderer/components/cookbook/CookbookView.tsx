@@ -8,6 +8,7 @@ import { HardwareCard } from './HardwareCard'
 import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
 import { InstalledModelCard } from './InstalledModelCard'
+import { HuggingFaceBrowser } from './HuggingFaceBrowser'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
 import { getCompatibility } from '../../../shared/compatibility'
 import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
@@ -351,6 +352,7 @@ export const CookbookView: React.FC = () => {
         <div className="catalog-section">
           <div className="catalog-header">
             <h2>Recommended Local Models</h2>
+            <span className="catalog-verified-note">Verified by Golti</span>
             <span className="results-count">
               Showing {sortedModels.length} of {MODEL_CATALOG.length} models
             </span>
@@ -377,6 +379,8 @@ export const CookbookView: React.FC = () => {
             </div>
           )}
         </div>
+
+        <HuggingFaceBrowser systemInfo={systemInfo} />
 
         {/* Ollama setup guides / tips */}
         <div className="cookbook-tips-card">

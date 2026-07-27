@@ -19,8 +19,10 @@ import type {
   SearchRuntimeState,
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
-  OllamaState
+  OllamaState,
+  CookbookModel
 } from '../shared/types'
+import type { HFModelSummary } from '../shared/hf-catalog'
 
 const api = {
   // DB Conversations
@@ -205,6 +207,18 @@ const api = {
       error?: string
     }>,
   listLocalModels: () => ipcRenderer.invoke('engine:list-models'),
+  searchHuggingFaceModels: (query: string, limit?: number) =>
+    ipcRenderer.invoke('hf:search', query, limit) as Promise<{
+      models: HFModelSummary[]
+      stale: boolean
+      error?: string
+    }>,
+  getHuggingFaceModelDetail: (repoId: string) =>
+    ipcRenderer.invoke('hf:model-detail', repoId) as Promise<{
+      repoId: string
+      models: CookbookModel[]
+      error?: string
+    }>,
   deleteLocalModel: (filename: string) =>
     ipcRenderer.invoke('engine:delete-model', filename) as Promise<{ success: boolean; error?: string }>,
   onEngineProgress: (callback: (data: any) => void) => {

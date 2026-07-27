@@ -13,6 +13,9 @@ let ollamaProcess: ChildProcess | null = null
 const logBuffer: string[] = []
 const MAX_LOG_LINES = 200
 
+export const OLLAMA_PARALLEL_SLOTS = 1
+export const OLLAMA_KEEP_ALIVE = '60s'
+
 export interface OllamaState {
   status: 'not-installed' | 'stopped' | 'starting' | 'running' | 'error'
   error?: string
@@ -178,7 +181,9 @@ export async function startOllama(port = 11434): Promise<boolean> {
       env: {
         ...process.env,
         OLLAMA_HOST: `127.0.0.1:${port}`,
-        OLLAMA_ORIGINS: '*'
+        OLLAMA_ORIGINS: '*',
+        OLLAMA_NUM_PARALLEL: String(OLLAMA_PARALLEL_SLOTS),
+        OLLAMA_MAX_LOADED_MODELS: '1'
       }
     })
 

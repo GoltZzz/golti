@@ -1,3 +1,7 @@
+import type { EngineFailure } from './engine-startup'
+
+export type { EngineFailure }
+
 export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
 
 export type ModelSource = 'ollama' | 'golti-engine'
@@ -30,6 +34,8 @@ export interface EngineState {
   contextSize?: number
   /** Last stderr output lines for error diagnostic log copying. */
   lastLogs?: string
+  /** Plain-language classification of the last startup failure. */
+  failure?: EngineFailure
 }
 
 export interface OllamaState {

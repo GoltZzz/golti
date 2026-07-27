@@ -35,6 +35,7 @@ import {
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 import { startDeepResearch } from './deep-research'
+import { presentableErrorMessage } from '../../shared/error-display'
 
 interface ActiveGeneration {
   generationId: string
@@ -651,16 +652,16 @@ export async function startChatGeneration(
         })
       } else {
         console.error('[AI Chat Error]', err)
-        const errorText =
-          priorContent + generated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
-        dbMessages.update(assistantMsgId, { content: errorText, error: err.message })
+        const message = presentableErrorMessage(err)
+        const errorText = priorContent + generated + `\n\n*[${message}]*`
+        dbMessages.update(assistantMsgId, { content: errorText, error: message })
         sendChunk(win, {
           conversationId,
           messageId: assistantMsgId,
           generationId,
           contentDelta: '',
           done: true,
-          error: err.message,
+          error: message,
           eventType: 'error'
         })
       }

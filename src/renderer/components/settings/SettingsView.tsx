@@ -386,10 +386,13 @@ export const SettingsView: React.FC = () => {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
                     <div>
                       <strong style={{ fontSize: "13px", display: "block", marginBottom: "4px" }}>
-                        Golti Engine Encountered an Error
+                        {engineState.failure?.title || "Golti Engine Encountered an Error"}
                       </strong>
                       <span style={{ color: "var(--text-secondary)" }}>
-                        {engineState.error || engineError || "llama-server process reported a fault."}
+                        {engineState.failure?.detail ||
+                          engineState.error ||
+                          engineError ||
+                          "llama-server process reported a fault."}
                       </span>
                     </div>
                     <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>

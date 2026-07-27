@@ -54,6 +54,7 @@ import {
   getBinaryPath,
   isBinaryInstalled
 } from './engine'
+import { searchHFModels, fetchHFModelDetail } from './hf/hf-client'
 import {
   getSearchRuntimeState,
   initSearchRuntime,
@@ -1093,6 +1094,12 @@ function setupIpcHandlers(): void {
   })
 
   ipcMain.handle('engine:list-models', () => listLocalModels())
+
+  ipcMain.handle('hf:search', async (_, query: string, limit?: number) =>
+    searchHFModels(typeof query === 'string' ? query : '', limit)
+  )
+
+  ipcMain.handle('hf:model-detail', async (_, repoId: string) => fetchHFModelDetail(repoId))
 
   ipcMain.handle('engine:delete-model', async (_, filename: string) => {
     const state = getEngineState()
