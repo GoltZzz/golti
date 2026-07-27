@@ -6,6 +6,7 @@ import { useCookbookStore } from '../../stores/cookbookStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { useEngineStore } from '../../stores/engineStore'
+import { useOllamaProcessStore } from '../../stores/ollamaProcessStore'
 import {
   DeleteModelDialog,
   DeleteSource,
@@ -69,6 +70,8 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   } = useEngineStore()
 
   const selectedModel = useChatStore((s) => s.selectedModel)
+  const ollamaProcessState = useOllamaProcessStore((s) => s.processState)
+  const startOllama = useOllamaProcessStore((s) => s.startOllama)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedSource, setSelectedSource] = useState<DeleteSource | null>(null)
@@ -76,6 +79,8 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [engineActionBusy, setEngineActionBusy] = useState(false)
   const [ollamaActionBusy, setOllamaActionBusy] = useState(false)
+
+  const isOllamaStarting = ollamaProcessState.status === 'starting'
 
   const isEngineInstalled = engineState.status !== 'not-installed'
   const isEngineModelDownloaded = model.ggufFilename
@@ -273,6 +278,11 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     if (!isOllamaOnline || isCurrentPulling) return
     // Fire-and-forget so Engine downloads on this/other cards stay independently clickable
     void pullModel(model.ollamaTag)
+  }
+
+  const handleOllamaStart = () => {
+    if (isOllamaStarting) return
+    void startOllama()
   }
 
   const handleEngineInstall = async () => {
@@ -656,16 +666,32 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               )}
             </div>
           </div>
+        ) : !isOllamaOnline ? (
+          <div className="ollama-offline-hint">
+            <button
+              type="button"
+              className="action-btn install-btn"
+              style={{ width: '100%' }}
+              onClick={handleOllamaStart}
+              disabled={isOllamaStarting}
+            >
+              {isOllamaStarting ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
+              <span>{isOllamaStarting ? 'Starting Ollama…' : 'Start Ollama server'}</span>
+            </button>
+            <p className="ollama-offline-hint-text">
+              Golti runs Ollama for you — you don&apos;t need to start it from a terminal.
+            </p>
+          </div>
         ) : (
           <button
             onClick={handleOllamaInstall}
-            disabled={!isOllamaOnline || isCurrentPulling}
-            className={`action-btn install-btn ${!isOllamaOnline ? 'disabled' : ''}`}
+            disabled={isCurrentPulling}
+            className="action-btn install-btn"
             style={{ width: '100%' }}
-            title={!isOllamaOnline ? 'Ollama is offline. Start Ollama to install.' : 'Pull model to Ollama'}
+            title="Pull model to Ollama"
           >
             <Download size={14} />
-            <span>{isOllamaOnline ? 'Install with Ollama' : 'Ollama Offline'}</span>
+            <span>Install with Ollama</span>
           </button>
         )}
 

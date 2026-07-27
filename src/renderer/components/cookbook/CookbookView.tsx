@@ -34,7 +34,7 @@ export const CookbookView: React.FC = () => {
   } = useCookbookStore()
 
   const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary } = useEngineStore()
-  const { processState: ollamaState, setupListeners: setupOllamaListeners, startOllama, stopOllama } = useOllamaProcessStore()
+  const { processState: ollamaState, setupListeners: setupOllamaListeners } = useOllamaProcessStore()
   const { settings, fetchSettings } = useSettingsStore()
 
   useEffect(() => {
@@ -179,22 +179,6 @@ export const CookbookView: React.FC = () => {
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Ollama Status: {ollamaState.status === 'running' ? 'Running' : ollamaState.status === 'stopped' ? 'Stopped' : 'Starting...'}
                 </span>
-                <button
-                  onClick={() => ollamaState.status === 'running' ? stopOllama() : startOllama()}
-                  disabled={ollamaState.status === 'starting'}
-                  style={{
-                    backgroundColor: ollamaState.status === 'running' ? 'rgba(224, 108, 117, 0.1)' : 'rgba(152, 195, 121, 0.1)',
-                    color: ollamaState.status === 'running' ? '#e06c75' : '#98c379',
-                    border: `1px solid ${ollamaState.status === 'running' ? 'rgba(224, 108, 117, 0.3)' : 'rgba(152, 195, 121, 0.3)'}`,
-                    borderRadius: '6px',
-                    padding: '4px 12px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: ollamaState.status === 'starting' ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {ollamaState.status === 'running' ? 'Stop' : 'Start'}
-                </button>
               </div>
             )}
           </div>
@@ -299,7 +283,7 @@ export const CookbookView: React.FC = () => {
                   <p>
                     {ollamaState.status === 'not-installed'
                       ? "Ollama isn't installed — that's fine, Golti Engine runs local models without it. To use Ollama anyway, follow the 3-step guide above; Golti auto-detects it once it's running."
-                      : "The Ollama background process is stopped. Click 'Start' in the header to run it."
+                      : "The Ollama background process is stopped. Start it from the Ollama Server page to run it."
                     }
                   </p>
                 </div>

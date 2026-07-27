@@ -226,6 +226,11 @@ export const OllamaServerView: React.FC = () => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
               Connected via <strong style={{ color: 'var(--text-primary)' }}>{hostUrl}</strong> (Port {portNumber})
             </p>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
+              {processState.isSystemProcess || processState.serviceUnit
+                ? 'This server was started outside Golti. Golti can manage it for you instead — no terminal needed.'
+                : 'Start and stop Ollama here — you don’t need to run ollama serve in a terminal.'}
+            </p>
           </div>
         </div>
 
