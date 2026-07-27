@@ -77,6 +77,22 @@ The bundled web-search runtime is downloaded automatically at runtime from GitHu
 npm run build:search-runtime
 ```
 
+### Optional: refreshing the model catalog
+
+The Cookbook's model list lives in two files: `src/shared/model-catalog.ts` (hand-curated entries, including the GGUF URLs the Golti Engine downloads) and `src/shared/model-catalog.generated.ts` (scraped from the Ollama library). Both are **committed source**, so a fresh clone already has the full catalog and `npm run dev` needs nothing extra. The app never fetches either list at runtime.
+
+Run the sync only when you want to pull in models Ollama has added since the last refresh:
+
+```bash
+npm run sync:catalog
+```
+
+It reads `ollama.com/library` plus the Ollama registry manifests, then rewrites `model-catalog.generated.ts`. Expect a couple of minutes and a large diff. Curated entries always win over generated ones with the same Ollama tag, so refreshing never overwrites hand-written copy or GGUF URLs.
+
+- **Needs Node 22.6 or newer**, which runs TypeScript directly. Nothing else in the project cares — this is the only script with that requirement.
+- **Don't resolve merge conflicts in the generated file.** If two branches refresh the catalog, git will report hundreds of conflicting lines. Take either side wholesale (`git checkout --theirs src/shared/model-catalog.generated.ts`) and re-run `npm run sync:catalog`.
+- **It fails safe.** The script only writes when at least 150 models resolve, so a throttled or broken run leaves the committed catalog untouched rather than half-emptying it.
+
 ---
 
 ## 🧪 Testing & Verification
