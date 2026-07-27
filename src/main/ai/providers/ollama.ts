@@ -1,5 +1,7 @@
 import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
-import { extractThinkingTags } from '../../../shared/chat-utils'
+import { estimateTokens, extractThinkingTags } from '../../../shared/chat-utils'
+import { resolveLocalMaxOutputTokens } from '../../../shared/output-tokens'
+import { resolveContextWindow } from '../context-window'
 import {
   applyGenerationDefaults,
   doneEvent,
@@ -38,6 +40,7 @@ export async function* streamOllamaChat(
 ): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const endpoint = (provider.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
   const gen = applyGenerationDefaults(options?.generationSettings)
+  const numCtx = await resolveContextWindow(provider.id, model)
 
   const formattedMessages = messages.map((m) => ({
     role: m.role,
@@ -47,6 +50,13 @@ export async function* streamOllamaChat(
   if (systemPrompt) {
     formattedMessages.unshift({ role: 'system', content: systemPrompt })
   }
+
+  const maxOutputTokens = resolveLocalMaxOutputTokens({
+    modelName: model,
+    requested: options?.generationSettings?.maxTokens,
+    contextWindow: numCtx,
+    promptTokens: estimateTokens(formattedMessages.map((m) => m.content).join('\n'))
+  })
 
   let response: Response
   try {

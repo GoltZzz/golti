@@ -447,7 +447,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                     position="top"
                     multiline
                     maxWidth={300}
-                    label="Limits maximum response length (~100 tokens ≈ 75 words). Increase if long responses get cut off early."
+                    label="Limits maximum response length (~100 tokens ≈ 75 words). Leave empty for Auto, which sizes the limit to the model and its context window."
                   >
                     <span className="info-icon" aria-label="Max tokens help">ⓘ</span>
                   </Tooltip>
@@ -457,8 +457,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                   min={64}
                   max={128000}
                   step={64}
-                  value={generationSettings.maxTokens ?? 2048}
-                  onChange={(e) => setGenerationSettings({ maxTokens: Number(e.target.value) })}
+                  placeholder="Auto"
+                  value={generationSettings.maxTokens ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim()
+                    setGenerationSettings({ maxTokens: raw === '' ? undefined : Number(raw) })
+                  }}
                 />
               </label>
             </div>

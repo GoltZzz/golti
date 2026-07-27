@@ -18,6 +18,7 @@ import {
   getActiveLeaf,
   getBranchPath
 } from '../../shared/chat-utils'
+import { useModelCapabilityStore } from './modelCapabilityStore'
 import {
   createPlanningProgress,
   seedPendingStepsFromPlan,
@@ -50,6 +51,9 @@ interface ChatState {
   conversationError: string | null
   isGenerating: boolean
   activeGenerationId: string | null
+  /** Every conversation with an in-flight generation, current or backgrounded,
+   *  so the sidebar can show a live indicator on each. */
+  generatingConversationIds: string[]
   contextItems: ContextItem[]
   artifacts: Artifact[]
   citations: Citation[]
@@ -81,6 +85,7 @@ interface ChatState {
   sendMessage: (content?: string, options?: { forceWebSearch?: boolean }) => Promise<void>
   stopGeneration: () => Promise<void>
   regenerate: (assistantMessageId: string) => Promise<void>
+  continueMessage: (assistantMessageId: string) => Promise<void>
   editAndResend: (userMessageId: string, content: string) => Promise<void>
   selectBranch: (messageId: string) => Promise<void>
   fetchModels: () => Promise<void>
@@ -180,6 +185,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversationError: null,
   isGenerating: false,
   activeGenerationId: null,
+  generatingConversationIds: [],
   contextItems: [],
   artifacts: [],
   citations: [],
@@ -191,7 +197,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   searchSetupError: null,
   searchStatusByMessageId: {},
   researchProgressByMessageId: {},
-  generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 },
+  generationSettings: { temperature: 0.7, topP: 0.9 },
   draft: '',
   draftUndoStack: [],
   draftRedoStack: [],
@@ -256,6 +262,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         get().conversations.find((c) => c.id === id) || (await window.goltiAPI.getConversation(id))
       if (seq !== selectSeq || get().currentConversationId !== id) return
 
+      const markReasoning = useModelCapabilityStore.getState().markReasoning
+      for (const m of msgs) {
+        if (m.reasoningContent) markReasoning(m.model)
+      }
+
       const visible = recomputeVisible(msgs, conv?.activeLeafId)
       set({
         messages: msgs,
@@ -263,7 +274,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         generationSettings: {
           temperature: 0.7,
           topP: 0.9,
-          maxTokens: 2048,
           ...conv?.generationSettings
         },
         isLoadingConversation: false
@@ -275,6 +285,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             (m.providerId === conv.providerId && m.name === conv.model) || m.name === conv.model
         )
         if (matchingModel) set({ selectedModel: matchingModel })
+      }
+
+      // A generation may still be streaming in the background (the user switched
+      // away and came back). Re-sync so the partial text streamed while away is
+      // restored and the Stop control works again; the main process re-emits the
+      // accumulated content on the stream channel, and later deltas append to it.
+      const active = await window.goltiAPI.resyncGeneration(id)
+      if (seq !== selectSeq || get().currentConversationId !== id) return
+      if (active) {
+        set({ isGenerating: true, activeGenerationId: active.generationId })
       }
 
       await Promise.all([get().refreshContext(), get().refreshArtifacts(), get().refreshBudget()])
@@ -314,7 +334,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: [newConv, ...state.conversations.filter((c) => c.id !== newConv.id)],
       currentConversationId: newConv.id,
       isLoadingConversation: false,
-      generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 }
+      generationSettings: { temperature: 0.7, topP: 0.9 }
     }))
     selectSeq += 1
 
@@ -458,6 +478,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages,
         visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
         isGenerating: true,
+        generatingConversationIds: state.generatingConversationIds.includes(convId!)
+          ? state.generatingConversationIds
+          : [...state.generatingConversationIds, convId!],
         draft: '',
         draftUndoStack: [],
         draftRedoStack: [],
@@ -555,6 +578,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
         isGenerating: false,
         activeGenerationId: null,
+        generatingConversationIds: state.generatingConversationIds.filter(
+          (c) => c !== state.currentConversationId
+        ),
         researchProgressByMessageId
       }
     })
@@ -594,6 +620,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
         c.id === convId ? { ...c, activeLeafId: result.assistantMsgId } : c
       )
     })
+  },
+
+  continueMessage: async (assistantMessageId: string) => {
+    const convId = get().currentConversationId
+    if (!convId || get().isGenerating) return
+    const selected = get().selectedModel
+    const settings = await window.goltiAPI.getSettings()
+    const conv = get().conversations.find((c) => c.id === convId)
+
+    set((state) => ({
+      isGenerating: true,
+      messages: state.messages.map((m) =>
+        m.id === assistantMessageId ? { ...m, finishReason: undefined, isStreaming: true } : m
+      )
+    }))
+
+    const result = await window.goltiAPI.continueMessage({
+      conversationId: convId,
+      content: '',
+      model: selected?.name || conv?.model || 'llama3:latest',
+      providerId: selected?.providerId || conv?.providerId || 'ollama-local',
+      systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
+      messageId: assistantMessageId,
+      composerMode: get().composerMode,
+      generationSettings: get().generationSettings
+    })
+
+    if (get().currentConversationId !== convId) return
+    set((state) => ({
+      activeGenerationId: result.generationId,
+      isGenerating: true,
+      visibleMessages: recomputeVisible(state.messages, assistantMessageId)
+    }))
   },
 
   editAndResend: async (userMessageId: string, content: string) => {
@@ -731,9 +790,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
         artifact,
         searchStatus,
         researchPlan,
-        researchStep
+        researchStep,
+        finishReason
       } = chunk
+
+      // Maintain the cross-conversation generating set for the sidebar indicator.
+      // This runs before the current-conversation guard so that generations
+      // running in backgrounded conversations are tracked (and cleared on done).
+      set((state) => {
+        const has = state.generatingConversationIds.includes(conversationId)
+        if (done && has) {
+          return {
+            generatingConversationIds: state.generatingConversationIds.filter(
+              (c) => c !== conversationId
+            )
+          }
+        }
+        if (!done && !has) {
+          return { generatingConversationIds: [...state.generatingConversationIds, conversationId] }
+        }
+        return {}
+      })
+
       if (get().currentConversationId !== conversationId) return
+
+      if (chunkReasoningContent || thinkingDelta) {
+        const streamingMsg = get().messages.find((m) => m.id === messageId)
+        useModelCapabilityStore
+          .getState()
+          .markReasoning(streamingMsg?.model || get().selectedModel?.name)
+      }
 
       set((state) => {
         const messages = state.messages.map((msg) => {
@@ -750,7 +836,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               isStreaming: !done,
               error: error || msg.error,
               tokensIn: usage?.promptTokens ?? msg.tokensIn,
-              tokensOut: usage?.completionTokens ?? msg.tokensOut
+              tokensOut: usage?.completionTokens ?? msg.tokensOut,
+              finishReason: done ? finishReason : undefined
             }
           }
           return msg

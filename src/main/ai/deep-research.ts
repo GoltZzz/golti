@@ -48,7 +48,8 @@ export async function startDeepResearch(
   branch: Message[],
   effectiveSystem: string,
   mergedSettings: any,
-  controller: AbortController
+  controller: AbortController,
+  hooks?: { onBuffer?: (content: string) => void }
 ): Promise<void> {
   const { conversationId, content, model, providerId } = payload
   const settings = dbSettings.get()
@@ -276,6 +277,7 @@ export async function startDeepResearch(
     })) {
       if (event.type === 'text') {
         accumulated += event.text
+        hooks?.onBuffer?.(accumulated)
         sendChunk(win, {
           conversationId,
           messageId: assistantMsgId,

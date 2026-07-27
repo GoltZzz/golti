@@ -2,16 +2,13 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { ChevronDown, RefreshCw, Server, Zap, Search, Brain, Check, X, Sparkles } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { ModelInfo } from '../../../shared/types'
-
-interface ParsedModelDetails {
-  displayName: string
-  paramSize?: string
-  quantization?: string
-  isReasoning: boolean
-}
+import { parseModelDisplay, type ModelDisplay } from '../../../shared/model-display'
+import { useModelCapabilityStore } from '../../stores/modelCapabilityStore'
 
 export const ModelSelector: React.FC = () => {
   const { models, selectedModel, setSelectedModel, fetchModels, isLoadingModels } = useChatStore()
+  const reasoningModels = useModelCapabilityStore((s) => s.reasoningModels)
+  const isReasoning = (name: string) => Boolean(reasoningModels[name])
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState<string>('all')
@@ -47,28 +44,7 @@ export const ModelSelector: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [isOpen])
 
-  const parseModelDetails = (name: string): ParsedModelDetails => {
-    const paramMatch = name.match(/(\d+(?:\.\d+)?[BMKbmk])/)
-    const paramSize = paramMatch ? paramMatch[1].toUpperCase() : undefined
-
-    const quantMatch = name.match(/(Q\d+_[Kk]_[MmLlSs]|\bQ\d+_\d+|\bQ\d+_[Kk]|\bQ\d+|\bFP\d+|\bBF\d+)/i)
-    const quantization = quantMatch ? quantMatch[1].toUpperCase() : undefined
-
-    const lower = name.toLowerCase()
-    const isReasoning = lower.includes('deepseek-r1') || lower.includes('qwen') || lower.includes('reasoning') || lower.includes('think') || lower.includes('r1')
-
-    let displayName = name
-    if (paramMatch) displayName = displayName.replace(paramMatch[0], '')
-    if (quantMatch) displayName = displayName.replace(quantMatch[0], '')
-    displayName = displayName.replace(/[-_]+/g, ' ').trim()
-
-    return {
-      displayName: displayName || name,
-      paramSize,
-      quantization,
-      isReasoning
-    }
-  }
+  const parseModelDetails = (name: string): ModelDisplay => parseModelDisplay(name)
 
   const getProviderBadge = (providerType: string) => {
     if (providerType === 'golti-engine') {
@@ -116,17 +92,14 @@ export const ModelSelector: React.FC = () => {
       // Category filter
       if (activeCategory === 'golti' && m.providerType !== 'golti-engine') return false
       if (activeCategory === 'ollama' && m.providerType !== 'ollama') return false
-      if (activeCategory === 'reasoning') {
-        const parsed = parseModelDetails(m.name)
-        if (!parsed.isReasoning) return false
-      }
+      if (activeCategory === 'reasoning' && !isReasoning(m.name)) return false
 
       // Search query filter
       if (!searchQuery) return true
       const lowerQuery = searchQuery.toLowerCase()
       return m.name.toLowerCase().includes(lowerQuery) || m.providerType.toLowerCase().includes(lowerQuery)
     })
-  }, [models, searchQuery, activeCategory])
+  }, [models, searchQuery, activeCategory, reasoningModels])
 
   // Flat array of models for indexed keyboard navigation
   const flatModels = useMemo(() => filteredModels, [filteredModels])
@@ -200,7 +173,7 @@ export const ModelSelector: React.FC = () => {
         {selectedParsed?.paramSize && (
           <span className="model-selector-badge-param">{selectedParsed.paramSize}</span>
         )}
-        {selectedParsed?.isReasoning && (
+        {selectedModel && isReasoning(selectedModel.name) && (
           <span className="model-selector-badge-reasoning" title="Reasoning Model">
             <Brain size={12} />
           </span>
@@ -358,7 +331,7 @@ export const ModelSelector: React.FC = () => {
                               <span className="model-selector-badge-quant">{parsed.quantization}</span>
                             )}
 
-                            {parsed.isReasoning && (
+                            {isReasoning(m.name) && (
                               <span className="model-selector-badge-reasoning" title="Reasoning / Thinking Model">
                                 <Brain size={12} />
                               </span>

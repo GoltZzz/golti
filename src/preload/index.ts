@@ -127,10 +127,18 @@ const api = {
     ipcRenderer.invoke('ai:chat', payload),
   cancelGeneration: (generationId: string): Promise<boolean> =>
     ipcRenderer.invoke('ai:chat:cancel', generationId),
+  resyncGeneration: (
+    conversationId: string
+  ): Promise<{ generationId: string; messageId: string } | null> =>
+    ipcRenderer.invoke('ai:chat:resync', conversationId),
   regenerateMessage: (
     payload: SendMessagePayload & { messageId: string }
   ): Promise<{ assistantMsgId: string; generationId: string }> =>
     ipcRenderer.invoke('ai:chat:regenerate', payload),
+  continueMessage: (
+    payload: SendMessagePayload & { messageId: string }
+  ): Promise<{ assistantMsgId: string; generationId: string }> =>
+    ipcRenderer.invoke('ai:chat:continue', payload),
   onStreamChunk: (callback: (chunk: StreamChunkPayload) => void) => {
     const listener = (_: unknown, chunk: StreamChunkPayload) => callback(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)
