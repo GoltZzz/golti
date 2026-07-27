@@ -87,13 +87,13 @@ async function mapLimit<T, R>(items: T[], worker: (item: T) => Promise<R>): Prom
 
 function decodeEntities(text: string): string {
   return text
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
     .replace(/&#x27;|&apos;/g, "'")
     .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
 }
 
 const KNOWN_CAPABILITIES = ['tools', 'thinking', 'vision', 'embedding', 'completion', 'insert']
