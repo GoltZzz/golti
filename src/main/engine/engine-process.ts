@@ -4,12 +4,20 @@ import { spawn, execFile, ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
 import { detectGpu, GpuVendor } from './gpu-detect'
-import { computeContextSize, reduceContextSize, MIN_CONTEXT_SIZE } from './context-size'
+import { readGgufModelInfo } from './gguf'
+import { computeContextSize, reduceContextSize, MIN_CONTEXT_SIZE, kvBytesPerToken } from './context-size'
 import { EngineState } from '../../shared/types'
 
 const execFileAsync = promisify(execFile)
 
 let currentProcess: ChildProcess | null = null
+/**
+ * A start already in progress. `startEngine` runs several awaits (device probe,
+ * VRAM sizing, port scan) before it spawns, so without this guard two
+ * overlapping callers both see `currentProcess === null`, both pick the same
+ * free port, and the loser dies with "couldn't bind HTTP server socket".
+ */
+let startInFlight: Promise<EngineState> | null = null
 let currentState: EngineState = {
   status: 'not-installed',
   port: 8391,
@@ -82,10 +90,18 @@ export async function checkEngineHealth(port: number = 8391): Promise<boolean> {
   return false
 }
 
-/** Nominal transformer layer count used to turn a VRAM budget into an `-ngl` value. */
+/**
+ * Fallback layer count for models whose GGUF header cannot be read. Real counts
+ * come from `block_count`; this is only a last resort, and it is deliberately
+ * mid-range (7B models have 28-32, 14B have 48, 70B have 80).
+ */
 const NOMINAL_LAYERS = 32
-/** VRAM (GB) held back for the framebuffer, driver, and KV cache. */
-const VRAM_RESERVE_GB = 0.9
+/**
+ * VRAM (GB) that is occupied no matter how few layers we offload: llama.cpp's
+ * compute buffers plus the CUDA/Vulkan context. Unlike the KV cache this does
+ * not scale with layers or context, so it is the only genuinely flat reserve.
+ */
+const VRAM_FIXED_OVERHEAD_GB = 0.7
 
 export interface EngineDevice {
   /** Backend device id, e.g. "Vulkan1", used with `--device`. */
@@ -132,10 +148,20 @@ export function pickEngineDevice(devices: EngineDevice[], vendor: GpuVendor): En
 }
 
 /**
- * Decides how many layers to offload to the GPU for `modelPath`, from the
- * detected backend and VRAM. Returns -1 (all), 0 (CPU-only), or a positive
- * partial count. A conservative estimate — the fallback in `startEngine`
- * corrects it downward if the GPU still runs out of memory.
+ * Decides how many layers to offload to the GPU for `modelPath`.
+ *
+ * A layer costs its share of the weights *plus* its share of the KV cache, and
+ * the KV term is not small: a 14B model at 4k context spends ~10% of each
+ * layer's VRAM on KV, and that grows linearly with context. Sizing against
+ * weights alone (as this did while it assumed a flat 32 layers) both misreads
+ * how much fits and hides the KV cost inside a flat reserve.
+ *
+ * Layers are sized against `MIN_CONTEXT_SIZE`, the smallest context we are
+ * willing to run; `computeContextSize` then grows the context into whatever
+ * VRAM is left. Offload wins ties because it drives generation speed.
+ *
+ * Returns -1 (all), 0 (CPU-only), or a positive partial count. The fallback in
+ * `startEngine` still corrects downward if the GPU refuses the allocation.
  */
 export async function computeGpuLayers(modelPath?: string, vramGBOverride?: number): Promise<number> {
   const backend = getInstalledBackend()
@@ -159,13 +185,30 @@ export async function computeGpuLayers(modelPath?: string, vramGBOverride?: numb
   }
   if (fileGB <= 0) return -1
 
-  const usable = vramGB - VRAM_RESERVE_GB
-  if (usable <= 0.5) return 0 // Not enough headroom to be worth it.
-  if (usable >= fileGB * 1.05) return -1 // Whole model fits in VRAM.
+  const info = readGgufModelInfo(modelPath)
+  const blockCount = info?.blockCount ?? NOMINAL_LAYERS
 
-  const perLayerGB = fileGB / NOMINAL_LAYERS
+  // Per-layer KV at the minimum context we would accept. Zero when the header
+  // is unreadable, which degrades to the old weights-only behaviour.
+  const perTokenKvBytes = kvBytesPerToken(
+    info?.blockCount,
+    info?.embeddingLength,
+    info?.headCount,
+    info?.headCountKv
+  )
+  const kvPerLayerGB = perTokenKvBytes
+    ? (perTokenKvBytes / blockCount) * MIN_CONTEXT_SIZE / (1024 * 1024 * 1024)
+    : 0
+
+  const weightsPerLayerGB = fileGB / blockCount
+  const perLayerGB = weightsPerLayerGB + kvPerLayerGB
+
+  const usable = vramGB - VRAM_FIXED_OVERHEAD_GB
+  if (usable <= 0.5 || perLayerGB <= 0) return 0 // Not enough headroom to be worth it.
+
   const layers = Math.floor(usable / perLayerGB)
-  return Math.max(1, Math.min(NOMINAL_LAYERS - 1, layers))
+  if (layers >= blockCount) return -1 // Whole model plus its KV fits in VRAM.
+  return Math.max(1, layers)
 }
 
 /** stderr signatures that mean "the GPU couldn't allocate / initialize". */
@@ -186,11 +229,40 @@ function isGpuFailure(stderr: string): boolean {
   return GPU_FAILURE_MARKERS.some((m) => lower.includes(m))
 }
 
-/** Next, smaller offload value to try after a GPU failure. Ends at 0 (CPU). */
-function reduceLayers(current: number): number {
-  if (current < 0) return Math.floor(NOMINAL_LAYERS / 2) // -1 (all) → half
+/**
+ * Next, smaller offload value to try after a GPU failure. Ends at 0 (CPU).
+ * `blockCount` is the model's real layer count, so halving "all" starts from
+ * the actual number rather than a guess that can exceed it.
+ */
+function reduceLayers(current: number, blockCount?: number): number {
+  if (current < 0) return Math.floor((blockCount ?? NOMINAL_LAYERS) / 2) // -1 (all) → half
   if (current <= 1) return 0
-  return Math.floor(current / 2)
+  // Step down by a quarter rather than halving. Now that sizing accounts for KV
+  // it lands much closer to the true limit, so an overshoot is usually small —
+  // halving would give up far more offload than the failure warrants.
+  return Math.max(1, Math.floor(current * 0.75))
+}
+
+/**
+ * Kills `proc` and waits for it to actually exit. The listening socket is only
+ * released when the process is reaped, so a retry that respawns on the same
+ * port immediately after `kill()` can still lose the bind to its predecessor.
+ */
+async function killAndWait(proc: ChildProcess | null, signal: NodeJS.Signals = 'SIGKILL'): Promise<void> {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return
+  await new Promise<void>((resolve) => {
+    const done = () => resolve()
+    proc.once('exit', done)
+    proc.once('error', done)
+    try {
+      proc.kill(signal)
+    } catch {
+      resolve()
+      return
+    }
+    // Never hang the start path on an unreapable child.
+    setTimeout(done, 5000)
+  })
 }
 
 interface AttemptResult {
@@ -241,6 +313,32 @@ export async function startEngine(
   gpuLayers?: number,
   preferredDeviceId?: string
 ): Promise<EngineState> {
+  // Serialize starts: a second caller joins the in-flight one instead of
+  // racing it to the same port.
+  if (startInFlight) {
+    try {
+      const state = await startInFlight
+      // The in-flight start brought up the model we wanted — reuse it.
+      if (!modelPath || state.loadedModel === modelPath) return state
+    } catch {
+      // The other start failed; fall through and try our own.
+    }
+  }
+  const run = startEngineInner(modelPath, port, gpuLayers, preferredDeviceId)
+  startInFlight = run
+  try {
+    return await run
+  } finally {
+    if (startInFlight === run) startInFlight = null
+  }
+}
+
+async function startEngineInner(
+  modelPath?: string,
+  port: number = 8391,
+  gpuLayers?: number,
+  preferredDeviceId?: string
+): Promise<EngineState> {
   if (currentProcess) {
     if (modelPath && currentState.loadedModel !== modelPath) {
       await stopEngine()
@@ -285,6 +383,7 @@ export async function startEngine(
 
   // Resolve the starting offload: explicit value wins, otherwise auto-size.
   let layers = gpuLayers ?? (await computeGpuLayers(modelPath, device ? device.freeMiB / 1024 : undefined))
+  const modelBlockCount = readGgufModelInfo(modelPath)?.blockCount
   let fellBack = false
 
   const sizing = await computeContextSize({
@@ -346,9 +445,9 @@ export async function startEngine(
 
     if (gpuFailed && layers !== 0) {
       // GPU couldn't fit the model — shed layers and retry the same binary.
-      const nextLayers = reduceLayers(layers)
+      const nextLayers = reduceLayers(layers, modelBlockCount)
       console.warn(`[GoltiEngine] GPU offload failed at ${layers} layers, retrying with ${nextLayers}`)
-      try { currentProcess?.kill('SIGKILL') } catch {}
+      await killAndWait(currentProcess)
       currentProcess = null
       layers = nextLayers
       fellBack = true
@@ -361,7 +460,7 @@ export async function startEngine(
       const stderr = attempt.getStderr().trim()
       if (layers !== 0) {
         console.warn(`[GoltiEngine] Health check failed at ${layers} layers, falling back to CPU`)
-        try { currentProcess?.kill('SIGKILL') } catch {}
+        await killAndWait(currentProcess)
         currentProcess = null
         layers = 0
         fellBack = true
@@ -370,14 +469,14 @@ export async function startEngine(
       if (contextSize > MIN_CONTEXT_SIZE) {
         const nextContext = reduceContextSize(contextSize)
         console.warn(`[GoltiEngine] Health check failed at ctx-size ${contextSize}, retrying with ${nextContext}`)
-        try { currentProcess?.kill('SIGKILL') } catch {}
+        await killAndWait(currentProcess)
         currentProcess = null
         contextSize = nextContext
         continue
       }
       const errorMsg = stderr || 'llama-server failed to start or health check timed out.'
       console.error('[GoltiEngine] Server failed health check:', errorMsg)
-      try { currentProcess?.kill('SIGKILL') } catch {}
+      await killAndWait(currentProcess)
       currentProcess = null
       updateState({ status: 'error', error: errorMsg, lastLogs: stderr || errorMsg, pid: undefined })
       throw new Error(errorMsg)
@@ -416,17 +515,17 @@ export async function startEngine(
 }
 
 export async function stopEngine(): Promise<EngineState> {
-  if (currentProcess) {
-    currentProcess.kill('SIGTERM')
-    let attempts = 0
-    while (currentProcess && attempts < 10) {
-      await new Promise((r) => setTimeout(r, 200))
-      attempts++
-    }
-    if (currentProcess) {
-      currentProcess.kill('SIGKILL')
-      currentProcess = null
-    }
+  // A start still in flight owns `currentProcess`; let it settle so we don't
+  // leave an orphan holding the port.
+  if (startInFlight) await startInFlight.catch(() => {})
+  const proc = currentProcess
+  if (proc) {
+    // Wait on the process itself rather than on `currentProcess` being nulled:
+    // the handler that nulls it is only attached once a start has fully
+    // succeeded, so a still-starting engine would otherwise never clear.
+    await killAndWait(proc, 'SIGTERM')
+    await killAndWait(proc, 'SIGKILL')
+    if (currentProcess === proc) currentProcess = null
   }
   updateState({ status: isBinaryInstalled() ? 'stopped' : 'not-installed', pid: undefined, loadedModel: undefined })
   return currentState

@@ -25,7 +25,14 @@ export interface ContextSizeResult {
   cappedByMemory: boolean
 }
 
-function kvBytesPerToken(
+/**
+ * KV cache bytes per token for the *whole* model (all layers).
+ *
+ * Exported because GPU layer sizing needs the same figure: on a partial offload
+ * the KV cache splits between VRAM and RAM along the same layer boundary as the
+ * weights, so both calculations must agree on the per-layer cost.
+ */
+export function kvBytesPerToken(
   blockCount?: number,
   embeddingLength?: number,
   headCount?: number,
@@ -35,6 +42,17 @@ function kvBytesPerToken(
   const gqaRatio = headCount && headCountKv ? headCountKv / headCount : 1
   const kvDim = embeddingLength * gqaRatio
   return 2 * blockCount * kvDim * KV_BYTES_PER_ELEMENT
+}
+
+/**
+ * Share of the model resident on the GPU. Weights and KV cache both split at
+ * this ratio, so it is the one number that turns a layer count into VRAM cost.
+ */
+export function gpuLayerFraction(gpuLayers: number, blockCount?: number): number {
+  if (gpuLayers === -1) return 1
+  if (gpuLayers <= 0) return 0
+  if (!blockCount) return 1
+  return Math.min(1, gpuLayers / blockCount)
 }
 
 function roundDownToGranularity(tokens: number): number {
@@ -63,23 +81,35 @@ export async function computeContextSize(input: ContextSizeInput): Promise<Conte
   }
 
   const availableBytes = Math.max(await getAvailableMemoryBytes(), os.totalmem() * STABLE_RAM_FRACTION)
-  const fullyOffloaded = input.gpuLayers === -1
   const usesDiscreteVram = input.freeVramGB !== undefined && input.gpuLayers !== 0
 
-  let budgetBytes: number
+  // Weights and KV cache both split at the offload boundary. Charging VRAM for
+  // the whole model's KV while ignoring the weights already sitting there (or
+  // vice versa) is what previously let a partial offload overcommit the card.
+  const gpuFraction = usesDiscreteVram ? gpuLayerFraction(input.gpuLayers, info?.blockCount) : 0
+  const cpuFraction = 1 - gpuFraction
+
+  let affordableTokens: number
   if (usesDiscreteVram) {
-    const vramBudget = (input.freeVramGB as number) * GB - VRAM_RESERVE_GB * GB - (fullyOffloaded ? modelBytes : 0)
-    const ramBudget = availableBytes - RAM_RESERVE_GB * GB - (fullyOffloaded ? 0 : modelBytes)
-    budgetBytes = Math.min(vramBudget, Math.max(ramBudget, 0))
+    const vramBudget =
+      (input.freeVramGB as number) * GB - VRAM_RESERVE_GB * GB - modelBytes * gpuFraction
+    const ramBudget = availableBytes - RAM_RESERVE_GB * GB - modelBytes * cpuFraction
+    if (vramBudget <= 0 || ramBudget <= 0) {
+      return { contextSize: MIN_CONTEXT_SIZE, trainedContextSize: trained, cappedByMemory: true }
+    }
+    // Each side only pays for the KV of the layers it actually holds.
+    const vramTokens = gpuFraction > 0 ? vramBudget / (perToken * gpuFraction) : Infinity
+    const ramTokens = cpuFraction > 0 ? ramBudget / (perToken * cpuFraction) : Infinity
+    affordableTokens = Math.min(vramTokens, ramTokens)
   } else {
-    budgetBytes = availableBytes - RAM_RESERVE_GB * GB - modelBytes
+    const budgetBytes = availableBytes - RAM_RESERVE_GB * GB - modelBytes
+    if (budgetBytes <= 0) {
+      return { contextSize: MIN_CONTEXT_SIZE, trainedContextSize: trained, cappedByMemory: true }
+    }
+    affordableTokens = budgetBytes / perToken
   }
 
-  if (budgetBytes <= 0) {
-    return { contextSize: MIN_CONTEXT_SIZE, trainedContextSize: trained, cappedByMemory: true }
-  }
-
-  const affordable = roundDownToGranularity(budgetBytes / perToken)
+  const affordable = roundDownToGranularity(affordableTokens)
   const contextSize = Math.max(MIN_CONTEXT_SIZE, Math.min(target, affordable))
 
   return {
