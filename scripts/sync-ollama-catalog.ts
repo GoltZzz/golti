@@ -109,7 +109,7 @@ function parseLibraryIndex(html: string): OllamaLibraryModel[] {
     if (models.some((m) => m.name === name)) continue
 
     const descMatch = /<p class="max-w-lg[^"]*">([\s\S]*?)<\/p>/.exec(block)
-    const description = descMatch ? decodeEntities(descMatch[1].replace(/<[^>]+>/g, '')).trim() : ''
+    const description = descMatch ? decodeEntities(descMatch[1].replace(/<[^>]*>/g, '')).trim() : ''
 
     const chips = [...block.matchAll(/<span[^>]*text-xs font-medium[^>]*>([^<]+)<\/span>/g)].map(
       (m) => m[1].trim().toLowerCase()
