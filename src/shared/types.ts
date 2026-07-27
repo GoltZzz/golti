@@ -375,6 +375,8 @@ export interface SystemInfoFull {
 
 export type ModelCompatibility = 'great' | 'runs' | 'tight' | 'wont_fit'
 
+export type MemoryPressure = 'ok' | 'busy' | 'critical'
+
 export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative' | 'agentic'
 
 export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'glm' | 'falcon' | 'smollm' | 'internlm' | 'command-r' | 'devstral' | 'kimi' | 'hermes' | 'other'

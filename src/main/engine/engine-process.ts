@@ -5,7 +5,17 @@ import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
 import { detectGpu, GpuVendor } from './gpu-detect'
 import { computeContextSize, reduceContextSize, MIN_CONTEXT_SIZE } from './context-size'
+import { readGgufModelInfo } from './gguf'
 import { getAvailableMemoryBytes } from '../system/memory'
+import { detectCpuCounts } from '../system/cpu'
+import { kvBytesPerToken } from '../../shared/context-budget'
+import {
+  buildTuningArgs,
+  chooseThreadCount,
+  computeOffloadLayers,
+  isUnsupportedArgFailure,
+  reduceOffloadLayers
+} from '../../shared/engine-tuning'
 import { EngineState } from '../../shared/types'
 import {
   EngineFailure,
@@ -91,11 +101,6 @@ export async function checkEngineHealth(port: number = 8391): Promise<boolean> {
   return false
 }
 
-/** Nominal transformer layer count used to turn a VRAM budget into an `-ngl` value. */
-const NOMINAL_LAYERS = 32
-/** VRAM (GB) held back for the framebuffer, driver, and KV cache. */
-const VRAM_RESERVE_GB = 0.9
-
 export interface EngineDevice {
   /** Backend device id, e.g. "Vulkan1", used with `--device`. */
   id: string
@@ -160,21 +165,21 @@ export async function computeGpuLayers(modelPath?: string, vramGBOverride?: numb
   // fallback path shed layers if it doesn't fit.
   if (!vramGB || !modelPath) return -1
 
-  let fileGB = 0
-  try {
-    fileGB = fs.statSync(modelPath).size / (1024 * 1024 * 1024)
-  } catch {
-    return -1
-  }
-  if (fileGB <= 0) return -1
+  const modelBytes = statSizeBytes(modelPath) ?? 0
+  if (modelBytes <= 0) return -1
 
-  const usable = vramGB - VRAM_RESERVE_GB
-  if (usable <= 0.5) return 0 // Not enough headroom to be worth it.
-  if (usable >= fileGB * 1.05) return -1 // Whole model fits in VRAM.
-
-  const perLayerGB = fileGB / NOMINAL_LAYERS
-  const layers = Math.floor(usable / perLayerGB)
-  return Math.max(1, Math.min(NOMINAL_LAYERS - 1, layers))
+  const info = readGgufModelInfo(modelPath)
+  return computeOffloadLayers({
+    modelBytes,
+    vramBytes: vramGB * 1024 * 1024 * 1024,
+    layerCount: info?.blockCount,
+    kvBytesPerToken: kvBytesPerToken({
+      blockCount: info?.blockCount,
+      embeddingLength: info?.embeddingLength,
+      headCount: info?.headCount,
+      headCountKv: info?.headCountKv
+    })
+  })
 }
 
 /** stderr signatures that mean "the GPU couldn't allocate / initialize". */
@@ -193,13 +198,6 @@ const GPU_FAILURE_MARKERS = [
 function isGpuFailure(stderr: string): boolean {
   const lower = stderr.toLowerCase()
   return GPU_FAILURE_MARKERS.some((m) => lower.includes(m))
-}
-
-/** Next, smaller offload value to try after a GPU failure. Ends at 0 (CPU). */
-function reduceLayers(current: number): number {
-  if (current < 0) return Math.floor(NOMINAL_LAYERS / 2) // -1 (all) → half
-  if (current <= 1) return 0
-  return Math.floor(current / 2)
 }
 
 export class EngineStartError extends Error {
@@ -364,6 +362,13 @@ export async function startEngine(
   let layers = gpuLayers ?? (await computeGpuLayers(modelPath, device ? device.freeMiB / 1024 : undefined))
   let fellBack = false
 
+  const layerCount = readGgufModelInfo(modelPath)?.blockCount
+  const threads = chooseThreadCount(await detectCpuCounts())
+  let tuningEnabled = true
+  console.log(
+    `[GoltiEngine] Offload ${layers} of ${layerCount ?? 'unknown'} layers, ${threads} generation threads`
+  )
+
   const sizing = await computeContextSize({
     modelPath,
     gpuLayers: layers,
@@ -406,6 +411,7 @@ export async function startEngine(
     if (modelPath) args.push('--model', modelPath)
     if (device) args.push('--device', device.id)
     args.push('--n-gpu-layers', String(layers))
+    args.push(...buildTuningArgs({ gpuLayers: layers, threads, enabled: tuningEnabled }))
 
     let attempt: AttemptResult
     try {
@@ -420,11 +426,21 @@ export async function startEngine(
     updateState({ pid, binaryPath, binaryVersion: LLAMA_VERSION, backend, gpuLayers: layers, fellBackToCpu: fellBack, contextSize })
 
     const isHealthy = await waitForHealthy(actualPort, attempt, loadBudgetMs)
+
+    if (!isHealthy && attempt.hasExited() && tuningEnabled && isUnsupportedArgFailure(attempt.getStderr())) {
+      // This engine build rejects one of the performance flags — retry plain.
+      console.warn('[GoltiEngine] Engine rejected tuning flags, retrying without them')
+      try { currentProcess?.kill('SIGKILL') } catch {}
+      currentProcess = null
+      tuningEnabled = false
+      continue
+    }
+
     const gpuFailed = !isHealthy && attempt.hasExited() && (await attempt.earlyGpuFailure)
 
     if (gpuFailed && layers !== 0) {
       // GPU couldn't fit the model — shed layers and retry the same binary.
-      const nextLayers = reduceLayers(layers)
+      const nextLayers = reduceOffloadLayers(layers, layerCount)
       console.warn(`[GoltiEngine] GPU offload failed at ${layers} layers, retrying with ${nextLayers}`)
       try { currentProcess?.kill('SIGKILL') } catch {}
       currentProcess = null

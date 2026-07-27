@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { SystemInfoFull } from '../../../shared/types'
+import { getUsableMemoryGB } from '../../../shared/compatibility'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { RamBreakdownModal } from './RamBreakdownModal'
 import {
@@ -280,7 +281,7 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                 </span>
                 <span className="spec-dot">•</span>
                 <span>
-                  Max LLM Cap: <span className="spec-num">{(gpu.isAppleSilicon ? ram.totalGB * 0.75 : (gpu.vramGB || ram.totalGB * 0.70)).toFixed(1)} GB</span>
+                  Max LLM Cap: <span className="spec-num">{getUsableMemoryGB(systemInfo).toFixed(1)} GB</span>
                 </span>
               </div>
               {ram.usedPercent > 85 ? (

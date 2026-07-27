@@ -8,6 +8,7 @@ import {
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
+import { cacheBreakpointIndex, foldSystemMessages } from '../../../shared/prompt-assembly'
 
 export async function fetchAnthropicModels(_provider: AIProviderConfig): Promise<string[]> {
   return ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest']
@@ -22,9 +23,16 @@ export async function* streamAnthropicChat(
 ): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const gen = applyGenerationDefaults(options?.generationSettings)
 
-  const formattedMessages = messages
-    .filter((m) => m.role !== 'system')
-    .map((m) => ({ role: m.role, content: m.content }))
+  const folded = foldSystemMessages(messages)
+  const breakpoint = cacheBreakpointIndex(folded)
+
+  const formattedMessages = folded.map((m, i) => ({
+    role: m.role,
+    content:
+      i === breakpoint
+        ? [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }]
+        : m.content
+  }))
 
   const body: Record<string, unknown> = {
     model,
@@ -40,7 +48,7 @@ export async function* streamAnthropicChat(
   }
 
   if (systemPrompt) {
-    body.system = systemPrompt
+    body.system = [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }]
   }
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {

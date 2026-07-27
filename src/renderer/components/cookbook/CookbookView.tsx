@@ -52,6 +52,36 @@ export const CookbookView: React.FC = () => {
     }
   }, [])
 
+  useEffect(() => {
+    if (ollamaState.status !== 'running') {
+      if (ollamaState.status === 'stopped' || ollamaState.status === 'error' || ollamaState.status === 'not-installed') {
+        checkOllama()
+      }
+      return
+    }
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const sync = async (attempt: number) => {
+      if (cancelled) return
+      await checkOllama()
+      if (cancelled) return
+      if (useCookbookStore.getState().ollamaOnline) {
+        fetchInstalled()
+      } else if (attempt < 5) {
+        timer = setTimeout(() => sync(attempt + 1), 1000)
+      }
+    }
+
+    sync(0)
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [ollamaState.status])
+
   const isEngineDownloaded = (model: CookbookModel) =>
     !!(model.ggufFilename && localModels.some((lm) => lm.filename === model.ggufFilename))
 

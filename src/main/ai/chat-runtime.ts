@@ -22,6 +22,12 @@ import {
   getBranchPath
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
+import {
+  buildContextBlock,
+  buildSystemPrompt,
+  orderPromptMessages,
+  selectContextItems
+} from '../../shared/prompt-assembly'
 import { CONTINUE_INSTRUCTION, normalizeFinishReason } from '../../shared/finish-reason'
 import { resolveContextWindow } from './context-window'
 import {
@@ -69,19 +75,8 @@ function sendChunk(win: BrowserWindow | null, chunk: StreamChunkPayload): void {
   }
 }
 
-function buildContextBlock(conversationId: string, contextItemIds?: string[]): string {
-  const items = dbContext.list(conversationId).filter((c) => {
-    if (!c.enabled) return false
-    if (contextItemIds && contextItemIds.length > 0) {
-      return contextItemIds.includes(c.id)
-    }
-    return true
-  })
-  if (items.length === 0) return ''
-  const parts = items.map((item) => {
-    return `<context name="${item.name}" type="${item.type}">\n${item.content}\n</context>`
-  })
-  return `Use the following attached context when relevant:\n\n${parts.join('\n\n')}`
+function buildConversationContextBlock(conversationId: string, contextItemIds?: string[]): string {
+  return buildContextBlock(selectContextItems(dbContext.list(conversationId), contextItemIds))
 }
 
 /** Update the live buffer for an in-flight generation. Used by the streaming
@@ -286,14 +281,11 @@ export async function startChatGeneration(
       ]
     : branchPath.filter((m) => m.id !== assistantMsgId)
 
-  const contextBlock = buildContextBlock(conversationId, contextItemIds)
-  const effectiveSystem = [
-    systemPrompt || conv?.systemPrompt || settings.systemPrompt,
-    composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
-    contextBlock
-  ]
-    .filter(Boolean)
-    .join('\n\n')
+  const effectiveSystem = buildSystemPrompt({
+    basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
+    modeSuffix: composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+    contextBlock: buildConversationContextBlock(conversationId, contextItemIds)
+  })
 
   // Optional web search with explicit lifecycle status (local managed runtime)
   let searchPreamble = ''
@@ -407,18 +399,20 @@ export async function startChatGeneration(
     }
   }
 
-  const historyForModel: Message[] = searchPreamble
-    ? [
-        ...branch,
-        {
-          id: 'search_ctx',
-          conversationId,
-          role: 'system',
-          content: searchPreamble,
-          createdAt: Date.now()
-        }
-      ]
-    : branch
+  const historyForModel: Message[] = orderPromptMessages<Message>({
+    history: branch,
+    volatile: searchPreamble
+      ? [
+          {
+            id: 'search_ctx',
+            conversationId,
+            role: 'system',
+            content: searchPreamble,
+            createdAt: Date.now()
+          }
+        ]
+      : []
+  })
 
   const controller = new AbortController()
   const activeGen: ActiveGeneration = {
