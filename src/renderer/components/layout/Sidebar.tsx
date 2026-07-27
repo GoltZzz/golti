@@ -34,7 +34,8 @@ export const Sidebar: React.FC = () => {
     exportConversation,
     searchConversations,
     searchHits,
-    conversationError
+    conversationError,
+    generatingConversationIds
   } = useChatStore()
 
   const { processState, setupListeners: setupOllamaListeners } = useOllamaProcessStore()
@@ -219,6 +220,7 @@ export const Sidebar: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {displayedConversations.map((conv) => {
                 const isSelected = conv.id === currentConversationId
+                const isGenerating = generatingConversationIds.includes(conv.id)
                 const hit = searchHits.find((h) => h.conversationId === conv.id)
                 return (
                   <div
@@ -249,6 +251,13 @@ export const Sidebar: React.FC = () => {
                         }}
                       >
                         {conv.pinned && <Pin size={11} className="conv-pin" />}
+                        {isGenerating && (
+                          <span
+                            className="conv-generating-dot"
+                            title="Generating…"
+                            aria-label="Generating"
+                          />
+                        )}
                         {conv.title}
                       </div>
                       {hit?.snippet && localQuery.trim() && (

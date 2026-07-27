@@ -17,6 +17,7 @@ import {
   cancelGeneration,
   getTokenBudgetForConversation,
   hasActiveGenerations,
+  resyncGeneration,
   startChatGeneration
 } from './ai/chat-runtime'
 import {
@@ -612,6 +613,9 @@ function setupIpcHandlers(): void {
   })
 
   ipcMain.handle('ai:chat:cancel', (_, generationId: string) => cancelGeneration(generationId))
+  ipcMain.handle('ai:chat:resync', (_, conversationId: string) =>
+    resyncGeneration(mainWindow, conversationId)
+  )
   ipcMain.handle('ai:chat:regenerate', async (_, payload: SendMessagePayload & { messageId: string }) => {
     return startChatGeneration(mainWindow, {
       ...payload,

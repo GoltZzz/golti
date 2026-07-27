@@ -41,6 +41,9 @@ interface ActiveGeneration {
   conversationId: string
   messageId: string
   controller: AbortController
+  /** Everything streamed so far, so a re-selecting renderer can be re-synced. */
+  content: string
+  reasoningContent: string
 }
 
 const activeGenerations = new Map<string, ActiveGeneration>()
@@ -78,6 +81,49 @@ function buildContextBlock(conversationId: string, contextItemIds?: string[]): s
     return `<context name="${item.name}" type="${item.type}">\n${item.content}\n</context>`
   })
   return `Use the following attached context when relevant:\n\n${parts.join('\n\n')}`
+}
+
+/** Update the live buffer for an in-flight generation. Used by the streaming
+ *  loops (chat + deep research) so background progress survives a re-select. */
+export function updateGenerationBuffer(
+  generationId: string,
+  patch: { content?: string; reasoningContent?: string }
+): void {
+  const gen = activeGenerations.get(generationId)
+  if (!gen) return
+  if (patch.content !== undefined) gen.content = patch.content
+  if (patch.reasoningContent !== undefined) gen.reasoningContent = patch.reasoningContent
+}
+
+/**
+ * Re-emit the accumulated content for any generation still streaming in a
+ * conversation. Called when the renderer re-selects a conversation whose stream
+ * kept running while it was showing a different one — without this, the partial
+ * text streamed while away is lost and the message renders blank until the
+ * remaining deltas arrive. Emitting on the same stream channel keeps ordering
+ * intact: this corrected snapshot lands after every prior delta and before every
+ * future one. Returns the active generation ids so the renderer can restore its
+ * generating state, or null when nothing is live for the conversation.
+ */
+export function resyncGeneration(
+  win: BrowserWindow | null,
+  conversationId: string
+): { generationId: string; messageId: string } | null {
+  let active: { generationId: string; messageId: string } | null = null
+  for (const gen of activeGenerations.values()) {
+    if (gen.conversationId !== conversationId) continue
+    sendChunk(win, {
+      conversationId,
+      messageId: gen.messageId,
+      generationId: gen.generationId,
+      correctedContent: gen.content,
+      reasoningContent: gen.reasoningContent || undefined,
+      done: false,
+      eventType: 'correction'
+    })
+    active = { generationId: gen.generationId, messageId: gen.messageId }
+  }
+  return active
 }
 
 export function cancelGeneration(generationId: string): boolean {
@@ -374,12 +420,15 @@ export async function startChatGeneration(
     : branch
 
   const controller = new AbortController()
-  activeGenerations.set(generationId, {
+  const activeGen: ActiveGeneration = {
     generationId,
     conversationId,
     messageId: assistantMsgId,
-    controller
-  })
+    controller,
+    content: '',
+    reasoningContent: ''
+  }
+  activeGenerations.set(generationId, activeGen)
 
   const mergedSettings = {
     ...settings.defaultGenerationSettings,
@@ -387,8 +436,12 @@ export async function startChatGeneration(
     ...generationSettings
   }
 
-  if (deepResearchEnabled && !continuing) {
-    startDeepResearch(win, payload, assistantMsgId, generationId, branch, effectiveSystem, mergedSettings, controller)
+  if (deepResearchEnabled) {
+    startDeepResearch(win, payload, assistantMsgId, generationId, branch, effectiveSystem, mergedSettings, controller, {
+      onBuffer: (content) => {
+        activeGen.content = content
+      }
+    })
     return { userMsgId, assistantMsgId, generationId }
   }
 
@@ -426,6 +479,7 @@ export async function startChatGeneration(
           if (!thinkingStartTime) thinkingStartTime = Date.now()
           thinkingEndTime = Date.now()
           reasoningAccumulated += event.text
+          activeGen.reasoningContent = reasoningAccumulated
           const duration = thinkingEndTime - thinkingStartTime
           sendChunk(win, {
             conversationId,
@@ -443,6 +497,7 @@ export async function startChatGeneration(
             if (!thinkingStartTime) thinkingStartTime = Date.now()
             thinkingEndTime = Date.now()
             reasoningAccumulated += thinkingDelta
+            activeGen.reasoningContent = reasoningAccumulated
             const duration = thinkingEndTime - thinkingStartTime
             sendChunk(win, {
               conversationId,
@@ -459,7 +514,8 @@ export async function startChatGeneration(
             if (thinkingStartTime && !thinkingEndTime) {
               thinkingEndTime = Date.now()
             }
-            generated += contentDelta
+            accumulated += contentDelta
+            activeGen.content = accumulated
             sendChunk(win, {
               conversationId,
               messageId: assistantMsgId,
@@ -488,7 +544,9 @@ export async function startChatGeneration(
           reasoningAccumulated = reasoningAccumulated
             ? `${reasoningAccumulated}\n${reasoningText}`
             : reasoningText
-          generated = cleanContent
+          accumulated = cleanContent
+          activeGen.content = accumulated
+          activeGen.reasoningContent = reasoningAccumulated
           sendChunk(win, {
             conversationId,
             messageId: assistantMsgId,
