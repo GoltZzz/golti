@@ -17,7 +17,8 @@ import {
   Code
 } from 'lucide-react'
 import { useOllamaProcessStore } from '../../stores/ollamaProcessStore'
-import { InstalledLocalModelInfo } from '../../../shared/types'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { InstalledLocalModelInfo, OllamaRuntimeInfo } from '../../../shared/types'
 
 export const OllamaServerView: React.FC = () => {
   const {
@@ -39,6 +40,40 @@ export const OllamaServerView: React.FC = () => {
   const [healthStatus, setHealthStatus] = useState<'healthy' | 'checking' | 'unreachable'>('checking')
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'models' | 'api' | 'logs'>('overview')
   const [autoScrollLogs, setAutoScrollLogs] = useState(true)
+  const [gpuDevices, setGpuDevices] = useState<{ id: string; name: string; totalMiB: number | null }[]>([])
+  const [runtime, setRuntime] = useState<OllamaRuntimeInfo | null>(null)
+
+  const { settings, fetchSettings, updateSettings } = useSettingsStore()
+
+  useEffect(() => {
+    fetchSettings()
+    window.goltiAPI
+      .listOllamaGpuDevices()
+      .then(setGpuDevices)
+      .catch(() => setGpuDevices([]))
+  }, [fetchSettings])
+
+  // The device choice is applied as environment variables when we spawn
+  // `ollama serve`, so a running daemon has to be restarted to pick it up.
+  const applyOllamaDevice = async (device: string) => {
+    await updateSettings({ ollamaDevice: device })
+    if (processState.status === 'running' && !processState.isSystemProcess) {
+      await stopOllama()
+      await startOllama()
+    }
+  }
+
+  // Poll what Ollama actually has resident while the server is up.
+  useEffect(() => {
+    if (processState.status !== 'running') {
+      setRuntime(null)
+      return
+    }
+    const read = () => window.goltiAPI.getOllamaRuntime().then(setRuntime).catch(() => {})
+    read()
+    const timer = setInterval(read, 5000)
+    return () => clearInterval(timer)
+  }, [processState.status])
 
   useEffect(() => {
     const cleanup = setupListeners()
@@ -438,11 +473,108 @@ export const OllamaServerView: React.FC = () => {
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-secondary)' }}>Ollama Version:</span>{' '}
-                  <strong>{processState.version || 'v0.5.12'}</strong>
+                  <strong>{processState.version || 'Unknown'}</strong>
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-secondary)' }}>CORS Setting:</span>{' '}
                   <code style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px' }}>OLLAMA_ORIGINS=*</code>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 4: GPU Acceleration */}
+            <div
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-5)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <Cpu size={20} color="#c678dd" />
+                <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>GPU Acceleration</h3>
+              </div>
+              <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--text-secondary)' }}>Run on</label>
+                  <select
+                    value={settings?.ollamaDevice || 'auto'}
+                    onChange={(e) => applyOllamaDevice(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: '180px',
+                      padding: '6px 8px',
+                      fontSize: '12px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-subtle)'
+                    }}
+                  >
+                    <option value="auto">Auto (let Ollama choose)</option>
+                    {gpuDevices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                        {d.totalMiB ? ` · ${(d.totalMiB / 1024).toFixed(1)} GB` : ''}
+                      </option>
+                    ))}
+                    <option value="cpu">CPU only</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--text-secondary)' }}>GPU layers</label>
+                  <select
+                    value={String(settings?.ollamaGpuLayers ?? -1)}
+                    onChange={(e) => updateSettings({ ollamaGpuLayers: Number(e.target.value) })}
+                    style={{
+                      flex: 1,
+                      minWidth: '180px',
+                      padding: '6px 8px',
+                      fontSize: '12px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-subtle)'
+                    }}
+                  >
+                    <option value="-1">Auto (Ollama sizes the offload)</option>
+                    <option value="0">0 — none (CPU inference)</option>
+                    {[8, 16, 24, 32, 48, 64, 999].map((n) => (
+                      <option key={n} value={n}>
+                        {n === 999 ? '999 — all layers' : `${n} layers`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Measured placement, straight from /api/ps. */}
+                {runtime && runtime.loaded.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
+                    {runtime.loaded.map((m) => (
+                      <div key={m.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {m.name}
+                        </span>
+                        <strong
+                          style={{
+                            color:
+                              m.placement === 'gpu' ? '#98c379' : m.placement === 'partial' ? '#e5c07b' : '#e06c75',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {m.placement === 'cpu' ? 'CPU' : `${m.gpuPercent}% GPU`}
+                          {m.vramBytes > 0 ? ` · ${(m.vramBytes / 1024 ** 3).toFixed(1)} GB VRAM` : ''}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ color: 'var(--text-secondary)', fontSize: '12px', lineHeight: 1.5 }}>
+                  {processState.gpuSettingIgnored
+                    ? 'Ollama is running outside Golti, so the device setting is not applied. Stop it there and start it here to use it. GPU layers still apply — they travel with each request.'
+                    : 'Device applies when Golti starts the server; GPU layers apply per request and take effect on the next reload of a model.'}
                 </div>
               </div>
             </div>

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource, PullProgress, InstalledLocalModelInfo } from '../../shared/types'
+import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource, PullProgress, InstalledLocalModelInfo, OllamaRuntimeInfo } from '../../shared/types'
 import { useChatStore } from './chatStore'
 import { useEngineStore } from './engineStore'
 
@@ -14,6 +14,8 @@ interface CookbookFilters {
 
 interface CookbookState {
   systemInfo: SystemInfoFull | null
+  /** Measured VRAM occupancy from Ollama's /api/ps; null when it is unreachable. */
+  ollamaRuntime: OllamaRuntimeInfo | null
   loadingInfo: boolean
   scanError: string | null
   ollamaOnline: boolean
@@ -30,6 +32,7 @@ interface CookbookState {
   deleteError: string | null
 
   scanHardware: () => Promise<void>
+  fetchOllamaRuntime: () => Promise<void>
   checkOllama: () => Promise<void>
   fetchInstalled: () => Promise<void>
   pullModel: (ollamaTag: string) => Promise<void>
@@ -64,6 +67,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
 
   return {
     systemInfo: null,
+    ollamaRuntime: null,
     loadingInfo: false,
     scanError: null,
     ollamaOnline: false,
@@ -87,11 +91,21 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     deletingOllamaTag: null,
     deleteError: null,
 
+    fetchOllamaRuntime: async () => {
+      try {
+        set({ ollamaRuntime: await window.goltiAPI.getOllamaRuntime() })
+      } catch {
+        // Daemon down or mid-restart: leave the last reading rather than
+        // flashing "0 GB used", which would read as a real measurement.
+      }
+    },
+
     scanHardware: async () => {
       set({ loadingInfo: true, scanError: null })
       try {
         const info = await window.goltiAPI.getSystemInfoFull()
         set({ systemInfo: info, loadingInfo: false, scanError: null })
+        get().fetchOllamaRuntime()
       } catch (err) {
         console.error('Failed to scan hardware:', err)
         const message =

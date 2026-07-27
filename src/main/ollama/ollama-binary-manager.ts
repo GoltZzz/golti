@@ -2,12 +2,35 @@ import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
 import AdmZip from 'adm-zip'
+import zlib from 'zlib'
+import { pipeline } from 'stream/promises'
 import { EngineDownloadProgress } from '../../shared/types'
+import { detectGpu } from '../engine/gpu-detect'
 
 import { execSync } from 'child_process'
 
 const GITHUB_RELEASE_BASE = 'https://github.com/ollama/ollama/releases/download'
-const DEFAULT_OLLAMA_VERSION = 'v0.5.12'
+const DEFAULT_OLLAMA_VERSION = 'v0.32.4'
+
+/**
+ * Upstream switched the Linux tarballs from gzip to zstd in v0.14.0, so the
+ * asset extension depends on which release we end up pulling.
+ */
+const ZSTD_ASSETS_SINCE = [0, 14, 0] as const
+
+function parseVersion(version: string): [number, number, number] {
+  const m = version.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!m) return [0, 0, 0]
+  return [+m[1], +m[2], +m[3]]
+}
+
+export function usesZstdAssets(version: string): boolean {
+  const [major, minor, patch] = parseVersion(version)
+  const [zMajor, zMinor, zPatch] = ZSTD_ASSETS_SINCE
+  if (major !== zMajor) return major > zMajor
+  if (minor !== zMinor) return minor > zMinor
+  return patch >= zPatch
+}
 
 export async function fetchLatestOllamaTag(): Promise<string> {
   try {
@@ -285,19 +308,44 @@ export function isBinaryInstalled(): boolean {
   }
 }
 
-export function getBinaryDownloadUrl(version: string = DEFAULT_OLLAMA_VERSION): string {
+/**
+ * Which archive to fetch. `base` carries the executable (and, on the platforms
+ * that have them, the bundled CUDA runtime libraries). `rocm` is an *overlay*:
+ * it ships only the AMD runtime and has to be extracted on top of `base`,
+ * exactly like upstream's install.sh does.
+ */
+export type OllamaAssetVariant = 'base' | 'rocm'
+
+/** Platforms for which upstream publishes a separate ROCm overlay archive. */
+export function supportsRocmVariant(key: string = getPlatformBinaryKey()): boolean {
+  return key === 'linux-amd64' || key === 'windows-amd64'
+}
+
+export function getBinaryDownloadUrl(
+  version: string = DEFAULT_OLLAMA_VERSION,
+  variant: OllamaAssetVariant = 'base'
+): string {
   const key = getPlatformBinaryKey()
+  const suffix = variant === 'rocm' ? '-rocm' : ''
+
+  if (variant === 'rocm' && !supportsRocmVariant(key)) {
+    throw new Error(`No ROCm build of Ollama is published for ${key}`)
+  }
+
+  // Linux tarballs only; the Windows/macOS assets stayed .zip throughout.
+  const tarExt = usesZstdAssets(version) ? 'tar.zst' : 'tgz'
+
   switch (key) {
     case 'darwin':
       return `${GITHUB_RELEASE_BASE}/${version}/Ollama-darwin.zip`
     case 'windows-amd64':
-      return `${GITHUB_RELEASE_BASE}/${version}/ollama-windows-amd64.zip`
+      return `${GITHUB_RELEASE_BASE}/${version}/ollama-windows-amd64${suffix}.zip`
     case 'windows-arm64':
       return `${GITHUB_RELEASE_BASE}/${version}/ollama-windows-arm64.zip`
     case 'linux-amd64':
-      return `${GITHUB_RELEASE_BASE}/${version}/ollama-linux-amd64.tgz`
+      return `${GITHUB_RELEASE_BASE}/${version}/ollama-linux-amd64${suffix}.${tarExt}`
     case 'linux-arm64':
-      return `${GITHUB_RELEASE_BASE}/${version}/ollama-linux-arm64.tgz`
+      return `${GITHUB_RELEASE_BASE}/${version}/ollama-linux-arm64.${tarExt}`
     default:
       throw new Error(`Unsupported platform/architecture: ${process.platform} ${process.arch}`)
   }
@@ -314,18 +362,142 @@ export function cancelOllamaDownload(): boolean {
   return false
 }
 
+/**
+ * Picks the release to install: the newest tag when it actually has assets for
+ * this platform, otherwise the version we ship against. Probing with HEAD keeps
+ * us from streaming a whole archive only to discover upstream renamed it.
+ */
+async function resolveDownloadVersion(signal: AbortSignal): Promise<string> {
+  const latest = await fetchLatestOllamaTag()
+  if (latest === DEFAULT_OLLAMA_VERSION) return latest
+
+  try {
+    const res = await fetch(getBinaryDownloadUrl(latest), { method: 'HEAD', signal })
+    if (res.ok) return latest
+    console.warn(
+      `Ollama release ${latest} has no asset for this platform (HTTP ${res.status}), falling back to ${DEFAULT_OLLAMA_VERSION}`
+    )
+  } catch (err) {
+    if (signal.aborted) throw err
+    console.warn(`Could not probe Ollama release ${latest}, falling back to ${DEFAULT_OLLAMA_VERSION}:`, err)
+  }
+  return DEFAULT_OLLAMA_VERSION
+}
+
+/** Streams `url` to `tempFile`, reporting progress into the [from, to] percent slice. */
+async function downloadArchive(
+  url: string,
+  tempFile: string,
+  label: string,
+  slice: { from: number; to: number },
+  signal: AbortSignal,
+  onProgress?: (progress: EngineDownloadProgress) => void
+): Promise<{ ok: boolean; status: number; bytes: number }> {
+  const res = await fetch(url, { signal })
+  if (!res.ok || !res.body) {
+    return { ok: false, status: res.status, bytes: 0 }
+  }
+
+  const totalBytes = Number(res.headers.get('content-length') || 0)
+  let downloadedBytes = 0
+  let lastTime = Date.now()
+  let lastBytes = 0
+
+  const fileStream = fs.createWriteStream(tempFile)
+  const reader = res.body.getReader()
+
+  try {
+    while (true) {
+      if (signal.aborted) {
+        throw new Error('Download cancelled by user')
+      }
+      const { done, value } = await reader.read()
+      if (done) break
+
+      fileStream.write(value)
+      downloadedBytes += value.length
+
+      const now = Date.now()
+      if (now - lastTime > 300 || downloadedBytes === totalBytes) {
+        const timeDiff = (now - lastTime) / 1000
+        const bytesDiff = downloadedBytes - lastBytes
+        const bytesPerSec = timeDiff > 0 ? bytesDiff / timeDiff : 0
+        const speedMBs = (bytesPerSec / (1024 * 1024)).toFixed(1)
+        const fraction = totalBytes > 0 ? downloadedBytes / totalBytes : 0.5
+        const percent = Math.round(slice.from + fraction * (slice.to - slice.from))
+
+        onProgress?.({
+          type: 'binary',
+          name: label,
+          completed: downloadedBytes,
+          total: totalBytes,
+          percent,
+          speed: `${speedMBs} MB/s`
+        })
+
+        lastTime = now
+        lastBytes = downloadedBytes
+      }
+    }
+  } finally {
+    fileStream.end()
+  }
+
+  await new Promise<void>((resolve) => fileStream.on('finish', () => resolve()))
+  return { ok: true, status: res.status, bytes: downloadedBytes }
+}
+
+/** Decompresses a .tar.zst into a sibling .tar, preferring Node's built-in zstd. */
+async function decompressZstd(archive: string): Promise<string> {
+  const tarFile = archive.replace(/\.zst$/, '')
+  const createZstdDecompress = (zlib as any).createZstdDecompress
+
+  if (typeof createZstdDecompress === 'function') {
+    await pipeline(fs.createReadStream(archive), createZstdDecompress(), fs.createWriteStream(tarFile))
+    return tarFile
+  }
+
+  try {
+    execSync(`zstd -d -f "${archive}" -o "${tarFile}"`, { stdio: 'ignore' })
+  } catch {
+    throw new Error(
+      'This Ollama release ships zstd-compressed archives and no zstd decompressor is available. ' +
+        'Install zstd (Debian/Ubuntu: sudo apt-get install zstd, Fedora: sudo dnf install zstd, Arch: sudo pacman -S zstd) and retry.'
+    )
+  }
+  return tarFile
+}
+
+/** Extracts one downloaded archive into `destDir`, which may already hold earlier parts. */
+async function extractArchive(archive: string, destDir: string): Promise<void> {
+  if (archive.endsWith('.zip')) {
+    new AdmZip(archive).extractAllTo(destDir, true)
+    return
+  }
+  if (archive.endsWith('.tar.zst')) {
+    const tarFile = await decompressZstd(archive)
+    try {
+      execSync(`tar -xf "${tarFile}" -C "${destDir}"`)
+    } finally {
+      try { fs.unlinkSync(tarFile) } catch {}
+    }
+    return
+  }
+  if (archive.endsWith('.tgz') || archive.endsWith('.tar.gz')) {
+    execSync(`tar -xzf "${archive}" -C "${destDir}"`)
+    return
+  }
+  fs.copyFileSync(archive, path.join(destDir, getBinaryFilename()))
+}
+
 export async function downloadOllamaBinary(
   onProgress?: (progress: EngineDownloadProgress) => void
 ): Promise<string> {
   currentAbortController = new AbortController()
   const signal = currentAbortController.signal
 
-  let targetVersion = await fetchLatestOllamaTag()
   const engineDir = getOllamaDir()
-  let downloadUrl = getBinaryDownloadUrl(targetVersion)
-  let isZip = downloadUrl.endsWith('.zip')
-  let isTgz = downloadUrl.endsWith('.tgz') || downloadUrl.endsWith('.tar.gz')
-  const tempFile = path.join(engineDir, isZip ? 'ollama_download.tmp.zip' : isTgz ? 'ollama_download.tmp.tgz' : 'ollama_download.tmp')
+  const tempFiles: string[] = []
 
   onProgress?.({
     type: 'binary',
@@ -337,68 +509,18 @@ export async function downloadOllamaBinary(
   })
 
   try {
-    let res = await fetch(downloadUrl, { signal })
-    
-    // Automatic fallback if latest release tag download returns 404
-    if (res.status === 404 && targetVersion !== DEFAULT_OLLAMA_VERSION) {
-      console.warn(`Ollama release ${targetVersion} download returned 404, falling back to default ${DEFAULT_OLLAMA_VERSION}`)
-      targetVersion = DEFAULT_OLLAMA_VERSION
-      downloadUrl = getBinaryDownloadUrl(targetVersion)
-      isZip = downloadUrl.endsWith('.zip')
-      isTgz = downloadUrl.endsWith('.tgz') || downloadUrl.endsWith('.tar.gz')
-      res = await fetch(downloadUrl, { signal })
+    const targetVersion = await resolveDownloadVersion(signal)
+
+    // AMD cards need the ROCm overlay on top of the base archive; the base one
+    // only carries the CPU and (where published) CUDA runtimes.
+    const gpu = await detectGpu()
+    const wantsRocm = gpu.vendor === 'amd' && supportsRocmVariant()
+    const parts: Array<{ variant: OllamaAssetVariant; label: string; required: boolean }> = [
+      { variant: 'base', label: 'Ollama Backend', required: true }
+    ]
+    if (wantsRocm) {
+      parts.push({ variant: 'rocm', label: 'Ollama ROCm runtime', required: false })
     }
-
-    if (!res.ok || !res.body) {
-      throw new Error(`Failed to download Ollama binary: HTTP ${res.status} ${res.statusText}`)
-    }
-
-    const totalBytes = Number(res.headers.get('content-length') || 0)
-    let downloadedBytes = 0
-    let lastTime = Date.now()
-    let lastBytes = 0
-
-    const fileStream = fs.createWriteStream(tempFile)
-    const reader = res.body.getReader()
-
-    try {
-      while (true) {
-        if (signal.aborted) {
-          throw new Error('Download cancelled by user')
-        }
-        const { done, value } = await reader.read()
-        if (done) break
-
-        fileStream.write(value)
-        downloadedBytes += value.length
-
-        const now = Date.now()
-        if (now - lastTime > 300 || downloadedBytes === totalBytes) {
-          const timeDiff = (now - lastTime) / 1000
-          const bytesDiff = downloadedBytes - lastBytes
-          const bytesPerSec = timeDiff > 0 ? bytesDiff / timeDiff : 0
-          const speedMBs = (bytesPerSec / (1024 * 1024)).toFixed(1)
-          const isArchive = isZip || isTgz
-          const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * (isArchive ? 90 : 100)) : (isArchive ? 45 : 90)
-
-          onProgress?.({
-            type: 'binary',
-            name: 'Ollama Backend',
-            completed: downloadedBytes,
-            total: totalBytes,
-            percent,
-            speed: `${speedMBs} MB/s`
-          })
-
-          lastTime = now
-          lastBytes = downloadedBytes
-        }
-      }
-    } finally {
-      fileStream.end()
-    }
-
-    await new Promise<void>((resolve) => fileStream.on('finish', () => resolve()))
 
     const versionDir = getVersionDir(targetVersion)
     if (fs.existsSync(versionDir)) {
@@ -406,36 +528,58 @@ export async function downloadOllamaBinary(
     }
     fs.mkdirSync(versionDir, { recursive: true })
 
-    if (isZip) {
+    // Reserve the last 10% for extraction, and split the rest across the parts.
+    const span = 90 / parts.length
+    let downloadedBytes = 0
+
+    for (const [index, part] of parts.entries()) {
+      const url = getBinaryDownloadUrl(targetVersion, part.variant)
+      const ext = url.endsWith('.zip')
+        ? 'zip'
+        : url.endsWith('.tar.zst')
+          ? 'tar.zst'
+          : url.endsWith('.tgz') || url.endsWith('.tar.gz')
+            ? 'tgz'
+            : 'bin'
+      const tempFile = path.join(engineDir, `ollama_download.tmp.${part.variant}.${ext}`)
+      tempFiles.push(tempFile)
+
+      const result = await downloadArchive(
+        url,
+        tempFile,
+        part.label,
+        { from: index * span, to: (index + 1) * span },
+        signal,
+        onProgress
+      )
+
+      if (!result.ok) {
+        if (part.required) {
+          throw new Error(`Failed to download Ollama binary: HTTP ${result.status}`)
+        }
+        // A missing overlay is not fatal — Ollama still runs, just on CPU.
+        console.warn(
+          `Ollama ${part.variant} runtime unavailable for ${targetVersion} (HTTP ${result.status}); continuing without GPU acceleration for AMD.`
+        )
+        continue
+      }
+
+      downloadedBytes += result.bytes
+
       onProgress?.({
         type: 'binary',
-        name: 'Ollama Backend',
-        completed: downloadedBytes,
-        total: downloadedBytes,
-        percent: 95,
-        speed: 'Extracting zip archive...'
+        name: part.label,
+        completed: result.bytes,
+        total: result.bytes,
+        percent: Math.round((index + 1) * span),
+        speed: `Extracting ${part.label}...`
       })
 
-      const zip = new AdmZip(tempFile)
-      zip.extractAllTo(versionDir, true)
-    } else if (isTgz) {
-      onProgress?.({
-        type: 'binary',
-        name: 'Ollama Backend',
-        completed: downloadedBytes,
-        total: downloadedBytes,
-        percent: 95,
-        speed: 'Extracting tgz archive...'
-      })
-
-      execSync(`tar -xzf "${tempFile}" -C "${versionDir}"`)
-    } else {
-      const finalDest = path.join(versionDir, getBinaryFilename())
-      fs.copyFileSync(tempFile, finalDest)
+      await extractArchive(tempFile, versionDir)
     }
 
-    if (fs.existsSync(tempFile)) {
-      fs.unlinkSync(tempFile)
+    for (const tempFile of tempFiles) {
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile)
     }
 
     const targetPath = getBinaryPath()
@@ -475,8 +619,10 @@ export async function downloadOllamaBinary(
 
     return targetPath
   } catch (err: any) {
-    if (fs.existsSync(tempFile)) {
-      try { fs.unlinkSync(tempFile) } catch {}
+    for (const tempFile of tempFiles) {
+      if (fs.existsSync(tempFile)) {
+        try { fs.unlinkSync(tempFile) } catch {}
+      }
     }
     throw err
   } finally {

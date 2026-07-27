@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cancelOllamaDownload, getBinaryDownloadUrl, getPlatformBinaryKey, getBinaryPath, isBinaryInstalled, getSystemBinaryPath, stopSystemdOllama } from './ollama-binary-manager'
+import { cancelOllamaDownload, getBinaryDownloadUrl, getPlatformBinaryKey, getBinaryPath, isBinaryInstalled, getSystemBinaryPath, stopSystemdOllama, supportsRocmVariant, usesZstdAssets } from './ollama-binary-manager'
 
 describe('ollama binary manager', () => {
   it('returns a valid platform binary key', () => {
@@ -10,7 +10,33 @@ describe('ollama binary manager', () => {
   it('generates correct release download URLs with asset extensions', () => {
     const url = getBinaryDownloadUrl('v0.5.12')
     expect(url).toMatch(/^https:\/\/github\.com\/ollama\/ollama\/releases\/download\/v0\.5\.12\/.+/)
-    expect(url).toMatch(/\.(zip|tgz)$/)
+    expect(url).toMatch(/\.(zip|tgz|tar\.zst)$/)
+  })
+
+  it('knows which releases publish zstd tarballs', () => {
+    expect(usesZstdAssets('v0.13.0')).toBe(false)
+    expect(usesZstdAssets('v0.5.12')).toBe(false)
+    expect(usesZstdAssets('v0.14.0')).toBe(true)
+    expect(usesZstdAssets('v0.32.4')).toBe(true)
+    expect(usesZstdAssets('v1.0.0')).toBe(true)
+  })
+
+  it('uses the gzip tarball for pre-0.14 Linux releases and zstd after', () => {
+    if (!getPlatformBinaryKey().startsWith('linux')) return
+    expect(getBinaryDownloadUrl('v0.13.0')).toMatch(/\.tgz$/)
+    expect(getBinaryDownloadUrl('v0.14.0')).toMatch(/\.tar\.zst$/)
+  })
+
+  it('requests the rocm overlay asset only where upstream publishes one', () => {
+    if (supportsRocmVariant()) {
+      expect(getBinaryDownloadUrl('v0.32.4', 'rocm')).toContain('-rocm.')
+    } else {
+      expect(() => getBinaryDownloadUrl('v0.32.4', 'rocm')).toThrow(/ROCm/i)
+    }
+  })
+
+  it('keeps the base asset free of the rocm suffix', () => {
+    expect(getBinaryDownloadUrl('v0.32.4')).not.toContain('-rocm')
   })
 
   it('handles cancellation status gracefully when no active download exists', () => {

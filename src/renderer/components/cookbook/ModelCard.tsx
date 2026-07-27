@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
-import { getCompatibility } from '../../../shared/compatibility'
+import { getCompatibility, type RuntimeVramUsage } from '../../../shared/compatibility'
 import { normalizeOllamaTag } from '../../../shared/ollama-tags'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -31,6 +31,8 @@ import {
 interface ModelCardProps {
   model: CookbookModel
   systemInfo: SystemInfoFull | null
+  /** Live VRAM occupancy, so the badge reflects the GPU's current state. */
+  vramUsage?: RuntimeVramUsage | null
   isInstalled: boolean
   installedOllamaTag?: string
   isOllamaOnline: boolean
@@ -39,6 +41,7 @@ interface ModelCardProps {
 export const ModelCard: React.FC<ModelCardProps> = ({
   model,
   systemInfo,
+  vramUsage,
   isInstalled,
   installedOllamaTag,
   isOllamaOnline
@@ -104,7 +107,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     Boolean(pullProgress) && pullProgress?.status !== 'cancelled' && pullProgress?.status !== 'error'
   const showOllamaProgress = isCurrentPulling || isPullCancelled || (isPullErrored && Boolean(pullProgress))
 
-  const comp = getCompatibility(systemInfo, model)
+  const comp = getCompatibility(systemInfo, model, vramUsage)
 
   const isEngineActive = useMemo(() => {
     if (!model.ggufFilename || !engineState.loadedModel) return false

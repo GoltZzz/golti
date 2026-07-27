@@ -19,7 +19,8 @@ import type {
   SearchRuntimeState,
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
-  OllamaState
+  OllamaState,
+  OllamaRuntimeInfo
 } from '../shared/types'
 
 const api = {
@@ -145,6 +146,11 @@ const api = {
   startOllamaProcess: () => ipcRenderer.invoke('ollama:start'),
   stopOllamaProcess: () => ipcRenderer.invoke('ollama:stop'),
   getOllamaLogs: (): Promise<string[]> => ipcRenderer.invoke('ollama:logs'),
+  listOllamaGpuDevices: () =>
+    ipcRenderer.invoke('ollama:list-devices') as Promise<
+      { id: string; name: string; totalMiB: number | null }[]
+    >,
+  getOllamaRuntime: (): Promise<OllamaRuntimeInfo | null> => ipcRenderer.invoke('ollama:runtime'),
   onOllamaProgress: (callback: (data: any) => void) => {
     const listener = (_: any, data: any) => callback(data)
     ipcRenderer.on('ollama:download-progress', listener)

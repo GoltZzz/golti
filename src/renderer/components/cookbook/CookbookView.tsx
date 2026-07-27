@@ -9,7 +9,7 @@ import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
 import { InstalledModelCard } from './InstalledModelCard'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
-import { getCompatibility } from '../../../shared/compatibility'
+import { getCompatibility, getRuntimeVramUsage } from '../../../shared/compatibility'
 import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
 import { CookbookModel, ModelSource } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
@@ -18,6 +18,8 @@ export const CookbookView: React.FC = () => {
   const [showManualGuide, setShowManualGuide] = React.useState(false)
   const {
     systemInfo,
+    ollamaRuntime,
+    fetchOllamaRuntime,
     loadingInfo,
     scanError,
     ollamaOnline,
@@ -50,6 +52,17 @@ export const CookbookView: React.FC = () => {
       unsubPull()
     }
   }, [])
+
+  // Models load and unload while the cookbook is open, so keep the VRAM reading
+  // fresh — the compatibility badges below are scored against it.
+  useEffect(() => {
+    if (ollamaState.status !== 'running') return
+    fetchOllamaRuntime()
+    const timer = setInterval(fetchOllamaRuntime, 5000)
+    return () => clearInterval(timer)
+  }, [ollamaState.status, fetchOllamaRuntime])
+
+  const vramUsage = React.useMemo(() => getRuntimeVramUsage(ollamaRuntime), [ollamaRuntime])
 
   const isEngineDownloaded = (model: CookbookModel) =>
     !!(model.ggufFilename && localModels.some((lm) => lm.filename === model.ggufFilename))
@@ -99,7 +112,7 @@ export const CookbookView: React.FC = () => {
 
     // 7. Compatibility Filter
     if (filters.compatibleOnly && systemInfo) {
-      const comp = getCompatibility(systemInfo, model)
+      const comp = getCompatibility(systemInfo, model, vramUsage)
       if (comp === 'wont_fit') return false
     }
 
@@ -127,8 +140,8 @@ export const CookbookView: React.FC = () => {
     }
 
     if (sortBy === 'compatibility') {
-      const aComp = getCompatibility(systemInfo, a)
-      const bComp = getCompatibility(systemInfo, b)
+      const aComp = getCompatibility(systemInfo, a, vramUsage)
+      const bComp = getCompatibility(systemInfo, b, vramUsage)
 
       const weights = { great: 4, runs: 3, tight: 2, wont_fit: 1 }
       const aWeight = weights[aComp] || 0
@@ -202,6 +215,7 @@ export const CookbookView: React.FC = () => {
         {/* Hardware scan summary */}
         <HardwareCard
           systemInfo={systemInfo}
+          ollamaRuntime={ollamaRuntime}
           loading={loadingInfo}
           scanError={scanError}
           onRescan={scanHardware}
@@ -363,6 +377,7 @@ export const CookbookView: React.FC = () => {
                   key={model.id}
                   model={model}
                   systemInfo={systemInfo}
+                  vramUsage={vramUsage}
                   isInstalled={isOllamaTagInstalled(model.ollamaTag, installedModels)}
                   installedOllamaTag={findInstalledOllamaTag(model.ollamaTag, installedModels)}
                   isOllamaOnline={ollamaOnline}

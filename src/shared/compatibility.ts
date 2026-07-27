@@ -1,6 +1,30 @@
-import { SystemInfoFull, CookbookModel, ModelCompatibility } from './types'
+import { SystemInfoFull, CookbookModel, ModelCompatibility, OllamaRuntimeInfo } from './types'
 
-export function getCompatibility(system: SystemInfoFull | null, model: CookbookModel): ModelCompatibility {
+const BYTES_PER_GB = 1024 ** 3
+
+/**
+ * Live GPU occupancy, folded into the capacity maths below.
+ *
+ * Without this the cookbook rates every model against an *idle* GPU, so a card
+ * already holding a 7B model still advertises its full VRAM. `/api/ps` tells us
+ * what is actually resident, which is the difference between a predicted fit
+ * and a real one.
+ */
+export interface RuntimeVramUsage {
+  /** VRAM currently occupied by loaded models, in GB. */
+  usedGB: number
+}
+
+export function getRuntimeVramUsage(runtime: OllamaRuntimeInfo | null): RuntimeVramUsage | null {
+  if (!runtime) return null
+  return { usedGB: runtime.totalVramBytes / BYTES_PER_GB }
+}
+
+export function getCompatibility(
+  system: SystemInfoFull | null,
+  model: CookbookModel,
+  runtimeVram?: RuntimeVramUsage | null
+): ModelCompatibility {
   if (!system) return 'runs'
 
   // Calculate system total capacity limit for LLMs
@@ -10,8 +34,10 @@ export function getCompatibility(system: SystemInfoFull | null, model: CookbookM
     // Apple Silicon unified memory (macOS restricts single allocations to ~75% total RAM by default)
     totalCapacityLimit = system.ram.totalGB * 0.75
   } else {
-    // Windows/Linux/Intel Mac
-    const vram = system.gpu?.vramGB || 0
+    // Windows/Linux/Intel Mac. Anything a resident model already holds is not
+    // available to the model being rated, so score against what is left.
+    const totalVram = system.gpu?.vramGB || 0
+    const vram = Math.max(0, totalVram - (runtimeVram?.usedGB || 0))
     if (vram > 0) {
       if (vram >= model.ramRequiredGB) {
         // Can fit completely in VRAM -> GPU inference

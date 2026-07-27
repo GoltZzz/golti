@@ -44,6 +44,36 @@ export interface OllamaState {
   host?: string
   version?: string
   logs?: string[]
+  /** The `ollamaDevice` choice the running daemon was actually spawned with. */
+  gpuDevice?: string
+  /**
+   * True when Ollama is running outside Golti, so our GPU environment was never
+   * applied and `gpuDevice` reflects only the stored preference.
+   */
+  gpuSettingIgnored?: boolean
+}
+
+/** One model Ollama currently holds resident, as reported by `/api/ps`. */
+export interface OllamaLoadedModel {
+  name: string
+  /** Total resident size in bytes (GPU + system RAM). */
+  sizeBytes: number
+  /** Portion of `sizeBytes` actually resident in VRAM. */
+  vramBytes: number
+  /** `vramBytes` as a percentage of `sizeBytes`, rounded. */
+  gpuPercent: number
+  placement: 'gpu' | 'partial' | 'cpu'
+  expiresAt?: string
+}
+
+/**
+ * Measured runtime state of the Ollama daemon. Unlike our VRAM probes and layer
+ * heuristics, these numbers are what Ollama reports *after* loading a model.
+ */
+export interface OllamaRuntimeInfo {
+  loaded: OllamaLoadedModel[]
+  totalSizeBytes: number
+  totalVramBytes: number
 }
 
 export type EngineDownloadStatus =
@@ -314,6 +344,14 @@ export interface StreamChunkPayload {
 export interface ChatRequestOptions {
   signal?: AbortSignal
   generationSettings?: GenerationSettings
+  /**
+   * Ollama-only runtime overrides. Other providers ignore this. Kept separate
+   * from `generationSettings` because it controls placement, not sampling.
+   */
+  ollama?: {
+    /** Layers to offload to GPU: 0 = CPU-only, N = exact. Omitted means Ollama decides. */
+    numGpu?: number
+  }
 }
 
 export type ProviderStreamEvent =
@@ -490,6 +528,18 @@ export interface Settings {
   engineGpuLayers: number
   /** GPU offload target: 'auto' (pick discrete GPU), 'cpu' (no offload), or a device id like 'Vulkan1'. */
   engineDevice?: string
+  /**
+   * Which GPU `ollama serve` may use: 'auto' (let Ollama choose), 'cpu' (force
+   * CPU), or a vendor device index like '0'. Applied as environment variables at
+   * spawn time, so it only affects an Ollama that Golti started.
+   */
+  ollamaDevice?: string
+  /**
+   * Layers Ollama should offload per request (`num_gpu`). Negative = Auto (let
+   * Ollama size it), 0 = CPU-only, N = exact. Unlike `ollamaDevice` this needs
+   * no daemon restart, since it travels with each request.
+   */
+  ollamaGpuLayers?: number
   webSearch?: WebSearchSettings
   /** When true, composer Web Search toggle is on (Auto intent). */
   webSearchEnabled?: boolean

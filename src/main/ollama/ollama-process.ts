@@ -8,26 +8,16 @@ import {
   stopSystemdOllama
 } from './ollama-binary-manager'
 import { mainWindow } from '../index'
+import { buildOllamaGpuEnv } from './ollama-gpu'
+import { detectGpu } from '../engine/gpu-detect'
+import type { OllamaState } from '../../shared/types'
 
 let ollamaProcess: ChildProcess | null = null
 const logBuffer: string[] = []
 const MAX_LOG_LINES = 200
 
-export interface OllamaState {
-  status: 'not-installed' | 'stopped' | 'starting' | 'running' | 'error'
-  error?: string
-  binaryPath?: string | null
-  port?: number
-  pid?: number | null
-  isSystemProcess?: boolean
-  /** systemd unit owning the process, when Ollama is installed as a Linux service. */
-  serviceUnit?: string
-  /** True when stopping the owning unit requires root. */
-  needsPrivilegedStop?: boolean
-  host?: string
-  version?: string
-  logs?: string[]
-}
+// Single source of truth lives in shared/types so the renderer sees the same shape.
+export type { OllamaState } from '../../shared/types'
 
 // Resolved lazily by getOllamaState(): the disk probes below need
 // `app.getPath('userData')`, which is unavailable at module import time.
@@ -128,9 +118,10 @@ function broadcastState(state: OllamaState) {
   }
 }
 
-export async function startOllama(port = 11434): Promise<boolean> {
+export async function startOllama(port = 11434, device?: string): Promise<boolean> {
   let binaryPath = getBinaryPath()
   let sysBinary = getSystemBinaryPath()
+  const deviceChoice = device || 'auto'
 
   // Check if system Ollama is already running on port
   const health = await checkOllamaHealth(port)
@@ -141,6 +132,12 @@ export async function startOllama(port = 11434): Promise<boolean> {
         ? `Detected Ollama running as systemd unit ${procInfo.serviceUnit} on port ${port} (v${health.version || 'unknown'})`
         : `Detected existing Ollama service running on port ${port} (v${health.version || 'unknown'})`
     )
+    // The daemon was started elsewhere, so it never inherited our GPU variables.
+    if (deviceChoice !== 'auto') {
+      appendLog(
+        `GPU preference "${deviceChoice}" not applied: Ollama was started outside Golti. Stop it and start it here for the setting to take effect.`
+      )
+    }
     broadcastState({
       status: 'running',
       port,
@@ -150,7 +147,9 @@ export async function startOllama(port = 11434): Promise<boolean> {
       pid: procInfo.pid,
       serviceUnit: procInfo.serviceUnit,
       needsPrivilegedStop: procInfo.needsPrivilegedStop,
-      binaryPath: procInfo.binaryPath || sysBinary || binaryPath
+      binaryPath: procInfo.binaryPath || sysBinary || binaryPath,
+      gpuDevice: deviceChoice,
+      gpuSettingIgnored: deviceChoice !== 'auto'
     })
     return true
   }
@@ -169,14 +168,31 @@ export async function startOllama(port = 11434): Promise<boolean> {
     return true
   }
 
-  broadcastState({ ...currentState, status: 'starting', port, host: `http://127.0.0.1:${port}` })
+  broadcastState({
+    ...currentState,
+    status: 'starting',
+    port,
+    host: `http://127.0.0.1:${port}`,
+    gpuDevice: deviceChoice,
+    gpuSettingIgnored: false
+  })
   appendLog(`Starting Ollama server binary: ${binaryPath} on port ${port}`)
+
+  const gpuEnv = buildOllamaGpuEnv(deviceChoice, await detectGpu())
+  if (Object.keys(gpuEnv).length > 0) {
+    appendLog(
+      `GPU device "${deviceChoice}" → ${Object.entries(gpuEnv)
+        .map(([k, v]) => `${k}=${v || '(none)'}`)
+        .join(' ')}`
+    )
+  }
 
   try {
     ollamaProcess = spawn(binaryPath, ['serve'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        ...gpuEnv,
         OLLAMA_HOST: `127.0.0.1:${port}`,
         OLLAMA_ORIGINS: '*'
       }

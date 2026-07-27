@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { SystemInfoFull } from '../../../shared/types'
+import { SystemInfoFull, OllamaRuntimeInfo } from '../../../shared/types'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { RamBreakdownModal } from './RamBreakdownModal'
 import {
@@ -17,6 +17,8 @@ import {
 
 interface HardwareCardProps {
   systemInfo: SystemInfoFull | null
+  /** Measured VRAM occupancy from Ollama's /api/ps; null when unknown. */
+  ollamaRuntime?: OllamaRuntimeInfo | null
   loading: boolean
   scanError: string | null
   onRescan: () => void
@@ -43,6 +45,7 @@ const getRamBarColor = (pct: number) => {
 
 export const HardwareCard: React.FC<HardwareCardProps> = ({
   systemInfo,
+  ollamaRuntime,
   loading,
   scanError,
   onRescan
@@ -110,6 +113,13 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
 
   const { cpu, ram, gpu, disk, thermals, platform, arch } = systemInfo
   const ramUsedGB = (ram.totalGB * (ram.usedPercent / 100)).toFixed(1)
+
+  // null means "we could not read it", which is shown as no bar at all rather
+  // than a misleading 0 GB.
+  const vramUsedGB = ollamaRuntime ? ollamaRuntime.totalVramBytes / 1024 ** 3 : null
+  const vramUsedPercent =
+    vramUsedGB !== null && gpu.vramGB ? Math.min(100, Math.round((vramUsedGB / gpu.vramGB) * 100)) : 0
+  const loadedOnGpu = (ollamaRuntime?.loaded || []).filter((m) => m.vramBytes > 0)
 
   const shortCpuModel = cpu.model
     ? cpu.model.replace(/\(R\)|\(TM\)|Processor|CPU/gi, '').trim()
@@ -221,6 +231,38 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                   <span>System Shared Memory</span>
                 )}
               </div>
+
+              {/* Measured VRAM occupancy from Ollama, not an estimate. */}
+              {vramUsedGB !== null && gpu.vramGB ? (
+                <>
+                  <div className="progress-bar-bg ram-bar" style={{ marginTop: '8px' }}>
+                    <div
+                      className="progress-bar-fill"
+                      style={{
+                        width: `${vramUsedPercent}%`,
+                        backgroundColor: getRamBarColor(vramUsedPercent)
+                      }}
+                    />
+                  </div>
+                  <div className="sub-specs" style={{ marginTop: '6px', fontSize: '11px' }}>
+                    <span>
+                      In use: <span className="spec-num">{vramUsedGB.toFixed(1)} GB</span>
+                    </span>
+                    <span className="spec-dot">•</span>
+                    <span>
+                      Free: <span className="spec-num">{Math.max(0, gpu.vramGB - vramUsedGB).toFixed(1)} GB</span>
+                    </span>
+                  </div>
+                  {loadedOnGpu.length > 0 && (
+                    <div className="sub-specs" style={{ marginTop: '4px', fontSize: '11px' }}>
+                      <span title={loadedOnGpu.map((m) => `${m.name} — ${m.gpuPercent}% on GPU`).join('\n')}>
+                        {loadedOnGpu.length} model{loadedOnGpu.length > 1 ? 's' : ''} resident
+                        {loadedOnGpu.some((m) => m.placement === 'partial') ? ' (partly on CPU)' : ''}
+                      </span>
+                    </div>
+                  )}
+                </>
+              ) : null}
             </div>
           </div>
 

@@ -61,7 +61,10 @@ export async function* streamOllamaChat(
           temperature: gen.temperature,
           top_p: gen.topP,
           num_predict: gen.maxTokens,
-          stop: gen.stopSequences
+          stop: gen.stopSequences,
+          // Omit entirely on Auto: sending null/-1 would override Ollama's own
+          // sizing rather than defer to it.
+          ...(options?.ollama?.numGpu !== undefined ? { num_gpu: options.ollama.numGpu } : {})
         }
       }),
       signal: options?.signal

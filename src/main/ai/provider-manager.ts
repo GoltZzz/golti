@@ -4,7 +4,7 @@ import type {
   ModelInfo,
   ProviderStreamEvent
 } from '../../shared/types'
-import { dbProviders } from '../db/database'
+import { dbProviders, dbSettings } from '../db/database'
 import { fetchOllamaModels, streamOllamaChat } from './providers/ollama'
 import { fetchOpenAIModels, streamOpenAIChat } from './providers/openai'
 import { fetchAnthropicModels, streamAnthropicChat } from './providers/anthropic'
@@ -73,6 +73,20 @@ function guessContextWindow(modelName: string): number {
   return 8192
 }
 
+/**
+ * Folds the persisted `ollamaGpuLayers` preference into a request, unless the
+ * caller already specified one. A negative stored value means "Auto", which we
+ * express by sending no `num_gpu` at all.
+ */
+export function withOllamaOffload(options?: ChatRequestOptions): ChatRequestOptions | undefined {
+  if (options?.ollama?.numGpu !== undefined) return options
+
+  const layers = dbSettings.get().ollamaGpuLayers
+  if (typeof layers !== 'number' || layers < 0) return options
+
+  return { ...options, ollama: { ...options?.ollama, numGpu: layers } }
+}
+
 export async function* streamChatResponse(
   providerId: string,
   model: string,
@@ -88,7 +102,7 @@ export async function* streamChatResponse(
   }
 
   if (provider.type === 'ollama') {
-    yield* streamOllamaChat(provider, model, messages, systemPrompt, options)
+    yield* streamOllamaChat(provider, model, messages, systemPrompt, withOllamaOffload(options))
   } else if (provider.type === 'openai') {
     yield* streamOpenAIChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'anthropic') {

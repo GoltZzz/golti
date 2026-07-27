@@ -43,6 +43,8 @@ const defaultSettings: Settings = {
   fontSize: 'medium',
   sidebarCollapsed: false,
   ollamaAutoDetect: true,
+  ollamaDevice: 'auto',
+  ollamaGpuLayers: -1,
   systemPrompt:
     'You are Golti, an intelligent, helpful AI personal assistant. Note: Golti is your name; do not confuse general terms or technologies (such as the Go/Golang programming language) with the app.',
   engineEnabled: true,

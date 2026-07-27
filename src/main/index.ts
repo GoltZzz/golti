@@ -67,6 +67,8 @@ import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
 import { cancelOllamaDownload, downloadOllamaBinary } from './ollama/ollama-binary-manager'
 import { getOllamaState, startOllama, stopOllama, getOllamaLogs } from './ollama/ollama-process'
+import { listOllamaGpuDevices } from './ollama/ollama-gpu'
+import { fetchOllamaRuntime } from './ollama/ollama-ps'
 
 const execAsync = promisify(exec)
 
@@ -996,7 +998,18 @@ function setupIpcHandlers(): void {
   })
 
   ipcMain.handle('ollama:start', async () => {
-    return await startOllama()
+    const settings = dbSettings.get()
+    return await startOllama(undefined, settings.ollamaDevice)
+  })
+
+  ipcMain.handle('ollama:list-devices', async () => {
+    return await listOllamaGpuDevices()
+  })
+
+  ipcMain.handle('ollama:runtime', async () => {
+    const state = getOllamaState()
+    if (state.status !== 'running') return null
+    return await fetchOllamaRuntime(state.port || 11434)
   })
 
   ipcMain.handle('ollama:stop', async () => {
