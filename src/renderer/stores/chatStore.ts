@@ -18,6 +18,7 @@ import {
   getActiveLeaf,
   getBranchPath
 } from '../../shared/chat-utils'
+import { useModelCapabilityStore } from './modelCapabilityStore'
 import {
   createPlanningProgress,
   seedPendingStepsFromPlan,
@@ -84,6 +85,7 @@ interface ChatState {
   sendMessage: (content?: string, options?: { forceWebSearch?: boolean }) => Promise<void>
   stopGeneration: () => Promise<void>
   regenerate: (assistantMessageId: string) => Promise<void>
+  continueMessage: (assistantMessageId: string) => Promise<void>
   editAndResend: (userMessageId: string, content: string) => Promise<void>
   selectBranch: (messageId: string) => Promise<void>
   fetchModels: () => Promise<void>
@@ -195,7 +197,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   searchSetupError: null,
   searchStatusByMessageId: {},
   researchProgressByMessageId: {},
-  generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 },
+  generationSettings: { temperature: 0.7, topP: 0.9 },
   draft: '',
   draftUndoStack: [],
   draftRedoStack: [],
@@ -260,6 +262,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         get().conversations.find((c) => c.id === id) || (await window.goltiAPI.getConversation(id))
       if (seq !== selectSeq || get().currentConversationId !== id) return
 
+      const markReasoning = useModelCapabilityStore.getState().markReasoning
+      for (const m of msgs) {
+        if (m.reasoningContent) markReasoning(m.model)
+      }
+
       const visible = recomputeVisible(msgs, conv?.activeLeafId)
       set({
         messages: msgs,
@@ -267,7 +274,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         generationSettings: {
           temperature: 0.7,
           topP: 0.9,
-          maxTokens: 2048,
           ...conv?.generationSettings
         },
         isLoadingConversation: false
@@ -328,7 +334,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: [newConv, ...state.conversations.filter((c) => c.id !== newConv.id)],
       currentConversationId: newConv.id,
       isLoadingConversation: false,
-      generationSettings: { temperature: 0.7, topP: 0.9, maxTokens: 2048 }
+      generationSettings: { temperature: 0.7, topP: 0.9 }
     }))
     selectSeq += 1
 
@@ -616,6 +622,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
+  continueMessage: async (assistantMessageId: string) => {
+    const convId = get().currentConversationId
+    if (!convId || get().isGenerating) return
+    const selected = get().selectedModel
+    const settings = await window.goltiAPI.getSettings()
+    const conv = get().conversations.find((c) => c.id === convId)
+
+    set((state) => ({
+      isGenerating: true,
+      messages: state.messages.map((m) =>
+        m.id === assistantMessageId ? { ...m, finishReason: undefined, isStreaming: true } : m
+      )
+    }))
+
+    const result = await window.goltiAPI.continueMessage({
+      conversationId: convId,
+      content: '',
+      model: selected?.name || conv?.model || 'llama3:latest',
+      providerId: selected?.providerId || conv?.providerId || 'ollama-local',
+      systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
+      messageId: assistantMessageId,
+      composerMode: get().composerMode,
+      generationSettings: get().generationSettings
+    })
+
+    if (get().currentConversationId !== convId) return
+    set((state) => ({
+      activeGenerationId: result.generationId,
+      isGenerating: true,
+      visibleMessages: recomputeVisible(state.messages, assistantMessageId)
+    }))
+  },
+
   editAndResend: async (userMessageId: string, content: string) => {
     const convId = get().currentConversationId
     if (!convId || get().isGenerating) return
@@ -751,7 +790,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         artifact,
         searchStatus,
         researchPlan,
-        researchStep
+        researchStep,
+        finishReason
       } = chunk
 
       // Maintain the cross-conversation generating set for the sidebar indicator.
@@ -774,6 +814,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       if (get().currentConversationId !== conversationId) return
 
+      if (chunkReasoningContent || thinkingDelta) {
+        const streamingMsg = get().messages.find((m) => m.id === messageId)
+        useModelCapabilityStore
+          .getState()
+          .markReasoning(streamingMsg?.model || get().selectedModel?.name)
+      }
+
       set((state) => {
         const messages = state.messages.map((msg) => {
           if (msg.id === messageId) {
@@ -789,7 +836,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               isStreaming: !done,
               error: error || msg.error,
               tokensIn: usage?.promptTokens ?? msg.tokensIn,
-              tokensOut: usage?.completionTokens ?? msg.tokensOut
+              tokensOut: usage?.completionTokens ?? msg.tokensOut,
+              finishReason: done ? finishReason : undefined
             }
           }
           return msg

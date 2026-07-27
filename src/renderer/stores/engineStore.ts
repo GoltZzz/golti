@@ -24,6 +24,7 @@ interface EngineStore {
 
   fetchStatus: () => Promise<void>
   installEngine: () => Promise<void>
+  reinstallEngine: () => Promise<void>
   startEngine: () => Promise<void>
   stopEngine: () => Promise<void>
   downloadModel: (url: string, filename: string) => Promise<void>
@@ -80,7 +81,35 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
     try {
       await window.goltiAPI.installEngine()
       set({ isInstallingBinary: false, binaryDownloadProgress: null })
-      await get().startEngine()
+      try {
+        await get().startEngine()
+      } catch (e) {
+        // startEngine will set state.error if no model or startup fails
+      }
+    } catch (err: any) {
+      set({
+        isInstallingBinary: false,
+        binaryDownloadProgress: null,
+        error: err.message || String(err)
+      })
+    }
+  },
+
+  reinstallEngine: async () => {
+    set({ isInstallingBinary: true, binaryDownloadProgress: null, error: null })
+    try {
+      try {
+        await get().stopEngine()
+      } catch {}
+      const fn = window.goltiAPI.reinstallEngine || window.goltiAPI.installEngine
+      await fn()
+      set({ isInstallingBinary: false, binaryDownloadProgress: null })
+      await get().fetchStatus()
+      try {
+        await get().startEngine()
+      } catch (e) {
+        // startEngine will set state.error if no model or startup fails
+      }
     } catch (err: any) {
       set({
         isInstallingBinary: false,
@@ -379,6 +408,9 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
 
     window.goltiAPI.onEngineStatusChange((state: EngineState) => {
       set({ engineState: state })
+      import('./settingsStore').then(({ useSettingsStore }) => {
+        useSettingsStore.getState().fetchProviders()
+      }).catch(() => {})
     })
 
     get().fetchStatus()

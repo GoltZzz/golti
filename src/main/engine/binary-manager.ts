@@ -327,3 +327,22 @@ export async function downloadEngineBinary(
     throw err
   }
 }
+
+export function deleteEngineBinary(): boolean {
+  try {
+    const versionDir = getVersionDir()
+    if (fs.existsSync(versionDir)) {
+      fs.rmSync(versionDir, { recursive: true, force: true })
+    }
+    const engineDir = getEngineDir()
+    const tempFile = path.join(engineDir, 'binary_download.tmp')
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile)
+    }
+    return true
+  } catch (err) {
+    console.error('[GoltiEngine] Failed to delete engine binary:', err)
+    return false
+  }
+}
+

@@ -134,6 +134,10 @@ const api = {
     payload: SendMessagePayload & { messageId: string }
   ): Promise<{ assistantMsgId: string; generationId: string }> =>
     ipcRenderer.invoke('ai:chat:regenerate', payload),
+  continueMessage: (
+    payload: SendMessagePayload & { messageId: string }
+  ): Promise<{ assistantMsgId: string; generationId: string }> =>
+    ipcRenderer.invoke('ai:chat:continue', payload),
   onStreamChunk: (callback: (chunk: StreamChunkPayload) => void) => {
     const listener = (_: unknown, chunk: StreamChunkPayload) => callback(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)
@@ -181,6 +185,7 @@ const api = {
   // Golti Engine
   getEngineStatus: () => ipcRenderer.invoke('engine:status'),
   installEngine: () => ipcRenderer.invoke('engine:install'),
+  reinstallEngine: () => ipcRenderer.invoke('engine:reinstall'),
   startEngine: () => ipcRenderer.invoke('engine:start'),
   stopEngine: () => ipcRenderer.invoke('engine:stop'),
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
@@ -211,6 +216,11 @@ const api = {
     const listener = (_: any, state: any) => callback(state)
     ipcRenderer.on('engine:status-change', listener)
     return () => ipcRenderer.removeListener('engine:status-change', listener)
+  },
+  onProvidersUpdated: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('providers:updated', listener)
+    return () => ipcRenderer.removeListener('providers:updated', listener)
   }
 }
 

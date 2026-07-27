@@ -1,11 +1,14 @@
 import path from 'path'
 import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
 import { listLocalModels, getEngineState, loadModelInEngine, checkEngineHealth } from '../../engine'
+import { estimateTokens } from '../../../shared/chat-utils'
+import { resolveLocalMaxOutputTokens } from '../../../shared/output-tokens'
 import {
   applyGenerationDefaults,
   doneEvent,
   readLineStream,
   textEvent,
+  thinkingEvent,
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
@@ -91,6 +94,14 @@ export async function* streamGoltiEngineChat(
     formattedMessages.unshift({ role: 'system', content: systemPrompt })
   }
 
+  const contextWindow = getEngineState().contextSize
+  const maxOutputTokens = resolveLocalMaxOutputTokens({
+    modelName: model,
+    requested: options?.generationSettings?.maxTokens,
+    contextWindow,
+    promptTokens: estimateTokens(formattedMessages.map((m) => m.content).join('\n'))
+  })
+
   let response: Response
   try {
     response = await fetch(`${endpoint}/v1/chat/completions`, {
@@ -102,7 +113,7 @@ export async function* streamGoltiEngineChat(
         stream: true,
         temperature: gen.temperature,
         top_p: gen.topP,
-        max_tokens: gen.maxTokens,
+        max_tokens: maxOutputTokens,
         stop: gen.stopSequences
       }),
       signal: options?.signal
@@ -127,6 +138,9 @@ export async function* streamGoltiEngineChat(
     if (!trimmed.startsWith('data: ')) continue
     try {
       const parsed = JSON.parse(trimmed.slice(6))
+      const reasoningDelta =
+        parsed.choices?.[0]?.delta?.reasoning_content || parsed.choices?.[0]?.delta?.reasoning
+      if (reasoningDelta) yield thinkingEvent(reasoningDelta)
       const delta = parsed.choices?.[0]?.delta?.content
       if (delta) yield textEvent(delta)
       if (parsed.usage) {

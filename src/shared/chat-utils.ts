@@ -7,6 +7,56 @@ import type {
   TokenBudget,
   TokenUsage
 } from './types'
+import { MODEL_CATALOG } from './model-catalog'
+
+export interface EngineMemoryErrorDetails {
+  isMemoryError: boolean
+  modelName: string
+  ramRequiredGB: number
+  ramRecommendedGB: number
+  rawError?: string
+}
+
+export function parseEngineMemoryError(errorText?: string, modelId?: string): EngineMemoryErrorDetails | null {
+  if (!errorText) return null
+  const lower = errorText.toLowerCase()
+
+  const isMemFailure =
+    lower.includes('llama-server failed to start') ||
+    lower.includes('health check timed out') ||
+    lower.includes('out of memory') ||
+    lower.includes('failed to allocate') ||
+    lower.includes('erroroutofdevicememory') ||
+    lower.includes('bad_alloc') ||
+    lower.includes('cannot allocate memory')
+
+  if (!isMemFailure) return null
+
+  // Match model from MODEL_CATALOG if modelId provided
+  const cleanId = modelId ? modelId.toLowerCase().replace(/\.gguf$/i, '') : ''
+  const modelInCatalog = MODEL_CATALOG.find((m) => {
+    if (!cleanId) return false
+    const catalogGguf = m.ggufFilename ? m.ggufFilename.toLowerCase().replace(/\.gguf$/i, '') : ''
+    return (
+      m.id.toLowerCase() === cleanId ||
+      m.ollamaTag.toLowerCase() === cleanId ||
+      (catalogGguf && (cleanId.includes(catalogGguf) || catalogGguf.includes(cleanId)))
+    )
+  })
+
+  const ramRequiredGB = modelInCatalog?.ramRequiredGB || 5.5
+  const ramRecommendedGB = modelInCatalog?.ramRecommendedGB || 8.0
+  const modelName = modelInCatalog?.name || modelId || 'Golti Engine Model'
+
+  return {
+    isMemoryError: true,
+    modelName,
+    ramRequiredGB,
+    ramRecommendedGB,
+    rawError: errorText
+  }
+}
+
 
 /** Rough token estimate: ~4 chars per token for English/code mix. */
 export function estimateTokens(text: string): number {

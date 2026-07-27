@@ -1,5 +1,7 @@
 export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
 
+export type ModelSource = 'ollama' | 'golti-engine'
+
 /** Composer Chat vs Agent mode (Cursor-style Shift+Tab toggle). */
 export type ComposerMode = 'chat' | 'agent'
 
@@ -24,6 +26,10 @@ export interface EngineState {
   gpuLayers?: number
   /** Set when the engine fell back to fewer layers / CPU after a GPU failure. */
   fellBackToCpu?: boolean
+  /** Context window the running engine was started with (`--ctx-size`). */
+  contextSize?: number
+  /** Last stderr output lines for error diagnostic log copying. */
+  lastLogs?: string
 }
 
 export interface OllamaState {
@@ -166,6 +172,7 @@ export interface Message {
   isDeepResearch?: boolean
   reasoningContent?: string
   thinkingDurationMs?: number
+  finishReason?: string
 }
 
 export interface MessageVersion {
@@ -269,6 +276,7 @@ export interface SendMessagePayload {
   composerMode?: ComposerMode
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
+  continueMessageId?: string
 }
 
 export type StreamEventType =
@@ -305,6 +313,7 @@ export interface StreamChunkPayload {
   researchPlan?: ResearchPlan
   researchStep?: ResearchStep
   eventType?: StreamEventType
+  finishReason?: string
 }
 
 export interface ChatRequestOptions {
@@ -362,7 +371,7 @@ export type ModelCompatibility = 'great' | 'runs' | 'tight' | 'wont_fit'
 
 export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative' | 'agentic'
 
-export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'glm' | 'falcon' | 'smollm' | 'internlm' | 'command-r' | 'devstral' | 'kimi' | 'other'
+export type ModelFamily = 'llama' | 'mistral' | 'gemma' | 'phi' | 'qwen' | 'deepseek' | 'codellama' | 'nomic' | 'starcoder' | 'yi' | 'glm' | 'falcon' | 'smollm' | 'internlm' | 'command-r' | 'devstral' | 'kimi' | 'hermes' | 'other'
 
 export type ModelSizeTier = 'tiny' | 'small' | 'medium' | 'large' | 'xl' | 'xxl' | 'datacenter'
 

@@ -1,6 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { X, Download } from 'lucide-react'
-import { useInspectorStore, InspectorTab } from '../../stores/inspectorStore'
+import {
+  useInspectorStore,
+  InspectorTab,
+  INSPECTOR_MIN_WIDTH,
+  INSPECTOR_MAX_WIDTH
+} from '../../stores/inspectorStore'
 import { useChatStore } from '../../stores/chatStore'
 import { UsageMeter } from './UsageMeter'
 import { ShellEditor } from './ShellEditor'
@@ -13,7 +18,17 @@ const TABS: { id: InspectorTab; label: string }[] = [
 ]
 
 export const InspectorPanel: React.FC = () => {
-  const { isOpen, activeTab, setTab, setOpen, selectedShellId, selectShell } = useInspectorStore()
+  const {
+    isOpen,
+    activeTab,
+    setTab,
+    setOpen,
+    selectedShellId,
+    selectShell,
+    width,
+    setWidth,
+    resetWidth
+  } = useInspectorStore()
   const {
     contextItems,
     artifacts: shells,
@@ -34,8 +49,69 @@ export const InspectorPanel: React.FC = () => {
     setSystemPrompt(conv?.systemPrompt || '')
   }, [conv?.id, conv?.systemPrompt])
 
+  const [isResizing, setIsResizing] = useState(false)
+  const panelRef = useRef<HTMLElement | null>(null)
+
+  const startResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      const handle = e.currentTarget
+      handle.setPointerCapture(e.pointerId)
+      setIsResizing(true)
+
+      const move = (ev: PointerEvent) => {
+        const right = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth
+        setWidth(right - ev.clientX)
+      }
+      const stop = () => {
+        setIsResizing(false)
+        handle.removeEventListener('pointermove', move)
+        handle.removeEventListener('pointerup', stop)
+        handle.removeEventListener('pointercancel', stop)
+      }
+      handle.addEventListener('pointermove', move)
+      handle.addEventListener('pointerup', stop)
+      handle.addEventListener('pointercancel', stop)
+    },
+    [setWidth]
+  )
+
+  const onHandleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 40 : 16
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      setWidth(width + step)
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      setWidth(width - step)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      resetWidth()
+    }
+  }
+
   return (
-    <aside className={`inspector ${isOpen ? '' : 'is-collapsed'}`} aria-label="Chat inspector" aria-hidden={!isOpen}>
+    <aside
+      ref={panelRef}
+      className={`inspector ${isOpen ? '' : 'is-collapsed'} ${isResizing ? 'is-resizing' : ''}`}
+      style={isOpen ? { width } : undefined}
+      aria-label="Chat inspector"
+      aria-hidden={!isOpen}
+    >
+      <div
+        className="inspector-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector"
+        aria-valuenow={width}
+        aria-valuemin={INSPECTOR_MIN_WIDTH}
+        aria-valuemax={INSPECTOR_MAX_WIDTH}
+        tabIndex={isOpen ? 0 : -1}
+        onPointerDown={startResize}
+        onKeyDown={onHandleKeyDown}
+        onDoubleClick={resetWidth}
+      />
       <div className="inspector-header">
         <strong style={{ fontSize: 13, color: 'var(--text-primary)' }}>Inspector</strong>
         <button className="chat-icon-btn" onClick={() => setOpen(false)} aria-label="Close inspector">

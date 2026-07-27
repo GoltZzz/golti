@@ -16,17 +16,22 @@ import {
   BookOpen,
   ExternalLink,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  CornerDownRight,
+  Cpu
 } from 'lucide-react'
 import { EggLogo } from '../brand/EggLogo'
 import type { Message } from '../../../shared/types'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
-import { getSiblings } from '../../../shared/chat-utils'
+import { getSiblings, parseEngineMemoryError } from '../../../shared/chat-utils'
+import { isTruncated } from '../../../shared/finish-reason'
+import { parseModelDisplay } from '../../../shared/model-display'
 
 import { useSettingsStore } from '../../stores/settingsStore'
 import { ThinkingBlock } from './ThinkingBlock'
+import { EngineMemoryErrorCard } from './EngineMemoryErrorCard'
 
 interface MessageBubbleProps {
   message: Message
@@ -34,6 +39,11 @@ interface MessageBubbleProps {
 
 export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message }) => {
   const isUser = message.role === 'user'
+  const truncated = !isUser && !message.isStreaming && isTruncated(message.finishReason)
+  const modelDisplay = useMemo(
+    () => (!isUser && message.model ? parseModelDisplay(message.model) : null),
+    [isUser, message.model]
+  )
   const [copiedCodeIndex, setCopiedCodeIndex] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(message.content)
@@ -41,6 +51,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const showThinkingProcess = useSettingsStore((s) => s.settings?.showThinkingProcess ?? true)
 
   const regenerate = useChatStore((s) => s.regenerate)
+  const continueMessage = useChatStore((s) => s.continueMessage)
   const editAndResend = useChatStore((s) => s.editAndResend)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const selectBranch = useChatStore((s) => s.selectBranch)
@@ -89,6 +100,22 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   }, [isUser, message.content])
 
   const effectiveReasoning = message.reasoningContent || extractedReasoning
+
+  const memoryErrorDetails = useMemo(() => {
+    if (isUser) return null
+    return parseEngineMemoryError(message.content || message.error, message.model)
+  }, [isUser, message.content, message.error, message.model])
+
+  const displayCleanContent = useMemo(() => {
+    if (!cleanContent) return ''
+    if (memoryErrorDetails?.isMemoryError) {
+      return cleanContent
+        .replace(/\n*\*\[Error:.*?\]\*/gi, '')
+        .replace(/\[Error:.*?\]/gi, '')
+        .trim()
+    }
+    return cleanContent
+  }, [cleanContent, memoryErrorDetails])
 
   const handleCopyCode = (text: string, index: number) => {
     navigator.clipboard.writeText(text)
@@ -296,8 +323,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                     }
                   }}
                 >
-                  {cleanContent}
+                  {displayCleanContent}
                 </ReactMarkdown>
+              )}
+
+              {memoryErrorDetails?.isMemoryError && (
+                <EngineMemoryErrorCard
+                  details={memoryErrorDetails}
+                  onRetry={() => regenerate(message.id)}
+                />
               )}
             </div>
           )}
@@ -373,7 +407,24 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             )
           )}
 
-          {(message.tokensIn || message.tokensOut || siblings.length > 1) && (
+          {truncated && (
+            <div className="msg-truncated" role="status">
+              <AlertCircle size={14} aria-hidden="true" />
+              <span className="msg-truncated-text">
+                Response hit the output token limit and stopped early.
+              </span>
+              <button
+                className="msg-truncated-btn"
+                onClick={() => continueMessage(message.id)}
+                disabled={isGenerating}
+              >
+                <CornerDownRight size={13} aria-hidden="true" />
+                Continue
+              </button>
+            </div>
+          )}
+
+          {(message.tokensIn || message.tokensOut || siblings.length > 1 || modelDisplay) && (
             <div className="msg-meta">
               {siblings.length > 1 && (
                 <div className="branch-picker">
@@ -395,6 +446,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                     <ChevronRight size={14} />
                   </button>
                 </div>
+              )}
+              {modelDisplay && (
+                <span className="msg-model-badge" title={message.model}>
+                  <Cpu size={11} />
+                  <span className="msg-model-name">{modelDisplay.displayName}</span>
+                </span>
+              )}
+              {modelDisplay && (message.tokensIn || message.tokensOut) && (
+                <span className="msg-meta-sep">·</span>
               )}
               {(message.tokensIn || message.tokensOut) && (
                 <span>

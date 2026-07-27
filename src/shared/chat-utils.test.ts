@@ -9,7 +9,8 @@ import {
   formatConversationMarkdown,
   getBranchPath,
   getChildren,
-  getSiblings
+  getSiblings,
+  parseEngineMemoryError
 } from '../shared/chat-utils'
 import type { Message } from '../shared/types'
 
@@ -263,3 +264,22 @@ describe('formatConversationMarkdown', () => {
     expect(md).toContain('Reasoning here')
   })
 })
+
+describe('parseEngineMemoryError', () => {
+  it('detects llama-server health check timeouts and out of memory errors', () => {
+    const errorStr = '[Error: llama-server failed to start or health check timed out.]'
+    const result = parseEngineMemoryError(errorStr, 'Hermes-3-Llama-3.1-8B-Q4_K_M.gguf')
+
+    expect(result).not.toBeNull()
+    expect(result?.isMemoryError).toBe(true)
+    expect(result?.modelName).toContain('Hermes 3 8B')
+    expect(result?.ramRequiredGB).toBe(5.5)
+  })
+
+  it('returns null for generic non-memory error strings', () => {
+    const errorStr = 'Network error 500: Internal Server Error'
+    const result = parseEngineMemoryError(errorStr, 'llama3.2:1b-q4')
+    expect(result).toBeNull()
+  })
+})
+

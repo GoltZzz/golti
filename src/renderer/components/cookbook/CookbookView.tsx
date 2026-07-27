@@ -2,6 +2,8 @@ import React, { useEffect } from 'react'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useEngineStore } from '../../stores/engineStore'
 import { useOllamaProcessStore } from '../../stores/ollamaProcessStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { EngineStatusBadge } from '../common/EngineStatusBadge'
 import { HardwareCard } from './HardwareCard'
 import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
@@ -9,11 +11,11 @@ import { InstalledModelCard } from './InstalledModelCard'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
 import { getCompatibility } from '../../../shared/compatibility'
 import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
-import { CookbookModel } from '../../../shared/types'
+import { CookbookModel, ModelSource } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
 
 export const CookbookView: React.FC = () => {
-  const [showManualGuide, setShowManualGuide] = React.useState(true)
+  const [showManualGuide, setShowManualGuide] = React.useState(false)
   const {
     systemInfo,
     loadingInfo,
@@ -30,10 +32,12 @@ export const CookbookView: React.FC = () => {
     setupPullListeners
   } = useCookbookStore()
 
-  const { engineState, localModels, setupListeners, installEngine, isInstallingBinary } = useEngineStore()
-  const { processState: ollamaState, isInstallingBinary: isInstallingOllama, downloadProgress: ollamaProgress, setupListeners: setupOllamaListeners, installOllama, startOllama, stopOllama } = useOllamaProcessStore()
+  const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary } = useEngineStore()
+  const { processState: ollamaState, setupListeners: setupOllamaListeners, startOllama, stopOllama } = useOllamaProcessStore()
+  const { settings, fetchSettings } = useSettingsStore()
 
   useEffect(() => {
+    fetchSettings()
     scanHardware()
     checkOllama()
     fetchInstalled()
@@ -65,28 +69,35 @@ export const CookbookView: React.FC = () => {
       if (!matchName && !matchDesc && !matchFam && !matchTag) return false
     }
 
-    // 2. Use Cases Filter
+    if (filters.sources.length > 0) {
+      const matchesSource = filters.sources.some((source) =>
+        source === 'golti-engine' ? !!model.ggufUrl : !!model.ollamaTag
+      )
+      if (!matchesSource) return false
+    }
+
+    // 3. Use Cases Filter
     if (filters.useCases.length > 0) {
       const hasOverlap = model.useCases.some(uc => filters.useCases.includes(uc))
       if (!hasOverlap) return false
     }
 
-    // 3. Family Filter
+    // 4. Family Filter
     if (filters.families.length > 0) {
       if (!filters.families.includes(model.family)) return false
     }
 
-    // 4. Size Tier Filter
+    // 5. Size Tier Filter
     if (filters.sizeTiers.length > 0) {
       if (!filters.sizeTiers.includes(model.sizeTier)) return false
     }
 
-    // 5. Quantization Filter
+    // 6. Quantization Filter
     if (filters.quantizations.length > 0) {
       if (!filters.quantizations.includes(model.quantization)) return false
     }
 
-    // 6. Compatibility Filter
+    // 7. Compatibility Filter
     if (filters.compatibleOnly && systemInfo) {
       const comp = getCompatibility(systemInfo, model)
       if (comp === 'wont_fit') return false
@@ -134,6 +145,13 @@ export const CookbookView: React.FC = () => {
   })
 
   const filteredInstalledLocal = detailedInstalledModels.filter((m) => {
+    if (
+      filters.sources.length > 0 &&
+      !filters.sources.includes(m.providerType as ModelSource)
+    ) {
+      return false
+    }
+
     if (!searchQuery.trim()) return true
     const q = searchQuery.toLowerCase()
     return (
@@ -155,24 +173,7 @@ export const CookbookView: React.FC = () => {
           </div>
           
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-            {ollamaState.status === 'not-installed' ? (
-              <button
-                onClick={() => installOllama()}
-                disabled={isInstallingOllama}
-                style={{
-                  backgroundColor: '#98c379',
-                  color: '#1e1e1e',
-                  border: 'none',
-                  borderRadius: '6px',
-                  padding: '6px 14px',
-                  fontWeight: 600,
-                  fontSize: '12px',
-                  cursor: isInstallingOllama ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {isInstallingOllama ? `Installing Ollama... ${ollamaProgress ? ollamaProgress.percent + '%' : ''}` : 'Install Built-in Ollama'}
-              </button>
-            ) : (
+            {ollamaState.status !== 'not-installed' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Ollama Status: {ollamaState.status === 'running' ? 'Running' : ollamaState.status === 'stopped' ? 'Stopped' : 'Starting...'}
@@ -206,58 +207,21 @@ export const CookbookView: React.FC = () => {
           onRescan={scanHardware}
         />
 
-        {/* Golti Engine Status Banner */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: 'rgba(229, 192, 123, 0.08)',
-            border: '1px solid rgba(229, 192, 123, 0.25)',
-            borderRadius: '8px',
-            padding: '12px 16px',
-            marginBottom: '16px'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Zap size={20} style={{ color: '#e5c07b' }} />
-            <div>
-              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#e5c07b' }}>
-                Golti Engine (Built-in Local AI)
-              </h3>
-              <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
-                {engineState.status === 'running'
-                  ? `Running on port ${engineState.port || 8391} ${engineState.loadedModel ? `• Loaded: ${engineState.loadedModel.split(/[\/\\]/).pop()}` : ''}`
-                  : engineState.status === 'not-installed'
-                  ? 'Run models locally without installing Ollama or terminal setup.'
-                  : `Status: ${engineState.status}`}
-              </p>
-            </div>
-          </div>
-
-          {engineState.status === 'not-installed' ? (
-            <button
-              onClick={() => installEngine()}
-              disabled={isInstallingBinary}
-              style={{
-                backgroundColor: '#e5c07b',
-                color: '#1e1e1e',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '6px 14px',
-                fontWeight: 600,
-                fontSize: '12px',
-                cursor: 'pointer'
-              }}
-            >
-              {isInstallingBinary ? 'Installing Engine...' : '1-Click Install Engine'}
-            </button>
-          ) : (
-            <span style={{ fontSize: '12px', color: '#98c379', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <CheckCircle2 size={14} /> Installed
-            </span>
-          )}
-        </div>
+        {/* Golti Engine Status Banner — only surfaced once the user has a
+            Golti Engine model on disk (or is actively installing the engine).
+            Keeps the Cookbook uncluttered for newcomers, who discover the
+            engine by downloading a model from a catalog card below. */}
+        {settings?.engineEnabled !== false && (localModels.length > 0 || isInstallingBinary) && (
+          <EngineStatusBadge
+            engineState={engineState}
+            isInstallingBinary={isInstallingBinary}
+            onInstall={installEngine}
+            onReinstall={reinstallEngine}
+            onStart={startEngine}
+            onStop={stopEngine}
+            style={{ marginBottom: '16px' }}
+          />
+        )}
 
         {/* ELI5 Manual Setup Guide & Offline Banner */}
         {(!ollamaOnline && ollamaState.status !== 'running' && ollamaState.status !== 'starting') && (
@@ -267,9 +231,9 @@ export const CookbookView: React.FC = () => {
               <div className="eli5-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span className="eli5-badge" style={{ backgroundColor: 'rgba(97, 175, 239, 0.15)', color: '#61afef', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    ELI5 Guide
+                    Advanced
                   </span>
-                  <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--text-primary)' }}>How to Download & Install Ollama Manually</h3>
+                  <h3 style={{ margin: 0, fontSize: '15px', color: 'var(--text-primary)' }}>Optional: bring your own Ollama server</h3>
                 </div>
                 <button
                   onClick={() => setShowManualGuide(!showManualGuide)}
@@ -291,8 +255,9 @@ export const CookbookView: React.FC = () => {
               {showManualGuide && (
                 <div className="eli5-content animate-fade-in" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-color)' }}>
                   <p className="eli5-intro" style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: '1.5' }}>
-                    Think of <strong>Ollama</strong> as the engine that powers local AI models on your device.
-                    If automatic installation fails or you prefer managing it yourself, follow these 3 simple steps:
+                    You don't need this to run local models — <strong>Golti Engine</strong> handles that for you.
+                    But if you already use <strong>Ollama</strong>, or prefer to manage it yourself, these 3 steps
+                    connect it to Golti:
                   </p>
 
                   <div className="eli5-steps-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
@@ -331,8 +296,8 @@ export const CookbookView: React.FC = () => {
                 <div className="banner-text">
                   <h3>Local Ollama Server Offline</h3>
                   <p>
-                    {ollamaState.status === 'not-installed' 
-                      ? "Ollama isn't installed. Click 'Install Built-in Ollama' above to download and run it directly within Golti, or follow the 3-step guide above."
+                    {ollamaState.status === 'not-installed'
+                      ? "Ollama isn't installed — that's fine, Golti Engine runs local models without it. To use Ollama anyway, follow the 3-step guide above; Golti auto-detects it once it's running."
                       : "The Ollama background process is stopped. Click 'Start' in the header to run it."
                     }
                   </p>
@@ -375,7 +340,7 @@ export const CookbookView: React.FC = () => {
             ) : (
               <div className="empty-catalog-state small-empty" style={{ padding: '16px', textAlign: 'center' }}>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px' }}>
-                  No installed local models match your search query.
+                  No installed local models match your current filters.
                 </p>
               </div>
             )}
