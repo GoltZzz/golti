@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource, PullProgress, InstalledLocalModelInfo, OllamaRuntimeInfo } from '../../shared/types'
+import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource, PullProgress, InstalledLocalModelInfo, OllamaRuntimeInfo, VramReading } from '../../shared/types'
 import { useChatStore } from './chatStore'
 import { useEngineStore } from './engineStore'
 
@@ -14,7 +14,9 @@ interface CookbookFilters {
 
 interface CookbookState {
   systemInfo: SystemInfoFull | null
-  /** Measured VRAM occupancy from Ollama's /api/ps; null when it is unreachable. */
+  /** Driver-level VRAM reading — the capacity signal; null when unmeasurable. */
+  vramReading: VramReading | null
+  /** Per-model attribution from Ollama's /api/ps; null when it is unreachable. */
   ollamaRuntime: OllamaRuntimeInfo | null
   loadingInfo: boolean
   scanError: string | null
@@ -32,6 +34,7 @@ interface CookbookState {
   deleteError: string | null
 
   scanHardware: () => Promise<void>
+  fetchVramReading: () => Promise<void>
   fetchOllamaRuntime: () => Promise<void>
   checkOllama: () => Promise<void>
   fetchInstalled: () => Promise<void>
@@ -67,6 +70,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
 
   return {
     systemInfo: null,
+    vramReading: null,
     ollamaRuntime: null,
     loadingInfo: false,
     scanError: null,
@@ -91,6 +95,14 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     deletingOllamaTag: null,
     deleteError: null,
 
+    fetchVramReading: async () => {
+      try {
+        set({ vramReading: await window.goltiAPI.getVramReading() })
+      } catch {
+        // Keep the last reading rather than implying the GPU emptied.
+      }
+    },
+
     fetchOllamaRuntime: async () => {
       try {
         set({ ollamaRuntime: await window.goltiAPI.getOllamaRuntime() })
@@ -105,6 +117,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
       try {
         const info = await window.goltiAPI.getSystemInfoFull()
         set({ systemInfo: info, loadingInfo: false, scanError: null })
+        get().fetchVramReading()
         get().fetchOllamaRuntime()
       } catch (err) {
         console.error('Failed to scan hardware:', err)

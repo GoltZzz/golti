@@ -6,15 +6,39 @@ const BYTES_PER_GB = 1024 ** 3
  * Live GPU occupancy, folded into the capacity maths below.
  *
  * Without this the cookbook rates every model against an *idle* GPU, so a card
- * already holding a 7B model still advertises its full VRAM. `/api/ps` tells us
- * what is actually resident, which is the difference between a predicted fit
- * and a real one.
+ * already holding a 7B model still advertises its full VRAM.
  */
 export interface RuntimeVramUsage {
-  /** VRAM currently occupied by loaded models, in GB. */
+  /** VRAM currently occupied, in GB. */
   usedGB: number
+  /**
+   * Total VRAM as reported by the same source as `usedGB`. When present it wins
+   * over `system.gpu.vramGB`: the driver and the engine binary disagree slightly
+   * on totals (reserved regions are counted differently), and mixing the two
+   * produces a small permanent error in the free-VRAM figure.
+   */
+  totalGB?: number
 }
 
+/**
+ * Preferred source: a driver-level reading, which counts *every* VRAM consumer
+ * — our engine, Ollama (including one started outside Golti), the compositor,
+ * anything else on the card.
+ */
+export function getVramUsage(
+  reading: { totalMiB: number; usedMiB: number } | null
+): RuntimeVramUsage | null {
+  if (!reading || reading.totalMiB <= 0) return null
+  return {
+    usedGB: reading.usedMiB / 1024,
+    totalGB: reading.totalMiB / 1024
+  }
+}
+
+/**
+ * Fallback source for when no driver tool is installed. Sees only what Ollama
+ * itself loaded, so it under-reports whenever anything else holds VRAM.
+ */
 export function getRuntimeVramUsage(runtime: OllamaRuntimeInfo | null): RuntimeVramUsage | null {
   if (!runtime) return null
   return { usedGB: runtime.totalVramBytes / BYTES_PER_GB }
@@ -34,9 +58,10 @@ export function getCompatibility(
     // Apple Silicon unified memory (macOS restricts single allocations to ~75% total RAM by default)
     totalCapacityLimit = system.ram.totalGB * 0.75
   } else {
-    // Windows/Linux/Intel Mac. Anything a resident model already holds is not
-    // available to the model being rated, so score against what is left.
-    const totalVram = system.gpu?.vramGB || 0
+    // Windows/Linux/Intel Mac. Anything already resident on the card is not
+    // available to the model being rated, so score against what is left. Both
+    // figures come from the same source when a live reading is available.
+    const totalVram = runtimeVram?.totalGB ?? system.gpu?.vramGB ?? 0
     const vram = Math.max(0, totalVram - (runtimeVram?.usedGB || 0))
     if (vram > 0) {
       if (vram >= model.ramRequiredGB) {

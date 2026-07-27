@@ -55,6 +55,20 @@ export interface OllamaState {
   gpuSettingIgnored?: boolean
 }
 
+/**
+ * Driver-level VRAM reading for one GPU — the capacity signal model
+ * compatibility is scored against. Counts every consumer on the card, not just
+ * the processes Golti started.
+ */
+export interface VramReading {
+  /** Vendor device index, matching the ids used for device selection. */
+  index: string
+  name: string
+  totalMiB: number
+  usedMiB: number
+  freeMiB: number
+}
+
 /** One model Ollama currently holds resident, as reported by `/api/ps`. */
 export interface OllamaLoadedModel {
   name: string

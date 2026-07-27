@@ -9,7 +9,7 @@ import { FilterBar } from './FilterBar'
 import { ModelCard } from './ModelCard'
 import { InstalledModelCard } from './InstalledModelCard'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
-import { getCompatibility, getRuntimeVramUsage } from '../../../shared/compatibility'
+import { getCompatibility, getVramUsage, getRuntimeVramUsage } from '../../../shared/compatibility'
 import { findInstalledOllamaTag, isOllamaTagInstalled } from '../../../shared/ollama-tags'
 import { CookbookModel, ModelSource } from '../../../shared/types'
 import { AlertCircle, ExternalLink, Info, Terminal, Zap, CheckCircle2, HardDrive } from 'lucide-react'
@@ -18,6 +18,8 @@ export const CookbookView: React.FC = () => {
   const [showManualGuide, setShowManualGuide] = React.useState(false)
   const {
     systemInfo,
+    vramReading,
+    fetchVramReading,
     ollamaRuntime,
     fetchOllamaRuntime,
     loadingInfo,
@@ -53,8 +55,16 @@ export const CookbookView: React.FC = () => {
     }
   }, [])
 
-  // Models load and unload while the cookbook is open, so keep the VRAM reading
-  // fresh — the compatibility badges below are scored against it.
+  // VRAM occupancy moves while the cookbook is open — models load, another app
+  // grabs the card — and the compatibility badges below are scored against it.
+  // The driver reading is polled regardless of whether Ollama is up, since it
+  // measures the whole card; /api/ps only labels which model holds what.
+  useEffect(() => {
+    fetchVramReading()
+    const timer = setInterval(fetchVramReading, 5000)
+    return () => clearInterval(timer)
+  }, [fetchVramReading])
+
   useEffect(() => {
     if (ollamaState.status !== 'running') return
     fetchOllamaRuntime()
@@ -62,7 +72,12 @@ export const CookbookView: React.FC = () => {
     return () => clearInterval(timer)
   }, [ollamaState.status, fetchOllamaRuntime])
 
-  const vramUsage = React.useMemo(() => getRuntimeVramUsage(ollamaRuntime), [ollamaRuntime])
+  // Prefer the driver; fall back to Ollama's own accounting when no vendor tool
+  // is installed, which under-reports but beats assuming an idle GPU.
+  const vramUsage = React.useMemo(
+    () => getVramUsage(vramReading) ?? getRuntimeVramUsage(ollamaRuntime),
+    [vramReading, ollamaRuntime]
+  )
 
   const isEngineDownloaded = (model: CookbookModel) =>
     !!(model.ggufFilename && localModels.some((lm) => lm.filename === model.ggufFilename))
@@ -215,6 +230,7 @@ export const CookbookView: React.FC = () => {
         {/* Hardware scan summary */}
         <HardwareCard
           systemInfo={systemInfo}
+          vramReading={vramReading}
           ollamaRuntime={ollamaRuntime}
           loading={loadingInfo}
           scanError={scanError}

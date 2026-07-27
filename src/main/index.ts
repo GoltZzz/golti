@@ -71,6 +71,7 @@ import { cancelOllamaDownload, downloadOllamaBinary } from './ollama/ollama-bina
 import { getOllamaState, startOllama, stopOllama, getOllamaLogs } from './ollama/ollama-process'
 import { listOllamaGpuDevices } from './ollama/ollama-gpu'
 import { fetchOllamaRuntime } from './ollama/ollama-ps'
+import { readVram } from './system/vram'
 
 const execAsync = promisify(exec)
 
@@ -960,6 +961,11 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('ollama:list-devices', async () => {
     return await listOllamaGpuDevices()
+  })
+
+  // Driver-level VRAM: the capacity figure the cookbook rates models against.
+  ipcMain.handle('system:vram', async () => {
+    return await readVram()
   })
 
   ipcMain.handle('ollama:runtime', async () => {

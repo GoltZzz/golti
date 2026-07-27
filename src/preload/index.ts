@@ -20,7 +20,8 @@ import type {
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
   OllamaState,
-  OllamaRuntimeInfo
+  OllamaRuntimeInfo,
+  VramReading
 } from '../shared/types'
 
 const api = {
@@ -159,6 +160,7 @@ const api = {
       { id: string; name: string; totalMiB: number | null }[]
     >,
   getOllamaRuntime: (): Promise<OllamaRuntimeInfo | null> => ipcRenderer.invoke('ollama:runtime'),
+  getVramReading: (): Promise<VramReading | null> => ipcRenderer.invoke('system:vram'),
   onOllamaProgress: (callback: (data: any) => void) => {
     const listener = (_: any, data: any) => callback(data)
     ipcRenderer.on('ollama:download-progress', listener)
