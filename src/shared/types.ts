@@ -26,6 +26,8 @@ export interface EngineState {
   gpuLayers?: number
   /** Set when the engine fell back to fewer layers / CPU after a GPU failure. */
   fellBackToCpu?: boolean
+  /** Context window the running engine was started with (`--ctx-size`). */
+  contextSize?: number
   /** Last stderr output lines for error diagnostic log copying. */
   lastLogs?: string
 }
@@ -170,6 +172,7 @@ export interface Message {
   isDeepResearch?: boolean
   reasoningContent?: string
   thinkingDurationMs?: number
+  finishReason?: string
 }
 
 export interface MessageVersion {
@@ -273,6 +276,7 @@ export interface SendMessagePayload {
   composerMode?: ComposerMode
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
+  continueMessageId?: string
 }
 
 export type StreamEventType =
@@ -309,6 +313,7 @@ export interface StreamChunkPayload {
   researchPlan?: ResearchPlan
   researchStep?: ResearchStep
   eventType?: StreamEventType
+  finishReason?: string
 }
 
 export interface ChatRequestOptions {

@@ -65,8 +65,7 @@ const defaultSettings: Settings = {
   showThinkingProcess: true,
   defaultGenerationSettings: {
     temperature: 0.7,
-    topP: 0.9,
-    maxTokens: 2048
+    topP: 0.9
   }
 }
 
