@@ -1,6 +1,10 @@
 import { CookbookModel } from './types'
+import { mergeCatalog } from './ollama-catalog'
+import { OLLAMA_LIBRARY_CATALOG, OLLAMA_LIBRARY_SYNCED_AT } from './model-catalog.generated'
 
-export const MODEL_CATALOG: CookbookModel[] = [
+export { OLLAMA_LIBRARY_SYNCED_AT }
+
+export const CURATED_MODEL_CATALOG: CookbookModel[] = [
   // Llama 3.2 family
   {
     id: 'llama3.2:1b-q4',
@@ -899,4 +903,9 @@ export const MODEL_CATALOG: CookbookModel[] = [
     highlights: ['1 Trillion total parameters', '32B active per token', 'Requires 350GB+ unified RAM']
   }
 ]
+
+export const MODEL_CATALOG: CookbookModel[] = mergeCatalog(
+  CURATED_MODEL_CATALOG,
+  OLLAMA_LIBRARY_CATALOG
+)
 

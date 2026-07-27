@@ -13,6 +13,7 @@
     "test": "node scripts/prepare-test-native.js && vitest run",
     "test:watch": "vitest",
     "test:go": "cd services/search-api && go test ./...",
+    "sync:catalog": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sync-ollama-catalog.ts",
     "build:search-runtime": "bash scripts/search-runtime/build.sh",
     "stage:search-runtime": "bash scripts/search-runtime/stage-for-pack.sh",
     "preview": "electron-vite preview",

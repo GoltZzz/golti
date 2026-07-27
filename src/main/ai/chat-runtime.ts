@@ -514,8 +514,8 @@ export async function startChatGeneration(
             if (thinkingStartTime && !thinkingEndTime) {
               thinkingEndTime = Date.now()
             }
-            accumulated += contentDelta
-            activeGen.content = accumulated
+            generated += contentDelta
+            activeGen.content = priorContent + generated
             sendChunk(win, {
               conversationId,
               messageId: assistantMsgId,
@@ -544,8 +544,8 @@ export async function startChatGeneration(
           reasoningAccumulated = reasoningAccumulated
             ? `${reasoningAccumulated}\n${reasoningText}`
             : reasoningText
-          accumulated = cleanContent
-          activeGen.content = accumulated
+          generated = cleanContent
+          activeGen.content = priorContent + generated
           activeGen.reasoningContent = reasoningAccumulated
           sendChunk(win, {
             conversationId,
