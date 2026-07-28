@@ -19,7 +19,8 @@ import {
   extractShells,
   extractThinkingTags,
   createThinkStreamParser,
-  getBranchPath
+  getBranchPath,
+  trimHistoryToBudget
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
 import {
@@ -399,8 +400,26 @@ export async function startChatGeneration(
     }
   }
 
+  const contextWindow =
+    (await resolveContextWindow(providerId, model)) ??
+    settings.defaultContextWindow ??
+    DEFAULT_CONTEXT_WINDOW
+  const reservedOutput = settings.reservedOutputTokens ?? DEFAULT_RESERVED_OUTPUT
+  const trimmedHistory = trimHistoryToBudget(
+    branch,
+    contextWindow -
+      reservedOutput -
+      estimateTokens(effectiveSystem || '') -
+      estimateTokens(searchPreamble)
+  )
+  if (trimmedHistory.droppedCount > 0) {
+    console.log(
+      `[context] trimmed ${trimmedHistory.droppedCount} older message(s) (~${trimmedHistory.droppedTokens}tok) to fit ${contextWindow}tok window`
+    )
+  }
+
   const historyForModel: Message[] = orderPromptMessages<Message>({
-    history: branch,
+    history: trimmedHistory.kept,
     volatile: searchPreamble
       ? [
           {

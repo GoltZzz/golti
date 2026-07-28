@@ -245,6 +245,7 @@ export interface TokenBudget {
   reservedOutputTokens: number
   availableTokens: number
   overflow: boolean
+  trimmedMessages: number
   items: Array<{ id: string; label: string; tokens: number; category: 'system' | 'context' | 'history' | 'draft' | 'reserve' }>
 }
 
@@ -367,6 +368,8 @@ export interface SystemInfoFull {
   disk: {
     readMBps: number | null
     writeMBps: number | null
+    freeGB: number | null
+    totalGB: number | null
   }
   thermals: {
     cpuTempC: number | null
@@ -376,6 +379,8 @@ export interface SystemInfoFull {
 export type ModelCompatibility = 'great' | 'runs' | 'tight' | 'wont_fit'
 
 export type MemoryPressure = 'ok' | 'busy' | 'critical'
+
+export type DiskFit = 'ok' | 'tight' | 'insufficient' | 'unknown'
 
 export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative' | 'agentic'
 

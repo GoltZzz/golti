@@ -52,7 +52,8 @@ import {
   loadModelInEngine,
   listEngineDevices,
   getBinaryPath,
-  isBinaryInstalled
+  isBinaryInstalled,
+  getModelDir
 } from './engine'
 import { searchHFModels, fetchHFModelDetail } from './hf/hf-client'
 import {
@@ -254,6 +255,18 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
     } catch {}
   }
 
+  // Free space on the volume that holds downloaded models, not necessarily the
+  // system volume — models live under ~/Golti/models and that can be a separate disk.
+  let diskFreeGB: number | null = null
+  let diskTotalGB: number | null = null
+  try {
+    const stats = await fs.promises.statfs(getModelDir())
+    diskFreeGB = Math.round(((stats.bavail * stats.bsize) / 1024 ** 3) * 10) / 10
+    diskTotalGB = Math.round(((stats.blocks * stats.bsize) / 1024 ** 3) * 10) / 10
+  } catch (err) {
+    console.warn('Free disk probe failed:', err)
+  }
+
   // CPU Temperature
   let cpuTempC: number | null = null
   if (platform === 'linux') {
@@ -285,7 +298,9 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
     },
     disk: {
       readMBps: diskRead,
-      writeMBps: diskWrite
+      writeMBps: diskWrite,
+      freeGB: diskFreeGB,
+      totalGB: diskTotalGB
     },
     thermals: {
       cpuTempC

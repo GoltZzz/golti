@@ -140,6 +140,7 @@ function emptyBudget(): TokenBudget {
     reservedOutputTokens: DEFAULT_RESERVED_OUTPUT,
     availableTokens: DEFAULT_CONTEXT_WINDOW - DEFAULT_RESERVED_OUTPUT,
     overflow: false,
+    trimmedMessages: 0,
     items: []
   }
 }
@@ -593,7 +594,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const settings = await window.goltiAPI.getSettings()
     const conv = get().conversations.find((c) => c.id === convId)
 
-    set({ isGenerating: true })
+    const target = get().messages.find((m) => m.id === assistantMessageId)
+    const now = Date.now()
+    const tempAssistantMsg: Message = {
+      id: `temp_r_${now}`,
+      conversationId: convId,
+      role: 'assistant',
+      content: '',
+      createdAt: now,
+      isStreaming: true,
+      parentId: target?.parentId ?? null,
+      isDeepResearch: get().deepResearchEnabled || undefined
+    }
+
+    set((state) => {
+      const messages = [...state.messages, tempAssistantMsg]
+      return {
+        messages,
+        visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
+        isGenerating: true,
+        generatingConversationIds: state.generatingConversationIds.includes(convId)
+          ? state.generatingConversationIds
+          : [...state.generatingConversationIds, convId]
+      }
+    })
+
     const result = await window.goltiAPI.regenerateMessage({
       conversationId: convId,
       content: '',
@@ -609,8 +634,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
     set({ forceWebSearchNext: false })
 
-    const msgs = await window.goltiAPI.getMessages(convId)
+    const fetched = await window.goltiAPI.getMessages(convId)
     if (get().currentConversationId !== convId) return
+    const msgs = fetched.map((m: Message) =>
+      m.id === result.assistantMsgId
+        ? { ...m, isStreaming: true, generationId: result.generationId }
+        : m
+    )
     set({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, result.assistantMsgId),
@@ -661,9 +691,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const selected = get().selectedModel
     const settings = await window.goltiAPI.getSettings()
     const conv = get().conversations.find((c) => c.id === convId)
-    const prev = get().messages.find((m) => m.id === userMessageId)?.content
+    const original = get().messages.find((m) => m.id === userMessageId)
+    const prev = original?.content
 
-    set({ isGenerating: true })
+    const now = Date.now()
+    const tempUserMsg: Message = {
+      id: `temp_e_${now}`,
+      conversationId: convId,
+      role: 'user',
+      content,
+      createdAt: now,
+      parentId: original?.parentId ?? null
+    }
+    const tempAssistantMsg: Message = {
+      id: `temp_ea_${now}`,
+      conversationId: convId,
+      role: 'assistant',
+      content: '',
+      createdAt: now + 1,
+      isStreaming: true,
+      parentId: tempUserMsg.id,
+      isDeepResearch: get().deepResearchEnabled || undefined
+    }
+
+    set((state) => {
+      const messages = [...state.messages, tempUserMsg, tempAssistantMsg]
+      return {
+        messages,
+        visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
+        isGenerating: true,
+        generatingConversationIds: state.generatingConversationIds.includes(convId)
+          ? state.generatingConversationIds
+          : [...state.generatingConversationIds, convId]
+      }
+    })
+
     const result = await window.goltiAPI.sendMessage({
       conversationId: convId,
       content,
@@ -692,8 +754,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
 
-    const msgs = await window.goltiAPI.getMessages(convId)
+    const fetched = await window.goltiAPI.getMessages(convId)
     if (get().currentConversationId !== convId) return
+    const msgs = fetched.map((m: Message) =>
+      m.id === result.assistantMsgId
+        ? { ...m, isStreaming: true, generationId: result.generationId }
+        : m
+    )
     set({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, result.assistantMsgId),

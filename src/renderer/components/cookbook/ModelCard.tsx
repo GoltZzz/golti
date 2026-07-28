@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
-import { getCompatibility } from '../../../shared/compatibility'
+import { describeDiskFit, getCompatibility, getDiskFit } from '../../../shared/compatibility'
 import { normalizeOllamaTag } from '../../../shared/ollama-tags'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -110,6 +110,9 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const showOllamaProgress = isCurrentPulling || isPullCancelled || (isPullErrored && Boolean(pullProgress))
 
   const comp = getCompatibility(systemInfo, model)
+  const diskFit = getDiskFit(systemInfo, model)
+  const diskNote = describeDiskFit(systemInfo, model)
+  const diskBlocked = diskFit === 'insufficient'
 
   const isEngineActive = useMemo(() => {
     if (!model.ggufFilename || !engineState.loadedModel) return false
@@ -275,7 +278,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   }
 
   const handleOllamaInstall = () => {
-    if (!isOllamaOnline || isCurrentPulling) return
+    if (!isOllamaOnline || isCurrentPulling || diskBlocked) return
     // Fire-and-forget so Engine downloads on this/other cards stay independently clickable
     void pullModel(model.ollamaTag)
   }
@@ -286,7 +289,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   }
 
   const handleEngineInstall = async () => {
-    if (isInstallingBinary || isEngineDownloading || engineActionBusy) return
+    if (isInstallingBinary || isEngineDownloading || engineActionBusy || diskBlocked) return
     setEngineActionBusy(true)
     try {
       if (!isEngineInstalled) {
@@ -324,6 +327,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
   const handleEngineResume = () => {
     if (!model.ggufUrl || !model.ggufFilename || engineActionBusy || isEngineDownloading) return
+    if (diskBlocked) return
     // Kick off resume without awaiting the full download (keeps Pause/Cancel usable
     // and allows concurrent Ollama pulls).
     void resumeDownload(model.ggufUrl, model.ggufFilename)
@@ -475,6 +479,13 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         </div>
       </div>
 
+      {diskNote && !isEngineModelDownloaded && !isInstalled && (
+        <div className={`disk-note ${diskBlocked ? 'disk-note-blocked' : ''}`}>
+          <AlertTriangle size={13} />
+          <span>{diskNote}</span>
+        </div>
+      )}
+
       {/* Footer / Actions */}
       <div className="card-footer" style={{ flexDirection: 'column', gap: '8px' }}>
         {/* Engine Section */}
@@ -564,7 +575,8 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         ) : model.ggufUrl ? (
           <button
             onClick={handleEngineInstall}
-            disabled={isInstallingBinary || isEngineDownloading || engineActionBusy}
+            disabled={isInstallingBinary || isEngineDownloading || engineActionBusy || diskBlocked}
+            title={diskBlocked ? diskNote || 'Not enough free disk space' : undefined}
             className="action-btn"
             style={{
               width: '100%',
@@ -579,12 +591,15 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               gap: '6px',
               fontWeight: 500,
               fontSize: '12px',
-              cursor: 'pointer'
+              cursor: diskBlocked ? 'not-allowed' : 'pointer',
+              opacity: diskBlocked ? 0.5 : 1
             }}
           >
             <Zap size={14} />
             <span>
-              {isInstallingBinary
+              {diskBlocked
+                ? 'Not enough disk space'
+                : isInstallingBinary
                 ? 'Installing Golti Engine...'
                 : !isEngineInstalled
                 ? 'Install with Golti Engine (1-Click)'

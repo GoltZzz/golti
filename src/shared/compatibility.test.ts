@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { getCompatibility, getMemoryPressure, getRuntimeFit, estimateRuntimeGB, getUsableMemoryGB } from './compatibility'
+import {
+  getCompatibility,
+  getMemoryPressure,
+  getRuntimeFit,
+  estimateRuntimeGB,
+  getUsableMemoryGB,
+  getDiskFit,
+  describeDiskFit,
+  estimateDownloadSizeGB
+} from './compatibility'
 import { SystemInfoFull, CookbookModel } from './types'
 
 function makeSystem(overrides: {
@@ -7,6 +16,7 @@ function makeSystem(overrides: {
   usedPercent?: number
   isAppleSilicon?: boolean
   vramGB?: number | null
+  freeDiskGB?: number | null
 } = {}): SystemInfoFull {
   const totalGB = overrides.totalGB ?? 16
   const usedPercent = overrides.usedPercent ?? 30
@@ -24,7 +34,12 @@ function makeSystem(overrides: {
       vramGB: overrides.vramGB ?? null,
       isAppleSilicon: overrides.isAppleSilicon ?? true
     },
-    disk: { readMBps: 2000, writeMBps: 1500 },
+    disk: {
+      readMBps: 2000,
+      writeMBps: 1500,
+      freeGB: overrides.freeDiskGB === undefined ? 500 : overrides.freeDiskGB,
+      totalGB: 1000
+    },
     thermals: { cpuTempC: null }
   }
 }
@@ -123,5 +138,45 @@ describe('getRuntimeFit', () => {
 
   it('is comfortable on an idle machine', () => {
     expect(getRuntimeFit(makeSystem({ usedPercent: 20 }), makeModel())).toBe('comfortable')
+  })
+})
+
+describe('getDiskFit', () => {
+  it('is ok when the model fits with headroom to spare', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: 100 }), makeModel({ diskSizeGB: 4 }))).toBe('ok')
+  })
+
+  it('is tight when the download would leave almost nothing free', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: 5 }), makeModel({ diskSizeGB: 4 }))).toBe('tight')
+  })
+
+  it('is insufficient when the model is larger than the free space', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: 3 }), makeModel({ diskSizeGB: 40 }))).toBe(
+      'insufficient'
+    )
+  })
+
+  it('is unknown when free space could not be probed', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: null }), makeModel())).toBe('unknown')
+    expect(getDiskFit(null, makeModel())).toBe('unknown')
+  })
+
+  it('prefers the exact GGUF file size over the catalog estimate', () => {
+    const model = makeModel({ diskSizeGB: 4, ggufFileSize: 40 * 1024 ** 3 })
+    expect(estimateDownloadSizeGB(model)).toBeCloseTo(40, 5)
+    expect(getDiskFit(makeSystem({ freeDiskGB: 20 }), model)).toBe('insufficient')
+  })
+})
+
+describe('describeDiskFit', () => {
+  it('says nothing when there is room', () => {
+    expect(describeDiskFit(makeSystem({ freeDiskGB: 500 }), makeModel())).toBeNull()
+    expect(describeDiskFit(makeSystem({ freeDiskGB: null }), makeModel())).toBeNull()
+  })
+
+  it('reports both the requirement and what is actually free', () => {
+    const note = describeDiskFit(makeSystem({ freeDiskGB: 3 }), makeModel({ diskSizeGB: 40 }))
+    expect(note).toContain('40.0 GB')
+    expect(note).toContain('3.0 GB')
   })
 })

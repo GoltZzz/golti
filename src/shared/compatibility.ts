@@ -1,4 +1,4 @@
-import { SystemInfoFull, CookbookModel, ModelCompatibility, MemoryPressure } from './types'
+import { SystemInfoFull, CookbookModel, ModelCompatibility, MemoryPressure, DiskFit } from './types'
 
 const APPLE_SILICON_ALLOC_CAP = 0.75
 const OS_RESERVE_FRACTION = 0.28
@@ -121,4 +121,45 @@ export function getRuntimeFit(
   if (availableGB >= needGB * 1.15) return 'comfortable'
   if (availableGB >= needGB) return 'snug'
   return 'no_room'
+}
+
+/**
+ * Bytes the download itself needs beyond the finished file: resumable downloads
+ * write a partial alongside the target, and a volume with no slack left thrashes.
+ */
+const DISK_HEADROOM_GB = 2
+const DISK_TIGHT_MULTIPLIER = 1.15
+
+export function estimateDownloadSizeGB(model: CookbookModel): number {
+  if (model.ggufFileSize && model.ggufFileSize > 0) {
+    return model.ggufFileSize / 1024 ** 3
+  }
+  return model.diskSizeGB
+}
+
+/**
+ * Whether this machine has room to store the model. Separate from getCompatibility:
+ * a model can fit on disk and still be unrunnable, or run fine with nowhere to land.
+ */
+export function getDiskFit(system: SystemInfoFull | null, model: CookbookModel): DiskFit {
+  const freeGB = system?.disk?.freeGB
+  if (freeGB === null || freeGB === undefined) return 'unknown'
+
+  const needGB = estimateDownloadSizeGB(model)
+  if (freeGB >= needGB + DISK_HEADROOM_GB) return 'ok'
+  if (freeGB >= needGB * DISK_TIGHT_MULTIPLIER) return 'tight'
+  return 'insufficient'
+}
+
+export function describeDiskFit(system: SystemInfoFull | null, model: CookbookModel): string | null {
+  const fit = getDiskFit(system, model)
+  if (fit === 'ok' || fit === 'unknown') return null
+
+  const freeGB = system?.disk?.freeGB ?? 0
+  const needGB = estimateDownloadSizeGB(model)
+
+  if (fit === 'insufficient') {
+    return `Needs ~${needGB.toFixed(1)} GB but only ${freeGB.toFixed(1)} GB is free on this disk.`
+  }
+  return `Will leave under ${DISK_HEADROOM_GB} GB free (~${needGB.toFixed(1)} GB of ${freeGB.toFixed(1)} GB available).`
 }

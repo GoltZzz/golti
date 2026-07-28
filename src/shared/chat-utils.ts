@@ -278,6 +278,38 @@ export function createThinkStreamParser() {
   }
 }
 
+export interface HistoryTrimResult<T> {
+  kept: T[]
+  droppedCount: number
+  droppedTokens: number
+}
+
+export function trimHistoryToBudget<T extends { role: string; content: string }>(
+  history: T[],
+  availableTokens: number
+): HistoryTrimResult<T> {
+  if (history.length === 0) return { kept: [], droppedCount: 0, droppedTokens: 0 }
+
+  const tokens = history.map((m) => estimateTokens(m.content))
+
+  let start = history.length - 1
+  let used = tokens[start]
+  while (start > 0 && used + tokens[start - 1] <= availableTokens) {
+    start -= 1
+    used += tokens[start]
+  }
+
+  while (start < history.length - 1 && history[start].role === 'assistant') {
+    start += 1
+  }
+
+  return {
+    kept: history.slice(start),
+    droppedCount: start,
+    droppedTokens: tokens.slice(0, start).reduce((sum, t) => sum + t, 0)
+  }
+}
+
 export function computeTokenBudget(params: {
   contextWindow: number
   reservedOutputTokens: number
@@ -311,15 +343,18 @@ export function computeTokenBudget(params: {
     })
   }
 
-  let historyTokens = 0
-  for (const msg of history) {
-    historyTokens += estimateTokens(msg.content)
-  }
+  const draftTokens = estimateTokens(draft)
+
+  const fixedTokens =
+    items.reduce((sum, i) => sum + i.tokens, 0) + draftTokens + reservedOutputTokens
+
+  const trimmed = trimHistoryToBudget(history, contextWindow - fixedTokens)
+  const historyTokens = trimmed.kept.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+
   if (historyTokens > 0) {
     items.push({ id: 'history', label: 'Conversation', tokens: historyTokens, category: 'history' })
   }
 
-  const draftTokens = estimateTokens(draft)
   if (draftTokens > 0) {
     items.push({ id: 'draft', label: 'Draft', tokens: draftTokens, category: 'draft' })
   }
@@ -340,6 +375,7 @@ export function computeTokenBudget(params: {
     reservedOutputTokens,
     availableTokens,
     overflow: usedTokens > contextWindow,
+    trimmedMessages: trimmed.droppedCount,
     items
   }
 }

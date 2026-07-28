@@ -2285,3 +2285,26 @@
   gap: var(--space-3);
   padding: var(--space-3);
 }
+
+.disk-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 var(--space-4) var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid rgba(229, 192, 123, 0.35);
+  border-radius: 6px;
+  color: #e5c07b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.disk-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.disk-note-blocked {
+  border-color: rgba(224, 108, 117, 0.4);
+  color: #e06c75;
+}
