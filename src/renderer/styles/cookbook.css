@@ -563,19 +563,6 @@
   }
 }
 
-/* Ollama Offline Banner */
-.ollama-offline-banner {
-  background: rgba(224, 108, 117, 0.08);
-  border: 1px solid rgba(224, 108, 117, 0.25);
-  border-radius: var(--radius-md);
-  padding: var(--space-4) var(--space-5);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-4);
-  margin-top: -2px;
-}
-
 .banner-left {
   display: flex;
   align-items: center;
@@ -597,25 +584,6 @@
 .banner-text p {
   font-size: 12px;
   color: var(--text-secondary);
-}
-
-.ollama-download-link {
-  background: var(--accent-primary);
-  color: var(--text-on-accent);
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition: background-color var(--transition-fast);
-  white-space: nowrap;
-}
-
-.ollama-download-link:hover {
-  background: var(--accent-primary-hover);
 }
 
 /* Filter Bar Styles */
@@ -1060,21 +1028,6 @@
   cursor: not-allowed;
 }
 
-.ollama-offline-hint {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-
-.ollama-offline-hint-text {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-muted);
-  text-align: center;
-}
-
 .installed-action-container {
   display: flex;
   align-items: center;
@@ -1190,6 +1143,29 @@
   align-items: center;
   gap: 4px;
   margin-top: 4px;
+}
+
+.card-error-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: var(--radius-xs);
+  opacity: 0.7;
+}
+
+.card-error-dismiss:hover {
+  opacity: 1;
+  background: rgba(224, 108, 117, 0.15);
+}
+
+.card-error-dismiss:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
 }
 
 /* Spin Animation */
@@ -1604,12 +1580,6 @@
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.provider-badge.provider-ollama {
-  background: rgba(97, 175, 239, 0.15);
-  color: #61afef;
-  border: 1px solid rgba(97, 175, 239, 0.3);
 }
 
 .provider-badge.provider-golti-engine {

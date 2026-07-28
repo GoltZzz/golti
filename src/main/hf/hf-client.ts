@@ -15,6 +15,7 @@ import {
 } from '../../shared/hf-catalog'
 
 const API_ROOT = 'https://huggingface.co/api'
+const TRUSTED_AUTHORS = ['bartowski', 'unsloth', 'lmstudio-community', 'ggml-org', 'TheBloke']
 const USER_AGENT = 'golti-cookbook (+https://github.com/GoltZzz/golti)'
 const REQUEST_TIMEOUT_MS = 15000
 const LIST_TTL_MS = 30 * 60 * 1000
@@ -96,6 +97,49 @@ function listCacheKey(query: string, limit: number): string {
   return `${query.trim().toLowerCase()}::${limit}`
 }
 
+/**
+ * With no search term the shelf is drawn from uploaders known to publish
+ * reliable GGUFs, one request each. A plain top-downloads query returns barely
+ * a third from those authors, so filtering client-side would waste most of it.
+ */
+async function fetchTrustedShelf(limit: number): Promise<HFModelSummaryRaw[]> {
+  const perAuthor = Math.max(Math.ceil(limit / TRUSTED_AUTHORS.length) * 2, 10)
+
+  const batches = await Promise.allSettled(
+    TRUSTED_AUTHORS.map((author) =>
+      fetchJson<HFModelSummaryRaw[]>(
+        `${API_ROOT}/models?${new URLSearchParams({
+          author,
+          filter: 'gguf',
+          sort: 'downloads',
+          direction: '-1',
+          limit: String(perAuthor)
+        })}`
+      )
+    )
+  )
+
+  const ok = batches
+    .filter((b) => b.status === 'fulfilled')
+    .map((b) => (b as PromiseFulfilledResult<HFModelSummaryRaw[]>).value)
+
+  if (ok.length === 0) {
+    throw batches[0]?.status === 'rejected' ? batches[0].reason : new Error('Hugging Face unreachable')
+  }
+
+  const lists = ok.map((list) => [...list].sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0)))
+  const interleaved: HFModelSummaryRaw[] = []
+  for (let round = 0; interleaved.length < limit * 2; round++) {
+    const before = interleaved.length
+    for (const list of lists) {
+      if (list[round]) interleaved.push(list[round])
+    }
+    if (interleaved.length === before) break
+  }
+
+  return interleaved
+}
+
 export async function searchHFModels(
   query = '',
   limit = DEFAULT_LIMIT
@@ -109,17 +153,21 @@ export async function searchHFModels(
     return { models: cached.value, stale: false }
   }
 
-  const params = new URLSearchParams({
-    filter: 'gguf',
-    sort: 'downloads',
-    direction: '-1',
-    limit: String(safeLimit * 2)
-  })
   const trimmed = query.trim()
-  if (trimmed) params.set('search', trimmed)
 
   try {
-    const raw = await fetchJson<HFModelSummaryRaw[]>(`${API_ROOT}/models?${params.toString()}`)
+    const raw = trimmed
+      ? await fetchJson<HFModelSummaryRaw[]>(
+          `${API_ROOT}/models?${new URLSearchParams({
+            filter: 'gguf',
+            sort: 'downloads',
+            direction: '-1',
+            limit: String(safeLimit * 2),
+            search: trimmed
+          })}`
+        )
+      : await fetchTrustedShelf(safeLimit)
+
     const models = raw.filter(isChatCapableRepo).slice(0, safeLimit).map(deriveSummary)
     listCache.set(key, { value: models, fetchedAt: Date.now() })
     void persistDiskCache()

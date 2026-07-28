@@ -321,7 +321,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       id: newClientId('conv'),
       title: 'New Conversation',
       model: selected ? selected.name : 'llama3:latest',
-      providerId: selected ? selected.providerId : 'ollama-local',
+      providerId: selected ? selected.providerId : 'golti-engine-local',
       createdAt: Date.now(),
       updatedAt: Date.now(),
       pinned: false,
@@ -431,7 +431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const selected = get().selectedModel
     const modelName = selected ? selected.name : 'llama3:latest'
-    const providerId = selected ? selected.providerId : 'ollama-local'
+    const providerId = selected ? selected.providerId : 'golti-engine-local'
     const conv = get().conversations.find((c) => c.id === convId)
     const settings = await window.goltiAPI.getSettings()
     const forceWebSearch = Boolean(options?.forceWebSearch || get().forceWebSearchNext)
@@ -623,7 +623,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: convId,
       content: '',
       model: selected?.name || 'llama3:latest',
-      providerId: selected?.providerId || 'ollama-local',
+      providerId: selected?.providerId || 'golti-engine-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       messageId: assistantMessageId,
       webSearchEnabled: get().webSearchEnabled,
@@ -670,7 +670,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: convId,
       content: '',
       model: selected?.name || conv?.model || 'llama3:latest',
-      providerId: selected?.providerId || conv?.providerId || 'ollama-local',
+      providerId: selected?.providerId || conv?.providerId || 'golti-engine-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       messageId: assistantMessageId,
       composerMode: get().composerMode,
@@ -730,7 +730,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: convId,
       content,
       model: selected?.name || 'llama3:latest',
-      providerId: selected?.providerId || 'ollama-local',
+      providerId: selected?.providerId || 'golti-engine-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       editMessageId: userMessageId,
       webSearchEnabled: get().webSearchEnabled,

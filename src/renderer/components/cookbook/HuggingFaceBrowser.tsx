@@ -155,7 +155,6 @@ export const HuggingFaceBrowser: React.FC<HuggingFaceBrowserProps> = ({ systemIn
                                   !!model.ggufFilename &&
                                   localModels.some((lm) => lm.filename === model.ggufFilename)
                                 }
-                                isOllamaOnline={false}
                               />
                             ))}
                           </div>

@@ -19,7 +19,6 @@ import type {
   SearchRuntimeState,
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
-  OllamaState,
   CookbookModel
 } from '../shared/types'
 import type { HFModelSummary } from '../shared/hf-catalog'
@@ -149,38 +148,8 @@ const api = {
   // System
   getSystemInfo: () => ipcRenderer.invoke('system:info'),
   getSystemInfoFull: () => ipcRenderer.invoke('system:info:full'),
-  getOllamaStatus: () => ipcRenderer.invoke('cookbook:ollama-status'),
-  getOllamaProcessState: (): Promise<OllamaState> => ipcRenderer.invoke('ollama:status'),
-  installOllamaProcess: () => ipcRenderer.invoke('ollama:install'),
-  startOllamaProcess: () => ipcRenderer.invoke('ollama:start'),
-  stopOllamaProcess: () => ipcRenderer.invoke('ollama:stop'),
-  getOllamaLogs: (): Promise<string[]> => ipcRenderer.invoke('ollama:logs'),
-  onOllamaProgress: (callback: (data: any) => void) => {
-    const listener = (_: any, data: any) => callback(data)
-    ipcRenderer.on('ollama:download-progress', listener)
-    return () => ipcRenderer.removeListener('ollama:download-progress', listener)
-  },
-  onOllamaStateChange: (callback: (state: OllamaState) => void) => {
-    const listener = (_: any, state: OllamaState) => callback(state)
-    ipcRenderer.on('ollama:state-changed', listener)
-    return () => ipcRenderer.removeListener('ollama:state-changed', listener)
-  },
-  getInstalledModels: () => ipcRenderer.invoke('cookbook:installed-models'),
   getDetailedInstalledModels: (): Promise<InstalledLocalModelInfo[]> =>
     ipcRenderer.invoke('cookbook:detailed-installed-models'),
-  pullOllamaModel: (modelTag: string) => ipcRenderer.invoke('cookbook:ollama-pull', modelTag),
-  cancelOllamaPull: (modelTag: string) =>
-    ipcRenderer.invoke('cookbook:ollama-pull-cancel', modelTag) as Promise<{
-      success: boolean
-      error?: string
-    }>,
-  deleteOllamaModel: (modelTag: string) =>
-    ipcRenderer.invoke('cookbook:ollama-delete', modelTag) as Promise<{ success: boolean; error?: string }>,
-  onPullProgress: (callback: (data: any) => void) => {
-    const listener = (_: any, data: any) => callback(data)
-    ipcRenderer.on('cookbook:pull-progress', listener)
-    return () => ipcRenderer.removeListener('cookbook:pull-progress', listener)
-  },
   windowControl: (action: 'minimize' | 'maximize' | 'close') => ipcRenderer.send('window:control', action),
   getPlatform: (): Promise<'darwin' | 'win32' | 'linux'> => ipcRenderer.invoke('system:platform'),
 
@@ -217,6 +186,16 @@ const api = {
     ipcRenderer.invoke('hf:model-detail', repoId) as Promise<{
       repoId: string
       models: CookbookModel[]
+      error?: string
+    }>,
+  resolveModelGguf: (ollamaTag: string, quantization?: string) =>
+    ipcRenderer.invoke('hf:resolve-gguf', ollamaTag, quantization) as Promise<{
+      resolution: {
+        ggufUrl: string
+        ggufFilename: string
+        ggufFileSize: number
+        repoId: string
+      } | null
       error?: string
     }>,
   deleteLocalModel: (filename: string) =>

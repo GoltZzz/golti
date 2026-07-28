@@ -2,9 +2,7 @@ import type { EngineFailure } from './engine-startup'
 
 export type { EngineFailure }
 
-export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
-
-export type ModelSource = 'ollama' | 'golti-engine'
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'golti-engine'
 
 /** Composer Chat vs Agent mode (Cursor-style Shift+Tab toggle). */
 export type ComposerMode = 'chat' | 'agent'
@@ -36,22 +34,6 @@ export interface EngineState {
   lastLogs?: string
   /** Plain-language classification of the last startup failure. */
   failure?: EngineFailure
-}
-
-export interface OllamaState {
-  status: 'not-installed' | 'stopped' | 'starting' | 'running' | 'error'
-  error?: string
-  binaryPath?: string | null
-  port?: number
-  pid?: number | null
-  isSystemProcess?: boolean
-  /** systemd unit owning the process, when Ollama is installed as a Linux service. */
-  serviceUnit?: string
-  /** True when stopping the owning unit requires root. */
-  needsPrivilegedStop?: boolean
-  host?: string
-  version?: string
-  logs?: string[]
 }
 
 export type EngineDownloadStatus =
@@ -409,14 +391,6 @@ export interface CookbookModel {
   highlights: string[]
 }
 
-export interface PullProgress {
-  modelTag: string
-  status: string
-  completed: number
-  total: number
-  percent: number
-}
-
 export interface InstalledLocalModelInfo {
   id: string
   name: string
@@ -432,7 +406,6 @@ export interface InstalledLocalModelInfo {
   modifiedAt?: string
   modifiedAtFormatted?: string
   isGoltiEngine?: boolean
-  isOllama?: boolean
   isCatalogModel?: boolean
   catalogModelId?: string
 }
@@ -498,7 +471,6 @@ export interface Settings {
   defaultModel?: string
   defaultProviderId?: string
   sidebarCollapsed: boolean
-  ollamaAutoDetect: boolean
   systemPrompt: string
   osPlatformOverride?: 'auto' | 'darwin' | 'win32' | 'linux'
   engineEnabled: boolean

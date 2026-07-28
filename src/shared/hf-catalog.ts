@@ -1,5 +1,5 @@
 import { CookbookModel, ModelUseCase, QuantizationType } from './types'
-import { mapFamily, sizeTierFor } from './ollama-catalog'
+import { mapFamily, sizeTierFor } from './model-taxonomy'
 
 export interface HFModelSummaryRaw {
   id: string

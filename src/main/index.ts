@@ -31,7 +31,6 @@ import {
 import { exportConversation } from './services/export'
 import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/types'
 import { MODEL_CATALOG } from '../shared/model-catalog'
-import { normalizeOllamaTag } from '../shared/ollama-tags'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
 import {
@@ -56,6 +55,7 @@ import {
   getModelDir
 } from './engine'
 import { searchHFModels, fetchHFModelDetail } from './hf/hf-client'
+import { resolveGguf } from './hf/gguf-resolver'
 import {
   getSearchRuntimeState,
   initSearchRuntime,
@@ -69,8 +69,6 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
-import { cancelOllamaDownload, downloadOllamaBinary } from './ollama/ollama-binary-manager'
-import { getOllamaState, startOllama, stopOllama, getOllamaLogs } from './ollama/ollama-process'
 
 const execAsync = promisify(exec)
 
@@ -451,7 +449,7 @@ app.on('before-quit', (event) => {
     cancelAllGenerations()
   }
 
-  Promise.all([stopEngine(), stopSearchRuntime(), stopOllama()])
+  Promise.all([stopEngine(), stopSearchRuntime()])
     .catch((err) => console.warn('[Quit cleanup]', err))
     .finally(() => {
       cleanupComplete = true
@@ -665,93 +663,12 @@ function setupIpcHandlers(): void {
     return await getFullSystemInfo()
   })
 
-  // Cookbook Ollama Status check
-  ipcMain.handle('cookbook:ollama-status', async () => {
-    const providers = dbProviders.list()
-    const ollamaProvider = providers.find(p => p.type === 'ollama')
-    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 2000)
-      const res = await fetch(`${endpoint}/api/tags`, { signal: controller.signal })
-      clearTimeout(timeoutId)
-      return { online: res.ok }
-    } catch (e) {
-      return { online: false }
-    }
-  })
-
-  // Cookbook Installed Models check
-  ipcMain.handle('cookbook:installed-models', async () => {
-    const providers = dbProviders.list()
-    const ollamaProvider = providers.find(p => p.type === 'ollama')
-    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
-    try {
-      const res = await fetch(`${endpoint}/api/tags`)
-      if (!res.ok) return []
-      const data = (await res.json()) as any
-      if (Array.isArray(data.models)) {
-        return data.models.map((m: any) => m.name || m.model)
-      }
-      return []
-    } catch (e) {
-      console.warn('Failed to fetch installed Ollama models:', e)
-      return []
-    }
-  })
-
-  // Detailed Local Models list (Ollama + Golti Engine)
+  // Detailed Local Models list (Golti Engine)
   ipcMain.handle('cookbook:detailed-installed-models', async (): Promise<InstalledLocalModelInfo[]> => {
     const installedList: InstalledLocalModelInfo[] = []
     const providers = dbProviders.list()
 
-    // 1. Ollama Models
-    const ollamaProvider = providers.find(p => p.type === 'ollama')
-    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
-    try {
-      const res = await fetch(`${endpoint}/api/tags`)
-      if (res.ok) {
-        const data = (await res.json()) as any
-        if (Array.isArray(data.models)) {
-          for (const m of data.models) {
-            const tagName = m.name || m.model || ''
-            if (!tagName) continue
-            const details = m.details || {}
-            const normalized = normalizeOllamaTag(tagName)
-            const catalogMatch = MODEL_CATALOG.find(cat => normalizeOllamaTag(cat.ollamaTag) === normalized)
-
-            let formattedSize: string | undefined
-            if (m.size) {
-              const gb = m.size / (1024 * 1024 * 1024)
-              formattedSize = gb >= 1 ? `${gb.toFixed(2)} GB` : `${(m.size / (1024 * 1024)).toFixed(0)} MB`
-            }
-
-            installedList.push({
-              id: `ollama:${tagName}`,
-              name: catalogMatch ? catalogMatch.name : tagName,
-              tag: tagName,
-              providerType: 'ollama',
-              providerId: ollamaProvider?.id || 'ollama-default',
-              providerName: ollamaProvider?.name || 'Ollama',
-              sizeBytes: m.size,
-              sizeFormatted: formattedSize || (catalogMatch ? `${catalogMatch.diskSizeGB} GB` : undefined),
-              parameterSize: details.parameter_size || (catalogMatch ? `${catalogMatch.parameterBillions}B` : undefined),
-              quantizationLevel: details.quantization_level || (catalogMatch ? catalogMatch.quantization : undefined),
-              family: details.family || (catalogMatch ? catalogMatch.family : undefined),
-              modifiedAt: m.modified_at,
-              modifiedAtFormatted: m.modified_at ? new Date(m.modified_at).toLocaleDateString() : undefined,
-              isOllama: true,
-              isCatalogModel: !!catalogMatch,
-              catalogModelId: catalogMatch?.id
-            })
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Cookbook] Failed to fetch Ollama detailed models:', e)
-    }
-
-    // 2. Golti Engine Models (.gguf files)
+    // Golti Engine Models (.gguf files)
     try {
       const engineProvider = providers.find(p => p.type === 'golti-engine')
       const localEngineFiles = listLocalModels()
@@ -779,204 +696,6 @@ function setupIpcHandlers(): void {
     }
 
     return installedList
-  })
-
-  // Active Ollama pulls keyed by normalized tag (supports cancel)
-  type ActiveOllamaPull = {
-    controller: AbortController
-    reader: ReadableStreamDefaultReader<Uint8Array> | null
-  }
-  const activeOllamaPulls = new Map<string, ActiveOllamaPull>()
-
-  // Cookbook Ollama Model Pull
-  ipcMain.handle('cookbook:ollama-pull', async (_, modelTag: string) => {
-    const providers = dbProviders.list()
-    const ollamaProvider = providers.find(p => p.type === 'ollama')
-    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
-    const pullKey = normalizeOllamaTag(modelTag)
-
-    // Abort any existing pull for the same tag before starting a new one
-    const existing = activeOllamaPulls.get(pullKey)
-    if (existing) {
-      existing.controller.abort()
-      try {
-        void existing.reader?.cancel('superseded')
-      } catch {
-        // ignore
-      }
-      activeOllamaPulls.delete(pullKey)
-    }
-
-    const controller = new AbortController()
-    const pullEntry: ActiveOllamaPull = { controller, reader: null }
-    activeOllamaPulls.set(pullKey, pullEntry)
-
-    try {
-      const response = await fetch(`${endpoint}/api/pull`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: modelTag,
-          stream: true
-        }),
-        signal: controller.signal
-      })
-
-      if (!response.ok || !response.body) {
-        activeOllamaPulls.delete(pullKey)
-        throw new Error(`Ollama error (${response.status}): ${await response.text()}`)
-      }
-
-      const reader = response.body.getReader()
-      pullEntry.reader = reader
-      const decoder = new TextDecoder('utf-8')
-      let buffer = ''
-      let lastProgress = { completed: 0, total: 0, percent: 0 }
-
-      // Process stream asynchronously
-      ;(async () => {
-        try {
-          while (true) {
-            if (controller.signal.aborted) break
-
-            const { done, value } = await reader.read()
-            if (done) break
-
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
-
-            for (const line of lines) {
-              if (!line.trim()) continue
-              try {
-                const parsed = JSON.parse(line)
-                const completed = parsed.completed || 0
-                const total = parsed.total || 0
-                const percent = total > 0 ? Math.round((completed / total) * 100) : 0
-                lastProgress = { completed, total, percent }
-
-                mainWindow?.webContents.send('cookbook:pull-progress', {
-                  modelTag,
-                  status: parsed.status || 'pulling',
-                  completed,
-                  total,
-                  percent
-                })
-              } catch (e) {
-                // Ignore partial JSON
-              }
-            }
-          }
-
-          if (controller.signal.aborted) {
-            mainWindow?.webContents.send('cookbook:pull-progress', {
-              modelTag,
-              status: 'cancelled',
-              completed: lastProgress.completed,
-              total: lastProgress.total,
-              percent: lastProgress.percent
-            })
-            return
-          }
-
-          // Done pulling, notify completion
-          mainWindow?.webContents.send('cookbook:pull-progress', {
-            modelTag,
-            status: 'success',
-            completed: 100,
-            total: 100,
-            percent: 100
-          })
-
-          // Trigger model scan refresh in provider manager
-          setTimeout(async () => {
-            try {
-              await getAllModels()
-            } catch (err) {}
-          }, 1000)
-        } catch (streamErr: any) {
-          if (controller.signal.aborted || streamErr?.name === 'AbortError') {
-            mainWindow?.webContents.send('cookbook:pull-progress', {
-              modelTag,
-              status: 'cancelled',
-              completed: lastProgress.completed,
-              total: lastProgress.total,
-              percent: lastProgress.percent
-            })
-            return
-          }
-          console.error('[Ollama Pull Stream Error]', streamErr)
-          mainWindow?.webContents.send('cookbook:pull-progress', {
-            modelTag,
-            status: 'error',
-            completed: lastProgress.completed,
-            total: lastProgress.total,
-            percent: lastProgress.percent,
-            error: streamErr.message
-          })
-        } finally {
-          if (activeOllamaPulls.get(pullKey) === pullEntry) {
-            activeOllamaPulls.delete(pullKey)
-          }
-        }
-      })()
-
-      return { success: true }
-    } catch (err: any) {
-      if (activeOllamaPulls.get(pullKey) === pullEntry) {
-        activeOllamaPulls.delete(pullKey)
-      }
-      if (err?.name === 'AbortError' || controller.signal.aborted) {
-        mainWindow?.webContents.send('cookbook:pull-progress', {
-          modelTag,
-          status: 'cancelled',
-          completed: 0,
-          total: 0,
-          percent: 0
-        })
-        return { success: true, cancelled: true }
-      }
-      console.error('[Ollama Pull Error]', err)
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('cookbook:ollama-pull-cancel', (_, modelTag: string) => {
-    const pullKey = normalizeOllamaTag(modelTag)
-    const entry = activeOllamaPulls.get(pullKey)
-    if (!entry) return { success: false, error: 'No active pull for this model' }
-    entry.controller.abort()
-    try {
-      void entry.reader?.cancel('user-cancel')
-    } catch {
-      // ignore
-    }
-    return { success: true }
-  })
-
-  // Ollama Background Process IPC Handlers
-  ipcMain.handle('ollama:status', () => getOllamaState())
-  
-  ipcMain.handle('ollama:install', async () => {
-    return await downloadOllamaBinary((progress) => {
-      mainWindow?.webContents.send('ollama:download-progress', progress)
-    })
-  })
-
-  ipcMain.handle('ollama:cancel-install', () => {
-    return cancelOllamaDownload()
-  })
-
-  ipcMain.handle('ollama:start', async () => {
-    return await startOllama()
-  })
-
-  ipcMain.handle('ollama:stop', async () => {
-    return stopOllama()
-  })
-
-  ipcMain.handle('ollama:logs', () => {
-    return getOllamaLogs()
   })
 
   // Golti Engine IPC Handlers
@@ -1116,6 +835,13 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('hf:model-detail', async (_, repoId: string) => fetchHFModelDetail(repoId))
 
+  ipcMain.handle('hf:resolve-gguf', async (_, ollamaTag: string, quantization?: string) =>
+    resolveGguf(
+      typeof ollamaTag === 'string' ? ollamaTag : '',
+      (quantization as any) || 'Q4_K_M'
+    )
+  )
+
   ipcMain.handle('engine:delete-model', async (_, filename: string) => {
     const state = getEngineState()
     if (state.loadedModel) {
@@ -1140,38 +866,5 @@ function setupIpcHandlers(): void {
     }
   })
 
-  // Cookbook Ollama Model Delete
-  ipcMain.handle('cookbook:ollama-delete', async (_, modelTag: string) => {
-    const providers = dbProviders.list()
-    const ollamaProvider = providers.find(p => p.type === 'ollama')
-    const endpoint = (ollamaProvider?.endpoint || 'http://localhost:11434').replace(/\/+$/, '')
-
-    try {
-      const response = await fetch(`${endpoint}/api/delete`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelTag, name: modelTag })
-      })
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        return {
-          success: false,
-          error: text || `Ollama delete failed (${response.status})`
-        }
-      }
-
-      try {
-        await getAllModels()
-      } catch (e) {}
-
-      return { success: true }
-    } catch (err: any) {
-      return {
-        success: false,
-        error: err.message || 'Failed to delete Ollama model. Is Ollama running?'
-      }
-    }
-  })
 }
 

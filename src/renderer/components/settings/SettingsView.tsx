@@ -660,7 +660,7 @@ export const SettingsView: React.FC = () => {
                   marginBottom: "var(--space-3)",
                 }}
               >
-                Golti Engine runs local GGUF models on your machine. If you only use Cloud APIs (OpenAI, Gemini, Anthropic) or Ollama, you can hide Golti Engine status banners and options.
+                Golti Engine runs local GGUF models on your machine. If you only use Cloud APIs (OpenAI, Gemini, Anthropic), you can hide Golti Engine status banners and options.
               </p>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
                 <input

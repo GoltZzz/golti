@@ -27,7 +27,7 @@ interface HFCatalogState {
 let searchToken = 0
 
 export const useHFCatalogStore = create<HFCatalogState>((set, get) => ({
-  enabled: false,
+  enabled: true,
   results: [],
   loading: false,
   error: null,
