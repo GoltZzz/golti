@@ -5,7 +5,26 @@ import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
 import { detectGpu, GpuVendor } from './gpu-detect'
 import { computeContextSize, reduceContextSize, MIN_CONTEXT_SIZE } from './context-size'
+import { readGgufModelInfo } from './gguf'
+import { getAvailableMemoryBytes } from '../system/memory'
+import { detectCpuCounts } from '../system/cpu'
+import { kvBytesPerToken } from '../../shared/context-budget'
+import {
+  buildTuningArgs,
+  chooseThreadCount,
+  computeOffloadLayers,
+  isUnsupportedArgFailure,
+  reduceOffloadLayers
+} from '../../shared/engine-tuning'
 import { EngineState } from '../../shared/types'
+import {
+  EngineFailure,
+  classifyEngineFailure,
+  engineFailureText,
+  estimateEngineLoadBudgetMs,
+  ENGINE_LOAD_IDLE_GRACE_MS,
+  ENGINE_LOAD_CEILING_MS
+} from '../../shared/engine-startup'
 
 const execFileAsync = promisify(execFile)
 
@@ -82,11 +101,6 @@ export async function checkEngineHealth(port: number = 8391): Promise<boolean> {
   return false
 }
 
-/** Nominal transformer layer count used to turn a VRAM budget into an `-ngl` value. */
-const NOMINAL_LAYERS = 32
-/** VRAM (GB) held back for the framebuffer, driver, and KV cache. */
-const VRAM_RESERVE_GB = 0.9
-
 export interface EngineDevice {
   /** Backend device id, e.g. "Vulkan1", used with `--device`. */
   id: string
@@ -151,21 +165,21 @@ export async function computeGpuLayers(modelPath?: string, vramGBOverride?: numb
   // fallback path shed layers if it doesn't fit.
   if (!vramGB || !modelPath) return -1
 
-  let fileGB = 0
-  try {
-    fileGB = fs.statSync(modelPath).size / (1024 * 1024 * 1024)
-  } catch {
-    return -1
-  }
-  if (fileGB <= 0) return -1
+  const modelBytes = statSizeBytes(modelPath) ?? 0
+  if (modelBytes <= 0) return -1
 
-  const usable = vramGB - VRAM_RESERVE_GB
-  if (usable <= 0.5) return 0 // Not enough headroom to be worth it.
-  if (usable >= fileGB * 1.05) return -1 // Whole model fits in VRAM.
-
-  const perLayerGB = fileGB / NOMINAL_LAYERS
-  const layers = Math.floor(usable / perLayerGB)
-  return Math.max(1, Math.min(NOMINAL_LAYERS - 1, layers))
+  const info = readGgufModelInfo(modelPath)
+  return computeOffloadLayers({
+    modelBytes,
+    vramBytes: vramGB * 1024 * 1024 * 1024,
+    layerCount: info?.blockCount,
+    kvBytesPerToken: kvBytesPerToken({
+      blockCount: info?.blockCount,
+      embeddingLength: info?.embeddingLength,
+      headCount: info?.headCount,
+      headCountKv: info?.headCountKv
+    })
+  })
 }
 
 /** stderr signatures that mean "the GPU couldn't allocate / initialize". */
@@ -186,11 +200,14 @@ function isGpuFailure(stderr: string): boolean {
   return GPU_FAILURE_MARKERS.some((m) => lower.includes(m))
 }
 
-/** Next, smaller offload value to try after a GPU failure. Ends at 0 (CPU). */
-function reduceLayers(current: number): number {
-  if (current < 0) return Math.floor(NOMINAL_LAYERS / 2) // -1 (all) → half
-  if (current <= 1) return 0
-  return Math.floor(current / 2)
+export class EngineStartError extends Error {
+  readonly failure: EngineFailure
+
+  constructor(failure: EngineFailure) {
+    super(engineFailureText(failure))
+    this.name = 'EngineStartError'
+    this.failure = failure
+  }
 }
 
 interface AttemptResult {
@@ -198,6 +215,8 @@ interface AttemptResult {
   /** Resolves true if the process died early with a GPU-allocation error. */
   earlyGpuFailure: Promise<boolean>
   getStderr: () => string
+  getLastOutputAt: () => number
+  hasExited: () => boolean
 }
 
 /** Spawns one llama-server attempt and watches for an early GPU failure. */
@@ -210,10 +229,13 @@ function spawnAttempt(binaryPath: string, args: string[]): AttemptResult {
 
   let stderrBuffer = ''
   let listening = false
+  let lastOutputAt = Date.now()
+  let exited = false
 
   const earlyGpuFailure = new Promise<boolean>((resolve) => {
     const onData = (data: Buffer) => {
       const str = data.toString()
+      lastOutputAt = Date.now()
       console.log(`[llama-server] ${str}`)
       if (str.includes('HTTP server listening') || str.includes('server is listening')) {
         listening = true
@@ -225,14 +247,56 @@ function spawnAttempt(binaryPath: string, args: string[]): AttemptResult {
       onData(data)
     })
     proc.on('exit', () => {
+      exited = true
       // Exited before it ever listened, with a GPU-allocation error → retryable.
       resolve(!listening && isGpuFailure(stderrBuffer))
     })
-    // If it's still alive after the warm-up window, it's not an early failure.
-    setTimeout(() => resolve(false), 8000)
   })
 
-  return { process: proc, earlyGpuFailure, getStderr: () => stderrBuffer }
+  return {
+    process: proc,
+    earlyGpuFailure,
+    getStderr: () => stderrBuffer,
+    getLastOutputAt: () => lastOutputAt,
+    hasExited: () => exited
+  }
+}
+
+/**
+ * Polls `/health` until the server answers. The deadline scales with the model
+ * file size, and extends whenever the process is still writing output, so a slow
+ * load is never mistaken for a hung one.
+ */
+async function waitForHealthy(
+  port: number,
+  attempt: AttemptResult,
+  budgetMs: number
+): Promise<boolean> {
+  const startedAt = Date.now()
+  const ceiling = startedAt + ENGINE_LOAD_CEILING_MS
+
+  while (true) {
+    if (await checkEngineHealth(port)) return true
+    if (attempt.hasExited()) return false
+
+    const now = Date.now()
+    const deadline = Math.min(
+      Math.max(startedAt + budgetMs, attempt.getLastOutputAt() + ENGINE_LOAD_IDLE_GRACE_MS),
+      ceiling
+    )
+    if (now >= deadline) return false
+
+    await new Promise((r) => setTimeout(r, 500))
+  }
+}
+
+function statSizeBytes(filePath?: string): number | undefined {
+  if (!filePath) return undefined
+  try {
+    return fs.statSync(filePath).size
+  } catch {
+    return undefined
+  }
 }
 
 export async function startEngine(
@@ -250,14 +314,25 @@ export async function startEngine(
   }
 
   if (!isBinaryInstalled()) {
-    updateState({ status: 'not-installed', error: 'Engine binary not installed' })
-    throw new Error('Engine binary not installed')
+    const failure: EngineFailure = {
+      kind: 'not-installed',
+      title: 'Golti Engine is not installed yet',
+      detail: 'The local inference engine still needs to be downloaded. You can install it from Settings.',
+      action: 'open-settings'
+    }
+    updateState({ status: 'not-installed', error: engineFailureText(failure), failure })
+    throw new EngineStartError(failure)
   }
 
   if (!modelPath) {
-    const noModelMsg = 'No GGUF model found. Please download a model from the Hardware Cookbook before starting Golti Engine.'
-    updateState({ status: 'error', error: noModelMsg })
-    throw new Error(noModelMsg)
+    const failure: EngineFailure = {
+      kind: 'no-model',
+      title: 'No model is installed',
+      detail: 'Golti Engine needs a model file before it can answer. Pick one from the Hardware Cookbook to get started.',
+      action: 'choose-smaller-model'
+    }
+    updateState({ status: 'error', error: engineFailureText(failure), failure })
+    throw new EngineStartError(failure)
   }
 
   const binaryPath = getBinaryPath()
@@ -287,6 +362,13 @@ export async function startEngine(
   let layers = gpuLayers ?? (await computeGpuLayers(modelPath, device ? device.freeMiB / 1024 : undefined))
   let fellBack = false
 
+  const layerCount = readGgufModelInfo(modelPath)?.blockCount
+  const threads = chooseThreadCount(await detectCpuCounts())
+  let tuningEnabled = true
+  console.log(
+    `[GoltiEngine] Offload ${layers} of ${layerCount ?? 'unknown'} layers, ${threads} generation threads`
+  )
+
   const sizing = await computeContextSize({
     modelPath,
     gpuLayers: layers,
@@ -299,10 +381,23 @@ export async function startEngine(
       (sizing.cappedByMemory ? ', capped by available memory)' : ')')
   )
 
+  const modelSizeBytes = statSizeBytes(modelPath)
+  const freeMemoryBytes = await getAvailableMemoryBytes().catch(() => undefined)
+  const loadBudgetMs = estimateEngineLoadBudgetMs(modelSizeBytes, freeMemoryBytes)
+  console.log(`[GoltiEngine] Load budget ${Math.round(loadBudgetMs / 1000)}s for ${modelPath}`)
+
   // Find available port to prevent port binding collisions.
   const actualPort = await findAvailablePort(port)
 
-  updateState({ status: 'starting', port: actualPort, error: undefined, lastLogs: undefined, backend, gpuDevice: device?.name })
+  updateState({
+    status: 'starting',
+    port: actualPort,
+    error: undefined,
+    failure: undefined,
+    lastLogs: undefined,
+    backend,
+    gpuDevice: device?.name
+  })
 
   while (true) {
     const args: string[] = [
@@ -316,6 +411,7 @@ export async function startEngine(
     if (modelPath) args.push('--model', modelPath)
     if (device) args.push('--device', device.id)
     args.push('--n-gpu-layers', String(layers))
+    args.push(...buildTuningArgs({ gpuLayers: layers, threads, enabled: tuningEnabled }))
 
     let attempt: AttemptResult
     try {
@@ -329,24 +425,22 @@ export async function startEngine(
     const pid = currentProcess.pid
     updateState({ pid, binaryPath, binaryVersion: LLAMA_VERSION, backend, gpuLayers: layers, fellBackToCpu: fellBack, contextSize })
 
-    // Race an early GPU failure against the health check.
-    const gpuFailed = await Promise.race([
-      attempt.earlyGpuFailure,
-      (async () => {
-        let attempts = 0
-        while (attempts < 16) {
-          await new Promise((r) => setTimeout(r, 500))
-          attempts++
-          if (await checkEngineHealth(actualPort)) return false
-          if (!currentProcess) return true // exited underneath us
-        }
-        return false
-      })()
-    ])
+    const isHealthy = await waitForHealthy(actualPort, attempt, loadBudgetMs)
+
+    if (!isHealthy && attempt.hasExited() && tuningEnabled && isUnsupportedArgFailure(attempt.getStderr())) {
+      // This engine build rejects one of the performance flags — retry plain.
+      console.warn('[GoltiEngine] Engine rejected tuning flags, retrying without them')
+      try { currentProcess?.kill('SIGKILL') } catch {}
+      currentProcess = null
+      tuningEnabled = false
+      continue
+    }
+
+    const gpuFailed = !isHealthy && attempt.hasExited() && (await attempt.earlyGpuFailure)
 
     if (gpuFailed && layers !== 0) {
       // GPU couldn't fit the model — shed layers and retry the same binary.
-      const nextLayers = reduceLayers(layers)
+      const nextLayers = reduceOffloadLayers(layers, layerCount)
       console.warn(`[GoltiEngine] GPU offload failed at ${layers} layers, retrying with ${nextLayers}`)
       try { currentProcess?.kill('SIGKILL') } catch {}
       currentProcess = null
@@ -355,8 +449,6 @@ export async function startEngine(
       continue
     }
 
-    // Verify health
-    const isHealthy = await checkEngineHealth(actualPort)
     if (!isHealthy) {
       const stderr = attempt.getStderr().trim()
       if (layers !== 0) {
@@ -375,12 +467,25 @@ export async function startEngine(
         contextSize = nextContext
         continue
       }
-      const errorMsg = stderr || 'llama-server failed to start or health check timed out.'
-      console.error('[GoltiEngine] Server failed health check:', errorMsg)
+      const failure = classifyEngineFailure({
+        stderr,
+        timedOut: !attempt.hasExited(),
+        exitCode: attempt.process.exitCode,
+        modelPath,
+        modelSizeBytes,
+        freeMemoryBytes
+      })
+      console.error('[GoltiEngine] Server failed to start:', failure.kind, stderr)
       try { currentProcess?.kill('SIGKILL') } catch {}
       currentProcess = null
-      updateState({ status: 'error', error: errorMsg, lastLogs: stderr || errorMsg, pid: undefined })
-      throw new Error(errorMsg)
+      updateState({
+        status: 'error',
+        error: engineFailureText(failure),
+        failure,
+        lastLogs: stderr || undefined,
+        pid: undefined
+      })
+      throw new EngineStartError(failure)
     }
 
     // Committed to this process — attach the long-lived listeners.
@@ -390,10 +495,24 @@ export async function startEngine(
       const stderrMsg = attempt.getStderr().trim()
       currentProcess = null
       if (isUnexpected) {
-        const errStr = stderrMsg || `Engine process exited unexpectedly with code ${code}`
-        updateState({ status: 'error', error: errStr, lastLogs: stderrMsg || errStr, pid: undefined, loadedModel: undefined })
+        const failure = classifyEngineFailure({
+          stderr: stderrMsg,
+          exitCode: code,
+          signal,
+          modelPath,
+          modelSizeBytes,
+          freeMemoryBytes
+        })
+        updateState({
+          status: 'error',
+          error: engineFailureText(failure),
+          failure,
+          lastLogs: stderrMsg || undefined,
+          pid: undefined,
+          loadedModel: undefined
+        })
       } else {
-        updateState({ status: 'stopped', pid: undefined, loadedModel: undefined })
+        updateState({ status: 'stopped', pid: undefined, loadedModel: undefined, failure: undefined })
       }
     })
     currentProcess.on('error', (err) => {

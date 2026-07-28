@@ -22,14 +22,12 @@ export const ProviderConfig: React.FC = () => {
     const newId = `${type}_${Date.now()}`
     const defaultEndpoints: Record<ProviderType, string> = {
       'golti-engine': 'http://127.0.0.1:8391',
-      ollama: 'http://localhost:11434',
       openai: 'https://api.openai.com/v1',
       anthropic: 'https://api.anthropic.com/v1',
       google: 'https://generativelanguage.googleapis.com'
     }
     const names: Record<ProviderType, string> = {
       'golti-engine': 'Golti Engine Local',
-      ollama: 'Ollama Local',
       openai: 'OpenAI Cloud',
       anthropic: 'Anthropic Claude',
       google: 'Google Gemini'
@@ -61,13 +59,13 @@ export const ProviderConfig: React.FC = () => {
       <div>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>AI Providers & Backends</h3>
         <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          Configure your local Ollama server or add API keys for OpenAI, Anthropic, or Google.
+          Add API keys for OpenAI, Anthropic, or Google. Local models run on Golti Engine.
         </p>
       </div>
 
       {/* Add Provider Buttons */}
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        {(['ollama', 'openai', 'anthropic', 'google'] as ProviderType[]).map(t => (
+        {(['openai', 'anthropic', 'google'] as ProviderType[]).map(t => (
           <button
             key={t}
             onClick={() => handleCreate(t)}
@@ -182,30 +180,7 @@ export const ProviderConfig: React.FC = () => {
                   />
                 </div>
 
-                {p.type === 'ollama' && (
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                      Ollama Endpoint URL
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.endpoint || ''}
-                      onChange={e => setFormData({ ...formData, endpoint: e.target.value })}
-                      placeholder="http://localhost:11434"
-                      style={{
-                        width: '100%',
-                        padding: '8px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'var(--bg-input)',
-                        border: '1px solid var(--border-medium)',
-                        color: 'var(--text-primary)',
-                        fontSize: '13px'
-                      }}
-                    />
-                  </div>
-                )}
-
-                {p.type !== 'ollama' && (
+                {(
                   <div>
                     <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
                       API Key

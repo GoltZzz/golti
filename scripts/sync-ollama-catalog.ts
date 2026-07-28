@@ -165,7 +165,7 @@ function selectTags(entries: TagPageEntry[]): TagPageEntry[] {
 
 interface RegistryManifest {
   config?: { digest?: string }
-  layers?: { mediaType: string; size: number }[]
+  layers?: { mediaType: string; size: number; digest?: string }[]
 }
 
 interface RegistryConfig {
@@ -183,7 +183,7 @@ async function fetchTagDetails(
       await fetchText(`${REGISTRY}/${modelName}/manifests/${entry.tag}`)
     )
     const weights = manifest.layers?.find((l) => l.mediaType === 'application/vnd.ollama.image.model')
-    if (!weights?.size || !manifest.config?.digest) return null
+    if (!weights?.size || !weights.digest || !manifest.config?.digest) return null
 
     const config: RegistryConfig = JSON.parse(
       await fetchText(`${REGISTRY}/${modelName}/blobs/${manifest.config.digest}`)
@@ -195,6 +195,7 @@ async function fetchTagDetails(
       modelType: config.model_type,
       fileType: config.file_type,
       sizeBytes: weights.size,
+      blobDigest: weights.digest,
       modelFamily: config.model_family,
       contextLabel: entry.contextLabel,
       inputs: entry.inputs
@@ -256,6 +257,14 @@ async function main(): Promise<void> {
   const generated = perModel.flat()
   const distinctModels = new Set(generated.map((m) => m.ollamaTag.split(':')[0])).size
   log(`Derived ${generated.length} entries across ${distinctModels} models`)
+
+  const downloadable = generated.filter((m) => m.ggufUrl && m.ggufFilename && m.ggufFileSize)
+  log(`  ${downloadable.length}/${generated.length} are engine-downloadable`)
+  if (downloadable.length !== generated.length) {
+    throw new Error(
+      `${generated.length - downloadable.length} entries resolved without a GGUF blob URL; the registry layout may have changed`
+    )
+  }
 
   if (Number.isFinite(limit)) {
     log('Limit flag set — skipping the minimum-coverage check')

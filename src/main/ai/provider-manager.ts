@@ -5,7 +5,6 @@ import type {
   ProviderStreamEvent
 } from '../../shared/types'
 import { dbProviders } from '../db/database'
-import { fetchOllamaModels, streamOllamaChat } from './providers/ollama'
 import { fetchOpenAIModels, streamOpenAIChat } from './providers/openai'
 import { fetchAnthropicModels, streamAnthropicChat } from './providers/anthropic'
 import { fetchGoogleModels, streamGoogleChat } from './providers/google'
@@ -29,9 +28,7 @@ export async function getAllModels(): Promise<ModelInfo[]> {
   for (const provider of activeProviders) {
     try {
       let modelsList: string[] = []
-      if (provider.type === 'ollama') {
-        modelsList = await fetchOllamaModels(provider.endpoint)
-      } else if (provider.type === 'openai') {
+      if (provider.type === 'openai') {
         modelsList = await fetchOpenAIModels(provider)
       } else if (provider.type === 'anthropic') {
         modelsList = await fetchAnthropicModels(provider)
@@ -87,9 +84,7 @@ export async function* streamChatResponse(
     throw new Error(`Provider not found: ${providerId}`)
   }
 
-  if (provider.type === 'ollama') {
-    yield* streamOllamaChat(provider, model, messages, systemPrompt, options)
-  } else if (provider.type === 'openai') {
+  if (provider.type === 'openai') {
     yield* streamOpenAIChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'anthropic') {
     yield* streamAnthropicChat(provider, model, messages, systemPrompt, options)

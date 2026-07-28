@@ -40,7 +40,7 @@ export const PlaceholderView: React.FC<PlaceholderViewProps> = ({ tab }) => {
     },
     cookbook: {
       title: 'Hardware Cookbook',
-      desc: 'Hardware scanner and model fit recommendation engine for local Ollama models.',
+      desc: 'Hardware scanner and model fit recommendation engine for local GGUF models.',
       phase: 'Phase 4',
       icon: <BookOpen size={32} />
     }

@@ -19,9 +19,16 @@ import {
   extractShells,
   extractThinkingTags,
   createThinkStreamParser,
-  getBranchPath
+  getBranchPath,
+  trimHistoryToBudget
 } from '../../shared/chat-utils'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
+import {
+  buildContextBlock,
+  buildSystemPrompt,
+  orderPromptMessages,
+  selectContextItems
+} from '../../shared/prompt-assembly'
 import { CONTINUE_INSTRUCTION, normalizeFinishReason } from '../../shared/finish-reason'
 import { resolveContextWindow } from './context-window'
 import {
@@ -35,6 +42,7 @@ import {
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 import { startDeepResearch } from './deep-research'
+import { presentableErrorMessage } from '../../shared/error-display'
 
 interface ActiveGeneration {
   generationId: string
@@ -68,19 +76,8 @@ function sendChunk(win: BrowserWindow | null, chunk: StreamChunkPayload): void {
   }
 }
 
-function buildContextBlock(conversationId: string, contextItemIds?: string[]): string {
-  const items = dbContext.list(conversationId).filter((c) => {
-    if (!c.enabled) return false
-    if (contextItemIds && contextItemIds.length > 0) {
-      return contextItemIds.includes(c.id)
-    }
-    return true
-  })
-  if (items.length === 0) return ''
-  const parts = items.map((item) => {
-    return `<context name="${item.name}" type="${item.type}">\n${item.content}\n</context>`
-  })
-  return `Use the following attached context when relevant:\n\n${parts.join('\n\n')}`
+function buildConversationContextBlock(conversationId: string, contextItemIds?: string[]): string {
+  return buildContextBlock(selectContextItems(dbContext.list(conversationId), contextItemIds))
 }
 
 /** Update the live buffer for an in-flight generation. Used by the streaming
@@ -285,14 +282,11 @@ export async function startChatGeneration(
       ]
     : branchPath.filter((m) => m.id !== assistantMsgId)
 
-  const contextBlock = buildContextBlock(conversationId, contextItemIds)
-  const effectiveSystem = [
-    systemPrompt || conv?.systemPrompt || settings.systemPrompt,
-    composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
-    contextBlock
-  ]
-    .filter(Boolean)
-    .join('\n\n')
+  const effectiveSystem = buildSystemPrompt({
+    basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
+    modeSuffix: composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+    contextBlock: buildConversationContextBlock(conversationId, contextItemIds)
+  })
 
   // Optional web search with explicit lifecycle status (local managed runtime)
   let searchPreamble = ''
@@ -406,18 +400,38 @@ export async function startChatGeneration(
     }
   }
 
-  const historyForModel: Message[] = searchPreamble
-    ? [
-        ...branch,
-        {
-          id: 'search_ctx',
-          conversationId,
-          role: 'system',
-          content: searchPreamble,
-          createdAt: Date.now()
-        }
-      ]
-    : branch
+  const contextWindow =
+    (await resolveContextWindow(providerId, model)) ??
+    settings.defaultContextWindow ??
+    DEFAULT_CONTEXT_WINDOW
+  const reservedOutput = settings.reservedOutputTokens ?? DEFAULT_RESERVED_OUTPUT
+  const trimmedHistory = trimHistoryToBudget(
+    branch,
+    contextWindow -
+      reservedOutput -
+      estimateTokens(effectiveSystem || '') -
+      estimateTokens(searchPreamble)
+  )
+  if (trimmedHistory.droppedCount > 0) {
+    console.log(
+      `[context] trimmed ${trimmedHistory.droppedCount} older message(s) (~${trimmedHistory.droppedTokens}tok) to fit ${contextWindow}tok window`
+    )
+  }
+
+  const historyForModel: Message[] = orderPromptMessages<Message>({
+    history: trimmedHistory.kept,
+    volatile: searchPreamble
+      ? [
+          {
+            id: 'search_ctx',
+            conversationId,
+            role: 'system',
+            content: searchPreamble,
+            createdAt: Date.now()
+          }
+        ]
+      : []
+  })
 
   const controller = new AbortController()
   const activeGen: ActiveGeneration = {
@@ -651,16 +665,16 @@ export async function startChatGeneration(
         })
       } else {
         console.error('[AI Chat Error]', err)
-        const errorText =
-          priorContent + generated + `\n\n*[Error: ${err.message || 'Streaming failed'}]*`
-        dbMessages.update(assistantMsgId, { content: errorText, error: err.message })
+        const message = presentableErrorMessage(err)
+        const errorText = priorContent + generated + `\n\n*[${message}]*`
+        dbMessages.update(assistantMsgId, { content: errorText, error: message })
         sendChunk(win, {
           conversationId,
           messageId: assistantMsgId,
           generationId,
           contentDelta: '',
           done: true,
-          error: err.message,
+          error: message,
           eventType: 'error'
         })
       }

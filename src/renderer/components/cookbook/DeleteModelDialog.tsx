@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { AlertTriangle, Trash2, X, Zap, CheckCircle2 } from 'lucide-react'
 
-export type DeleteSource = 'engine' | 'ollama'
+export type DeleteSource = 'engine'
 
 export interface DeleteSourceOption {
   id: DeleteSource

@@ -14,12 +14,10 @@ import {
   Trash2,
   Pin,
   Archive,
-  Download,
-  Server
+  Download
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
-import { useOllamaProcessStore } from '../../stores/ollamaProcessStore'
 
 export const Sidebar: React.FC = () => {
   const { isCollapsed, activeTab, toggleCollapsed, setActiveTab } = useSidebarStore()
@@ -38,13 +36,6 @@ export const Sidebar: React.FC = () => {
     generatingConversationIds
   } = useChatStore()
 
-  const { processState, setupListeners: setupOllamaListeners } = useOllamaProcessStore()
-
-  React.useEffect(() => {
-    const unsub = setupOllamaListeners()
-    return () => unsub()
-  }, [setupOllamaListeners])
-
   const [localQuery, setLocalQuery] = useState('')
 
   const displayedConversations = useMemo(() => {
@@ -58,32 +49,14 @@ export const Sidebar: React.FC = () => {
     return conversations
   }, [conversations, searchHits, localQuery])
 
-  const isOllamaVisible =
-    processState.status === 'running' ||
-    processState.status === 'starting' ||
-    processState.status === 'stopped' ||
-    !!processState.binaryPath
-
-  const mainNavItems = useMemo(() => {
-    const items: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
-      { id: 'chat', label: 'AI Chat', icon: <MessageSquare size={18} /> },
-      { id: 'memory', label: 'Brain & Memory', icon: <Brain size={18} /> },
-      { id: 'docs', label: 'Document Editor', icon: <FileText size={18} /> },
-      { id: 'email', label: 'Mail & Calendar', icon: <Mail size={18} /> },
-      { id: 'compare', label: 'Model Comparison', icon: <GitCompare size={18} /> },
-      { id: 'cookbook', label: 'Hardware Cookbook', icon: <BookOpen size={18} /> }
-    ]
-
-    if (isOllamaVisible) {
-      items.push({
-        id: 'ollama',
-        label: `Ollama Server${processState.port ? ` (:${processState.port})` : ''}`,
-        icon: <Server size={18} />
-      })
-    }
-
-    return items
-  }, [isOllamaVisible, processState.port])
+  const mainNavItems: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'chat', label: 'AI Chat', icon: <MessageSquare size={18} /> },
+    { id: 'memory', label: 'Brain & Memory', icon: <Brain size={18} /> },
+    { id: 'docs', label: 'Document Editor', icon: <FileText size={18} /> },
+    { id: 'email', label: 'Mail & Calendar', icon: <Mail size={18} /> },
+    { id: 'compare', label: 'Model Comparison', icon: <GitCompare size={18} /> },
+    { id: 'cookbook', label: 'Hardware Cookbook', icon: <BookOpen size={18} /> }
+  ]
 
   return (
     <aside

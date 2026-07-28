@@ -1,7 +1,10 @@
 import React from 'react'
 import { useCookbookStore } from '../../stores/cookbookStore'
-import { Search, X, Filter, RotateCcw } from 'lucide-react'
-import { ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource } from '../../../shared/types'
+import { Search, X, RotateCcw } from 'lucide-react'
+import { ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType } from '../../../shared/types'
+import { MODEL_CATALOG } from '../../../shared/model-catalog'
+
+const availableFamilies = new Set<ModelFamily>(MODEL_CATALOG.map((m) => m.family))
 
 export const FilterBar: React.FC = () => {
   const {
@@ -14,11 +17,6 @@ export const FilterBar: React.FC = () => {
     setSearch
   } = useCookbookStore()
 
-  const sources: { id: ModelSource; label: string }[] = [
-    { id: 'golti-engine', label: 'Golti Engine' },
-    { id: 'ollama', label: 'Ollama' }
-  ]
-
   const useCases: { id: ModelUseCase; label: string }[] = [
     { id: 'chat', label: 'Conversational' },
     { id: 'code', label: 'Coding' },
@@ -29,7 +27,7 @@ export const FilterBar: React.FC = () => {
     { id: 'creative', label: 'Creative' }
   ]
 
-  const families: { id: ModelFamily; label: string }[] = [
+  const families: { id: ModelFamily; label: string }[] = ([
     { id: 'llama', label: 'Llama' },
     { id: 'deepseek', label: 'DeepSeek' },
     { id: 'qwen', label: 'Qwen' },
@@ -43,8 +41,13 @@ export const FilterBar: React.FC = () => {
     { id: 'internlm', label: 'InternLM' },
     { id: 'command-r', label: 'Command-R' },
     { id: 'hermes', label: 'Hermes' },
-    { id: 'kimi', label: 'Kimi' }
-  ]
+    { id: 'kimi', label: 'Kimi' },
+    { id: 'codellama', label: 'CodeLlama' },
+    { id: 'starcoder', label: 'StarCoder' },
+    { id: 'yi', label: 'Yi' },
+    { id: 'nomic', label: 'Nomic' },
+    { id: 'other', label: 'Other' }
+  ] as { id: ModelFamily; label: string }[]).filter((fam) => availableFamilies.has(fam.id))
 
   const sizeTiers: { id: ModelSizeTier; label: string }[] = [
     { id: 'tiny', label: 'Tiny (<3B)' },
@@ -59,7 +62,7 @@ export const FilterBar: React.FC = () => {
   const quantizations: QuantizationType[] = ['Q4_0', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'FP16']
 
   const toggleFilter = <T extends string>(
-    key: 'sources' | 'useCases' | 'families' | 'sizeTiers' | 'quantizations',
+    key: 'useCases' | 'families' | 'sizeTiers' | 'quantizations',
     value: T
   ) => {
     const list = filters[key] as string[]
@@ -71,7 +74,6 @@ export const FilterBar: React.FC = () => {
   }
 
   const hasActiveFilters =
-    filters.sources.length > 0 ||
     filters.useCases.length > 0 ||
     filters.families.length > 0 ||
     filters.sizeTiers.length > 0 ||
@@ -124,24 +126,6 @@ export const FilterBar: React.FC = () => {
 
       {/* Advanced Filters */}
       <div className="filter-row advanced-row">
-        <div className="filter-section">
-          <span className="filter-label"><Filter size={12} /> Source</span>
-          <div className="chips-container">
-            {sources.map(src => {
-              const active = filters.sources.includes(src.id)
-              return (
-                <button
-                  key={src.id}
-                  onClick={() => toggleFilter('sources', src.id)}
-                  className={`filter-chip ${active ? 'active' : ''}`}
-                >
-                  {src.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
         <div className="filter-section">
           <span className="filter-label">Use Case</span>
           <div className="chips-container">

@@ -6,7 +6,6 @@ import { ChatView } from './components/chat/ChatView'
 import { SettingsView } from './components/settings/SettingsView'
 import { PlaceholderView } from './components/modules/PlaceholderView'
 import { CookbookView } from './components/cookbook/CookbookView'
-import { OllamaServerView } from './components/ollama/OllamaServerView'
 import { useSidebarStore } from './stores/sidebarStore'
 
 export const App: React.FC = () => {
@@ -20,8 +19,6 @@ export const App: React.FC = () => {
         return <SettingsView />
       case 'cookbook':
         return <CookbookView />
-      case 'ollama':
-        return <OllamaServerView />
       default:
         return <PlaceholderView tab={activeTab} />
     }

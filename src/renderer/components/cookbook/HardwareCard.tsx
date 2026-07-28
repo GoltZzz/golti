@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { SystemInfoFull } from '../../../shared/types'
+import { getUsableMemoryGB } from '../../../shared/compatibility'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { RamBreakdownModal } from './RamBreakdownModal'
 import {
@@ -280,7 +281,7 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                 </span>
                 <span className="spec-dot">•</span>
                 <span>
-                  Max LLM Cap: <span className="spec-num">{(gpu.isAppleSilicon ? ram.totalGB * 0.75 : (gpu.vramGB || ram.totalGB * 0.70)).toFixed(1)} GB</span>
+                  Max LLM Cap: <span className="spec-num">{getUsableMemoryGB(systemInfo).toFixed(1)} GB</span>
                 </span>
               </div>
               {ram.usedPercent > 85 ? (
@@ -308,10 +309,18 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
           <div className="hardware-item">
             <div className="item-header">
               <HardDrive size={16} className="item-icon disk-icon" aria-hidden />
-              <h3>Storage Disk Speed</h3>
+              <h3>Storage Disk</h3>
             </div>
             <div className="item-body">
               <div className="disk-details">
+                {disk.freeGB !== null && (
+                  <div className="disk-speed-row">
+                    <span className="speed-label">Free</span>
+                    <span className="speed-val">
+                      {disk.freeGB} GB{disk.totalGB !== null ? ` of ${disk.totalGB} GB` : ''}
+                    </span>
+                  </div>
+                )}
                 {disk.readMBps && disk.writeMBps ? (
                   <>
                     <div className="disk-speed-row">
