@@ -769,6 +769,20 @@
   font-weight: 500;
 }
 
+.toggle-label.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.toggle-label.is-disabled .toggle-checkbox {
+  cursor: not-allowed;
+}
+
+.toggle-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* Catalog Grid & Header */
 .catalog-section {
   display: flex;
