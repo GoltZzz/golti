@@ -1,5 +1,8 @@
 import { CookbookModel, ModelFamily, ModelSizeTier, ModelUseCase, QuantizationType } from './types'
 import { normalizeOllamaTag } from './ollama-tags'
+import { sizeTierFor } from './model-taxonomy'
+
+export { sizeTierFor }
 
 export interface OllamaLibraryModel {
   name: string
@@ -88,15 +91,6 @@ export function parseParameterBillions(modelType: string): number | null {
   return Math.round(billions * 1000) / 1000
 }
 
-export function sizeTierFor(parameterBillions: number): ModelSizeTier {
-  if (parameterBillions < 3) return 'tiny'
-  if (parameterBillions < 10) return 'small'
-  if (parameterBillions < 20) return 'medium'
-  if (parameterBillions < 70) return 'large'
-  if (parameterBillions < 100) return 'xl'
-  if (parameterBillions < 500) return 'xxl'
-  return 'datacenter'
-}
 
 const CODE_PATTERN = /cod(e|er|ing)|starcoder|devstral|sqlcoder|granite-code/
 

@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Cloud, AlertTriangle, Download, Loader2, Search } from 'lucide-react'
 import { useHFCatalogStore } from '../../stores/hfCatalogStore'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useEngineStore } from '../../stores/engineStore'
 import { ModelCard } from './ModelCard'
 import { SystemInfoFull } from '../../../shared/types'
+import { matchesModelFilters, ModelFilterContext } from '../../../shared/model-filter'
 
 interface HuggingFaceBrowserProps {
   systemInfo: SystemInfoFull | null
@@ -31,7 +32,16 @@ export const HuggingFaceBrowser: React.FC<HuggingFaceBrowserProps> = ({ systemIn
   } = useHFCatalogStore()
 
   const searchQuery = useCookbookStore((s) => s.searchQuery)
+  const filters = useCookbookStore((s) => s.filters)
+  const resetFilters = useCookbookStore((s) => s.resetFilters)
   const localModels = useEngineStore((s) => s.localModels)
+
+  // hfCatalogStore.search already applied searchQuery server-side on HF, and HF matches
+  // more broadly than client-side search (e.g. author, tags), so pass searchQuery: '' deliberately.
+  const filterContext = useMemo<ModelFilterContext>(
+    () => ({ filters, searchQuery: '', systemInfo }),
+    [filters, systemInfo]
+  )
 
   useEffect(() => {
     if (!enabled) return
@@ -101,6 +111,9 @@ export const HuggingFaceBrowser: React.FC<HuggingFaceBrowserProps> = ({ systemIn
               {results.map((repo) => {
                 const isOpen = !!expanded[repo.repoId]
                 const detail = details[repo.repoId]
+                const matchingModels = detail?.models
+                  ? detail.models.filter((m) => matchesModelFilters(m, filterContext))
+                  : []
                 return (
                   <li key={repo.repoId} className="hf-repo-item">
                     <button
@@ -144,9 +157,33 @@ export const HuggingFaceBrowser: React.FC<HuggingFaceBrowserProps> = ({ systemIn
                           </div>
                         )}
 
-                        {detail && !detail.loading && detail.models.length > 0 && (
+                        {detail && !detail.loading && detail.models.length > 0 && matchingModels.length === 0 && (
+                          <div className="hf-disclaimer">
+                            <AlertTriangle size={14} />
+                            <span>
+                              All {detail.models.length} available size{detail.models.length === 1 ? '' : 's'} are hidden by your current filters.
+                            </span>
+                            <button
+                              onClick={resetFilters}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: 'var(--accent-cyan)',
+                                cursor: 'pointer',
+                                padding: 0,
+                                font: 'inherit',
+                                textDecoration: 'underline',
+                                marginLeft: 'auto'
+                              }}
+                            >
+                              Reset filters
+                            </button>
+                          </div>
+                        )}
+
+                        {detail && !detail.loading && matchingModels.length > 0 && (
                           <div className="catalog-grid">
-                            {detail.models.map((model) => (
+                            {matchingModels.map((model) => (
                               <ModelCard
                                 key={model.id}
                                 model={model}

@@ -1,15 +1,8 @@
 import { create } from 'zustand'
-import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, InstalledLocalModelInfo } from '../../shared/types'
+import { SystemInfoFull, InstalledLocalModelInfo } from '../../shared/types'
+import { ModelFilters, ModelFilterListKey, EMPTY_MODEL_FILTERS } from '../../shared/model-filter'
 import { useChatStore } from './chatStore'
 import { useEngineStore } from './engineStore'
-
-interface CookbookFilters {
-  useCases: ModelUseCase[]
-  families: ModelFamily[]
-  sizeTiers: ModelSizeTier[]
-  quantizations: QuantizationType[]
-  compatibleOnly: boolean
-}
 
 interface CookbookState {
   systemInfo: SystemInfoFull | null
@@ -18,7 +11,7 @@ interface CookbookState {
   installedModels: string[]
   detailedInstalledModels: InstalledLocalModelInfo[]
   fetchingInstalled: boolean
-  filters: CookbookFilters
+  filters: ModelFilters
   sortBy: 'name' | 'size' | 'compatibility' | 'family'
   searchQuery: string
   deletingModel: string | null
@@ -27,7 +20,8 @@ interface CookbookState {
   scanHardware: () => Promise<void>
   fetchInstalled: () => Promise<void>
   deleteLocalEngineModel: (filename: string) => Promise<{ success: boolean; error?: string }>
-  setFilter: <K extends keyof CookbookFilters>(key: K, value: CookbookFilters[K]) => void
+  setFilter: <K extends keyof ModelFilters>(key: K, value: ModelFilters[K]) => void
+  toggleFilterValue: <K extends ModelFilterListKey>(key: K, value: ModelFilters[K][number]) => void
   resetFilters: () => void
   isHardwareCardCollapsed: boolean
   toggleHardwareCardCollapsed: () => void
@@ -45,13 +39,7 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     detailedInstalledModels: [],
     fetchingInstalled: false,
     isHardwareCardCollapsed: false,
-    filters: {
-      useCases: [],
-      families: [],
-      sizeTiers: [],
-      quantizations: [],
-      compatibleOnly: false
-    },
+    filters: { ...EMPTY_MODEL_FILTERS },
     sortBy: 'compatibility',
     searchQuery: '',
     deletingModel: null,
@@ -117,15 +105,25 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
       }))
     },
 
+    toggleFilterValue: (key, value) => {
+      set((state) => {
+        const list = state.filters[key] as string[]
+        const next = list.includes(value as string)
+          ? list.filter((v) => v !== value)
+          : [...list, value]
+        return {
+          filters: {
+            ...state.filters,
+            [key]: next
+          }
+        }
+      })
+    },
+
     resetFilters: () => {
       set({
-        filters: {
-          useCases: [],
-          families: [],
-          sizeTiers: [],
-          quantizations: [],
-          compatibleOnly: false
-        }
+        filters: { ...EMPTY_MODEL_FILTERS },
+        searchQuery: ''
       })
     },
 

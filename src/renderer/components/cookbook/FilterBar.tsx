@@ -1,85 +1,51 @@
 import React from 'react'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { Search, X, RotateCcw } from 'lucide-react'
-import { ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType } from '../../../shared/types'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
+import {
+  catalogFacets,
+  availableOptions,
+  hasActiveFilters,
+  USE_CASE_OPTIONS,
+  FAMILY_OPTIONS,
+  SIZE_TIER_OPTIONS,
+  QUANTIZATION_OPTIONS
+} from '../../../shared/model-filter'
 
-const availableFamilies = new Set<ModelFamily>(MODEL_CATALOG.map((m) => m.family))
+const facets = catalogFacets(MODEL_CATALOG)
+const useCaseOptions = availableOptions(USE_CASE_OPTIONS, facets.useCases)
+const familyOptions = availableOptions(FAMILY_OPTIONS, facets.families)
+const sizeTierOptions = availableOptions(SIZE_TIER_OPTIONS, facets.sizeTiers)
+const quantizationOptions = availableOptions(QUANTIZATION_OPTIONS, facets.quantizations)
 
 export const FilterBar: React.FC = () => {
   const {
     filters,
     sortBy,
     searchQuery,
+    systemInfo,
+    loadingInfo,
+    scanError,
     setFilter,
+    toggleFilterValue,
     resetFilters,
     setSort,
     setSearch
   } = useCookbookStore()
 
-  const useCases: { id: ModelUseCase; label: string }[] = [
-    { id: 'chat', label: 'Conversational' },
-    { id: 'code', label: 'Coding' },
-    { id: 'reasoning', label: 'Reasoning' },
-    { id: 'agentic', label: 'Agentic' },
-    { id: 'vision', label: 'Vision' },
-    { id: 'embedding', label: 'Embedding' },
-    { id: 'creative', label: 'Creative' }
-  ]
+  const active = hasActiveFilters(filters, searchQuery)
+  const isCompatDisabled = systemInfo === null
 
-  const families: { id: ModelFamily; label: string }[] = ([
-    { id: 'llama', label: 'Llama' },
-    { id: 'deepseek', label: 'DeepSeek' },
-    { id: 'qwen', label: 'Qwen' },
-    { id: 'gemma', label: 'Gemma' },
-    { id: 'mistral', label: 'Mistral' },
-    { id: 'phi', label: 'Phi' },
-    { id: 'glm', label: 'GLM' },
-    { id: 'devstral', label: 'Devstral' },
-    { id: 'falcon', label: 'Falcon' },
-    { id: 'smollm', label: 'SmolLM' },
-    { id: 'internlm', label: 'InternLM' },
-    { id: 'command-r', label: 'Command-R' },
-    { id: 'hermes', label: 'Hermes' },
-    { id: 'kimi', label: 'Kimi' },
-    { id: 'codellama', label: 'CodeLlama' },
-    { id: 'starcoder', label: 'StarCoder' },
-    { id: 'yi', label: 'Yi' },
-    { id: 'nomic', label: 'Nomic' },
-    { id: 'other', label: 'Other' }
-  ] as { id: ModelFamily; label: string }[]).filter((fam) => availableFamilies.has(fam.id))
-
-  const sizeTiers: { id: ModelSizeTier; label: string }[] = [
-    { id: 'tiny', label: 'Tiny (<3B)' },
-    { id: 'small', label: 'Small (3B-9B)' },
-    { id: 'medium', label: 'Medium (10B-15B)' },
-    { id: 'large', label: 'Large (16B-35B)' },
-    { id: 'xl', label: 'XL (36B-99B)' },
-    { id: 'xxl', label: 'XXL (100B-499B)' },
-    { id: 'datacenter', label: 'Datacenter (500B+)' }
-  ]
-
-  const quantizations: QuantizationType[] = ['Q4_0', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'FP16']
-
-  const toggleFilter = <T extends string>(
-    key: 'useCases' | 'families' | 'sizeTiers' | 'quantizations',
-    value: T
-  ) => {
-    const list = filters[key] as string[]
-    if (list.includes(value)) {
-      setFilter(key, list.filter(item => item !== value) as any)
+  let compatHint: string | null = null
+  if (isCompatDisabled) {
+    if (loadingInfo) {
+      compatHint = 'Checking your hardware…'
+    } else if (scanError) {
+      compatHint = 'Hardware scan failed — rescan to filter by fit.'
     } else {
-      setFilter(key, [...list, value] as any)
+      compatHint = 'Scan your hardware to filter by fit.'
     }
   }
-
-  const hasActiveFilters =
-    filters.useCases.length > 0 ||
-    filters.families.length > 0 ||
-    filters.sizeTiers.length > 0 ||
-    filters.quantizations.length > 0 ||
-    filters.compatibleOnly ||
-    searchQuery.trim().length > 0
 
   return (
     <div className="cookbook-filter-bar animate-fade-in">
@@ -89,7 +55,7 @@ export const FilterBar: React.FC = () => {
           <Search size={16} className="search-icon" />
           <input
             type="text"
-            placeholder="Search catalog by model name or family..."
+            placeholder="Search by name, family, description, or tag…"
             value={searchQuery}
             onChange={(e) => setSearch(e.target.value)}
             className="search-input"
@@ -116,7 +82,7 @@ export const FilterBar: React.FC = () => {
           </select>
         </div>
 
-        {hasActiveFilters && (
+        {active && (
           <button onClick={resetFilters} className="reset-btn" title="Reset all filters">
             <RotateCcw size={14} />
             Reset
@@ -129,13 +95,13 @@ export const FilterBar: React.FC = () => {
         <div className="filter-section">
           <span className="filter-label">Use Case</span>
           <div className="chips-container">
-            {useCases.map(uc => {
-              const active = filters.useCases.includes(uc.id)
+            {useCaseOptions.map((uc) => {
+              const isActive = filters.useCases.includes(uc.id)
               return (
                 <button
                   key={uc.id}
-                  onClick={() => toggleFilter('useCases', uc.id)}
-                  className={`filter-chip ${active ? 'active' : ''}`}
+                  onClick={() => toggleFilterValue('useCases', uc.id)}
+                  className={`filter-chip ${isActive ? 'active' : ''}`}
                 >
                   {uc.label}
                 </button>
@@ -147,13 +113,13 @@ export const FilterBar: React.FC = () => {
         <div className="filter-section">
           <span className="filter-label">Family</span>
           <div className="chips-container">
-            {families.map(fam => {
-              const active = filters.families.includes(fam.id)
+            {familyOptions.map((fam) => {
+              const isActive = filters.families.includes(fam.id)
               return (
                 <button
                   key={fam.id}
-                  onClick={() => toggleFilter('families', fam.id)}
-                  className={`filter-chip ${active ? 'active' : ''}`}
+                  onClick={() => toggleFilterValue('families', fam.id)}
+                  className={`filter-chip ${isActive ? 'active' : ''}`}
                 >
                   {fam.label}
                 </button>
@@ -165,13 +131,13 @@ export const FilterBar: React.FC = () => {
         <div className="filter-section">
           <span className="filter-label">Size</span>
           <div className="chips-container">
-            {sizeTiers.map(tier => {
-              const active = filters.sizeTiers.includes(tier.id)
+            {sizeTierOptions.map((tier) => {
+              const isActive = filters.sizeTiers.includes(tier.id)
               return (
                 <button
                   key={tier.id}
-                  onClick={() => toggleFilter('sizeTiers', tier.id)}
-                  className={`filter-chip ${active ? 'active' : ''}`}
+                  onClick={() => toggleFilterValue('sizeTiers', tier.id)}
+                  className={`filter-chip ${isActive ? 'active' : ''}`}
                 >
                   {tier.label}
                 </button>
@@ -184,30 +150,34 @@ export const FilterBar: React.FC = () => {
           <div className="filter-section">
             <span className="filter-label">Quant</span>
             <div className="chips-container">
-              {quantizations.map(quant => {
-                const active = filters.quantizations.includes(quant)
+              {quantizationOptions.map((quant) => {
+                const isActive = filters.quantizations.includes(quant.id)
                 return (
                   <button
-                    key={quant}
-                    onClick={() => toggleFilter('quantizations', quant)}
-                    className={`filter-chip ${active ? 'active' : ''}`}
+                    key={quant.id}
+                    onClick={() => toggleFilterValue('quantizations', quant.id)}
+                    className={`filter-chip ${isActive ? 'active' : ''}`}
                   >
-                    {quant}
+                    {quant.label}
                   </button>
                 )
               })}
             </div>
           </div>
 
-          <label className="toggle-label">
-            <input
-              type="checkbox"
-              checked={filters.compatibleOnly}
-              onChange={(e) => setFilter('compatibleOnly', e.target.checked)}
-              className="toggle-checkbox"
-            />
-            <span className="toggle-text">Show compatible only</span>
-          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+            <label className={`toggle-label ${isCompatDisabled ? 'is-disabled' : ''}`}>
+              <input
+                type="checkbox"
+                checked={filters.compatibleOnly}
+                disabled={isCompatDisabled}
+                onChange={(e) => setFilter('compatibleOnly', e.target.checked)}
+                className="toggle-checkbox"
+              />
+              <span className="toggle-text">Hide models that won't fit</span>
+            </label>
+            {compatHint && <span className="toggle-hint">{compatHint}</span>}
+          </div>
         </div>
       </div>
     </div>

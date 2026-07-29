@@ -230,7 +230,7 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     parameterBillions: 0.5,
     sizeTier: 'tiny',
     quantization: 'Q4_K_M',
-    useCases: ['chat', 'embedding'],
+    useCases: ['chat'],
     ramRequiredGB: 0.8,
     ramRecommendedGB: 1.2,
     diskSizeGB: 0.4,

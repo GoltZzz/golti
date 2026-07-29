@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useEngineStore } from '../../stores/engineStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -10,6 +10,7 @@ import { InstalledModelCard } from './InstalledModelCard'
 import { HuggingFaceBrowser } from './HuggingFaceBrowser'
 import { MODEL_CATALOG } from '../../../shared/model-catalog'
 import { getCompatibility } from '../../../shared/compatibility'
+import { filterModels, ModelFilterContext } from '../../../shared/model-filter'
 import { CookbookModel } from '../../../shared/types'
 import { Info, HardDrive } from 'lucide-react'
 
@@ -40,40 +41,15 @@ export const CookbookView: React.FC = () => {
   const isEngineDownloaded = (model: CookbookModel) =>
     !!(model.ggufFilename && localModels.some((lm) => lm.filename === model.ggufFilename))
 
-  const filteredModels = MODEL_CATALOG.filter(model => {
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      const matchName = model.name.toLowerCase().includes(q)
-      const matchDesc = model.description.toLowerCase().includes(q)
-      const matchFam = model.family.toLowerCase().includes(q)
-      const matchTag = model.ollamaTag.toLowerCase().includes(q)
-      if (!matchName && !matchDesc && !matchFam && !matchTag) return false
-    }
+  const filterContext = useMemo<ModelFilterContext>(
+    () => ({ filters, searchQuery, systemInfo }),
+    [filters, searchQuery, systemInfo]
+  )
 
-    if (filters.useCases.length > 0) {
-      const hasOverlap = model.useCases.some(uc => filters.useCases.includes(uc))
-      if (!hasOverlap) return false
-    }
-
-    if (filters.families.length > 0) {
-      if (!filters.families.includes(model.family)) return false
-    }
-
-    if (filters.sizeTiers.length > 0) {
-      if (!filters.sizeTiers.includes(model.sizeTier)) return false
-    }
-
-    if (filters.quantizations.length > 0) {
-      if (!filters.quantizations.includes(model.quantization)) return false
-    }
-
-    if (filters.compatibleOnly && systemInfo) {
-      const comp = getCompatibility(systemInfo, model)
-      if (comp === 'wont_fit') return false
-    }
-
-    return true
-  })
+  const filteredModels = useMemo(
+    () => filterModels(MODEL_CATALOG, filterContext),
+    [filterContext]
+  )
 
   const sortedModels = [...filteredModels].sort((a, b) => {
     const aDownloaded = isEngineDownloaded(a) ? 1 : 0
@@ -162,7 +138,7 @@ export const CookbookView: React.FC = () => {
             ) : (
               <div className="empty-catalog-state small-empty" style={{ padding: '16px', textAlign: 'center' }}>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px' }}>
-                  No installed local models match your current filters.
+                  No installed local models match your search.
                 </p>
               </div>
             )}
