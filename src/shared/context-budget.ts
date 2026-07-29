@@ -2,8 +2,28 @@ export const MIN_CONTEXT_SIZE = 4096
 export const MAX_CONTEXT_SIZE = 32768
 export const CONTEXT_GRANULARITY = 1024
 export const UNKNOWN_SHAPE_CONTEXT_CAP = 8192
+/**
+ * Reference context used when sizing KV against VRAM. Matches the engine's
+ * KV_RESERVE_CONTEXT so the cookbook's estimate and the engine's own sizing
+ * describe the same run.
+ */
+export const KV_RESERVE_CONTEXT_DEFAULT = 4096
 
+/** f16 KV cache: two bytes per element. */
 const KV_BYTES_PER_ELEMENT = 2
+/**
+ * q8_0 KV cache: 32 int8 values share one f16 scale, so 34 bytes per 32
+ * elements. `buildTuningArgs` requests this whenever it offloads to a GPU, which
+ * nearly halves KV memory — sizing against f16 in that case reserves roughly
+ * twice the VRAM the cache actually needs.
+ */
+const KV_Q8_BYTES_PER_ELEMENT = 34 / 32
+
+export type KvCacheType = 'f16' | 'q8_0'
+
+export function kvBytesPerElement(type: KvCacheType = 'f16'): number {
+  return type === 'q8_0' ? KV_Q8_BYTES_PER_ELEMENT : KV_BYTES_PER_ELEMENT
+}
 const GB = 1024 * 1024 * 1024
 const RAM_RESERVE_BYTES = 1.5 * GB
 const VRAM_RESERVE_BYTES = 0.75 * GB
@@ -34,12 +54,19 @@ export interface ContextBudgetResult {
   cappedByMemory: boolean
 }
 
-export function kvBytesPerToken(shape: ModelShape): number | undefined {
+/**
+ * KV cache bytes per token for the whole model.
+ *
+ * `cacheType` must match what the engine is actually launched with: the tuning
+ * args quantize the cache to q8_0 on GPU runs, and assuming f16 there
+ * over-reserves VRAM by roughly 2x.
+ */
+export function kvBytesPerToken(shape: ModelShape, cacheType: KvCacheType = 'f16'): number | undefined {
   const { blockCount, embeddingLength, headCount, headCountKv } = shape
   if (!blockCount || !embeddingLength) return undefined
   const gqaRatio = headCount && headCountKv ? headCountKv / headCount : 1
   const kvDim = embeddingLength * gqaRatio
-  return 2 * blockCount * kvDim * KV_BYTES_PER_ELEMENT
+  return 2 * blockCount * kvDim * kvBytesPerElement(cacheType)
 }
 
 export function roundDownToGranularity(tokens: number): number {

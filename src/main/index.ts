@@ -34,6 +34,7 @@ import { MODEL_CATALOG } from '../shared/model-catalog'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
 import { readVram } from './system/vram'
+import { readGgufModelInfo } from './engine/gguf'
 import {
   initEngine,
   stopEngine,
@@ -834,7 +835,25 @@ function setupIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('engine:list-models', () => listLocalModels())
+  ipcMain.handle('engine:list-models', () => {
+    // Attach each file's GGUF geometry so the cookbook can rate GPU offload from
+    // the model's real shape instead of a parameter-count guess.
+    return listLocalModels().map((file) => {
+      const info = readGgufModelInfo(file.filepath)
+      return {
+        ...file,
+        geometry: info
+          ? {
+              blockCount: info.blockCount,
+              embeddingLength: info.embeddingLength,
+              headCount: info.headCount,
+              headCountKv: info.headCountKv,
+              fileSizeBytes: file.sizeBytes
+            }
+          : undefined
+      }
+    })
+  })
 
   ipcMain.handle('hf:search', async (_, query: string, limit?: number) =>
     searchHFModels(typeof query === 'string' ? query : '', limit)

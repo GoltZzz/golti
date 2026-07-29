@@ -173,12 +173,16 @@ export async function computeGpuLayers(modelPath?: string, vramGBOverride?: numb
     modelBytes,
     vramBytes: vramGB * 1024 * 1024 * 1024,
     layerCount: info?.blockCount,
-    kvBytesPerToken: kvBytesPerToken({
-      blockCount: info?.blockCount,
-      embeddingLength: info?.embeddingLength,
-      headCount: info?.headCount,
-      headCountKv: info?.headCountKv
-    })
+    // Any offload runs with the quantized KV cache from buildTuningArgs.
+    kvBytesPerToken: kvBytesPerToken(
+      {
+        blockCount: info?.blockCount,
+        embeddingLength: info?.embeddingLength,
+        headCount: info?.headCount,
+        headCountKv: info?.headCountKv
+      },
+      'q8_0'
+    )
   })
 }
 

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { EngineState, EngineDownloadProgress, ModelDownloadResult, QuantizationType } from '../../shared/types'
+import type { ModelGeometry } from '../../shared/gpu-offload'
 import { useChatStore } from './chatStore'
 
 declare global {
@@ -24,7 +25,14 @@ interface EngineStore {
   downloadingModels: Record<string, EngineDownloadProgress>
   downloadErrors: Record<string, string>
   binaryDownloadProgress: EngineDownloadProgress | null
-  localModels: { filename: string; filepath: string; sizeBytes: number; sizeGB: number }[]
+  localModels: {
+    filename: string
+    filepath: string
+    sizeBytes: number
+    sizeGB: number
+    /** GGUF geometry, present when the header could be read. */
+    geometry?: ModelGeometry
+  }[]
   isInstallingBinary: boolean
   error: string | null
 

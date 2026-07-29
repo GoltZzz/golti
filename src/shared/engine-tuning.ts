@@ -1,3 +1,5 @@
+import type { KvCacheType } from './context-budget'
+
 export const DEFAULT_LAYER_COUNT = 32
 
 const GB = 1024 * 1024 * 1024
@@ -83,6 +85,16 @@ export interface TuningArgsInput {
   enabled?: boolean
 }
 
+/**
+ * The KV cache format the engine will actually run with, given the same inputs
+ * `buildTuningArgs` sees. Memory sizing must agree with this: quantized cache is
+ * roughly half the size of f16, so assuming the wrong one misreserves VRAM.
+ */
+export function kvCacheTypeFor(gpuLayers: number, tuningEnabled = true): KvCacheType {
+  if (!tuningEnabled) return 'f16'
+  return gpuLayers !== 0 ? 'q8_0' : 'f16'
+}
+
 export function buildTuningArgs(input: TuningArgsInput): string[] {
   if (input.enabled === false) return []
 
@@ -93,6 +105,7 @@ export function buildTuningArgs(input: TuningArgsInput): string[] {
 
   const offloadsToGpu = input.gpuLayers !== 0
   if (offloadsToGpu) {
+    // Keep in step with kvCacheTypeFor above.
     args.push('--flash-attn', 'on', '--cache-type-k', 'q8_0', '--cache-type-v', 'q8_0')
   } else {
     args.push('--flash-attn', 'auto')

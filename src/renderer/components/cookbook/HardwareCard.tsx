@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { SystemInfoFull } from '../../../shared/types'
 import { getUsableMemoryGB } from '../../../shared/compatibility'
+import { describeVramContention } from '../../../shared/gpu-offload'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { RamBreakdownModal } from './RamBreakdownModal'
 import {
@@ -66,6 +67,8 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
       usedPercent: Math.min(100, Math.round((vramReading.usedMiB / vramReading.totalMiB) * 100))
     }
   }, [vramReading])
+
+  const contentionNote = React.useMemo(() => describeVramContention(vramReading), [vramReading])
   const [isRamModalOpen, setIsRamModalOpen] = useState(false)
 
   const showSkeleton = !systemInfo && loading
@@ -261,6 +264,16 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                       Free: <span className="spec-num">{vramUsage.freeGB.toFixed(1)} GB</span>
                     </span>
                   </div>
+                  {/* Contention is reported here, once, rather than on every
+                      model card — the ratings there stay stable by design. */}
+                  {contentionNote && (
+                    <div
+                      className="sub-specs"
+                      style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-secondary)' }}
+                    >
+                      {contentionNote}
+                    </div>
+                  )}
                 </>
               )}
             </div>
