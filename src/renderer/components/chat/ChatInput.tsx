@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   ArrowUp,
   Paperclip,
-  Link2,
   Globe,
   Search,
   SlidersHorizontal,
@@ -10,10 +9,14 @@ import {
   Undo2,
   Redo2,
   Plus,
-  MessageSquare
+  MessageSquare,
+  HelpCircle,
+  Sparkles,
+  Wand2
 } from 'lucide-react'
 import { EggLogo } from '../brand/EggLogo'
 import { useChatStore } from '../../stores/chatStore'
+import { useSkillStore } from '../../stores/skillStore'
 import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
@@ -22,9 +25,19 @@ import { UsageMeter } from './UsageMeter'
 import { Tooltip } from './Tooltip'
 import { ModelSelector } from './ModelSelector'
 import { CommandPalette, CommandItem } from './CommandPalette'
+import { Skill } from '../../../shared/types'
 
 interface ChatInputProps {
   isLanding?: boolean
+}
+
+function summarizeSkill(skill: Skill): string {
+  const source = (skill.description || skill.instructions || '').replace(/\s+/g, ' ').trim()
+  if (!source) return 'No description yet.'
+  if (source.length <= 220) return source
+  const cut = source.slice(0, 220)
+  const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '))
+  return (lastStop > 120 ? cut.slice(0, lastStop + 1) : cut.trimEnd() + '…')
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
@@ -46,7 +59,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     repairWebSearchSetup,
     addContext,
     addContextPaths,
-    addContextUrl,
     addContextText,
     undoDraft,
     redoDraft,
@@ -60,6 +72,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
   } = useChatStore()
   const { runtimeState, progress, setupListeners } = useSearchRuntimeStore()
   const openSettings = useSidebarStore((s) => s.openSettings)
+  const skills = useSkillStore((s) => s.skills)
+  const fetchSkills = useSkillStore((s) => s.fetchSkills)
+
+  useEffect(() => {
+    fetchSkills()
+  }, [fetchSkills])
 
   const activeResearchProgress = (() => {
     if (!isGenerating) return null
@@ -80,12 +98,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
       : null
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  const [urlPrompt, setUrlPrompt] = useState(false)
-  const [urlValue, setUrlValue] = useState('')
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [commandFilter, setCommandFilter] = useState('')
+  const [paletteTrigger, setPaletteTrigger] = useState<'@' | '/'>('@')
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -100,19 +118,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     const val = e.target.value
     setDraft(val)
 
-    // Check for @ trigger
+    // Check for @ (tools/context) and / (skills) triggers
     const cursorPos = e.target.selectionStart
     const textBeforeCursor = val.slice(0, cursorPos)
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@')
 
-    if (lastAtIndex !== -1 && (lastAtIndex === 0 || /\s/.test(textBeforeCursor[lastAtIndex - 1]))) {
-      const query = textBeforeCursor.slice(lastAtIndex + 1)
-      if (!query.includes(' ')) {
-        setCommandFilter(query)
-        setShowCommandPalette(true)
-        return
-      }
+    for (const trigger of ['@', '/'] as const) {
+      const idx = textBeforeCursor.lastIndexOf(trigger)
+      if (idx === -1) continue
+      if (idx !== 0 && !/\s/.test(textBeforeCursor[idx - 1])) continue
+      const query = textBeforeCursor.slice(idx + 1)
+      if (query.includes(' ')) continue
+      setPaletteTrigger(trigger)
+      setCommandFilter(query)
+      setShowCommandPalette(true)
+      return
     }
+
     if (showCommandPalette) {
       setShowCommandPalette(false)
     }
@@ -158,18 +179,48 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     }
   }
 
-  const removeAtQueryFromDraft = () => {
+  /** Remove the in-progress trigger query, optionally replacing it with text. */
+  const removeAtQueryFromDraft = (replacement = '') => {
     if (!textareaRef.current) return
     const cursorPos = textareaRef.current.selectionStart
     const textBeforeCursor = draft.slice(0, cursorPos)
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@')
-    if (lastAtIndex !== -1) {
-      const newDraft = draft.slice(0, lastAtIndex) + draft.slice(cursorPos)
-      setDraft(newDraft)
+    const idx = textBeforeCursor.lastIndexOf(paletteTrigger)
+    if (idx !== -1) {
+      setDraft(draft.slice(0, idx) + replacement + draft.slice(cursorPos))
+    } else if (replacement) {
+      setDraft(draft + replacement)
     }
   }
 
-  const availableCommands: CommandItem[] = [
+  const skillCommands: CommandItem[] = [
+    {
+      id: '__new-skill',
+      label: 'skill',
+      description: 'Describe a skill and Golti will create it, e.g. /skill ask me questions before answering',
+      icon: <Wand2 size={14} />,
+      action: () => {
+        removeAtQueryFromDraft('/skill ')
+        textareaRef.current?.focus()
+      }
+    },
+    ...skills.map((s) => ({
+      id: s.id,
+      label: s.name,
+      description: s.description || 'Custom skill',
+      icon: s.name === 'grill-me' ? <HelpCircle size={14} /> : <Sparkles size={14} />,
+      tooltip: {
+        title: `/${s.name}`,
+        summary: summarizeSkill(s),
+        meta: `${s.createdBy === 'model' ? 'Created by Golti' : 'Created by you'} · updated ${new Date(s.updatedAt).toLocaleDateString()}`
+      },
+      action: () => {
+        removeAtQueryFromDraft(`/${s.name} `)
+        textareaRef.current?.focus()
+      }
+    }))
+  ]
+
+  const toolCommands: CommandItem[] = [
     {
       id: 'attach',
       label: 'Attach Files',
@@ -178,16 +229,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
       action: () => {
         removeAtQueryFromDraft()
         addContext()
-      }
-    },
-    {
-      id: 'url',
-      label: 'Add URL Context',
-      description: 'Fetch and attach web page content',
-      icon: <Link2 size={14} />,
-      action: () => {
-        removeAtQueryFromDraft()
-        setUrlPrompt(true)
       }
     },
     {
@@ -247,6 +288,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     }
   ]
 
+  const availableCommands = paletteTrigger === '/' ? skillCommands : toolCommands
+
+  const activeSkill = skills.find((s) => draft === `/${s.name}` || draft.startsWith(`/${s.name} `))
+  const skillToken = activeSkill ? `/${activeSkill.name}` : ''
+
   const handleSelectCommand = (cmd: CommandItem) => {
     setShowCommandPalette(false)
     cmd.action()
@@ -275,6 +321,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
           {showCommandPalette && (
             <CommandPalette
               filter={commandFilter}
+              trigger={paletteTrigger}
               commands={availableCommands}
               onClose={() => setShowCommandPalette(false)}
               onSelect={handleSelectCommand}
@@ -284,44 +331,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
           <div className="composer-model-row">
             <ModelSelector />
           </div>
-
-          {urlPrompt && (
-            <div style={{ display: 'flex', gap: 8, padding: '8px 12px 0' }}>
-              <input
-                value={urlValue}
-                onChange={(e) => setUrlValue(e.target.value)}
-                placeholder="https://…"
-                aria-label="Context URL"
-                autoFocus
-                style={{
-                  flex: 1,
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-primary)',
-                  padding: '6px 8px',
-                  fontSize: 12
-                }}
-              />
-              <button
-                className="primary-btn"
-                onClick={async () => {
-                  if (!urlValue.trim()) return
-                  await addContextUrl(urlValue.trim())
-                  setUrlValue('')
-                  setUrlPrompt(false)
-                }}
-              >
-                Add
-              </button>
-              <button
-                className="chat-ghost-btn"
-                onClick={() => setUrlPrompt(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
 
           {(showRuntimeBusy || searchSetupError) && (
             <div
@@ -376,12 +385,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
             </div>
           )}
 
-          <textarea
+          <div className={`composer-input-wrap ${activeSkill ? 'has-skill' : ''}`}>
+            {activeSkill && (
+              <div ref={highlightRef} className="composer-highlight" aria-hidden="true">
+                <span className="composer-skill-token">{skillToken}</span>
+                {draft.slice(skillToken.length)}
+              </div>
+            )}
+            <textarea
             ref={textareaRef}
             className="composer-textarea"
             value={draft}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
+            onScroll={(e) => {
+              if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop
+            }}
             placeholder={
               composerMode === 'agent'
                 ? isLanding
@@ -395,6 +414,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
             disabled={false}
             aria-label="Message input"
           />
+          </div>
 
           {showSettings && (
             <div className="gen-settings" style={{ padding: '0 12px 8px' }}>

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export type ActiveTab = 'chat' | 'memory' | 'docs' | 'email' | 'compare' | 'cookbook' | 'settings'
 
-export type SettingsSubTab = 'providers' | 'engine' | 'general' | 'about'
+export type SettingsSubTab = 'providers' | 'engine' | 'skills' | 'general' | 'about'
 
 interface SidebarState {
   isCollapsed: boolean

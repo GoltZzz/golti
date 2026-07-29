@@ -699,6 +699,11 @@
   padding: 10px 14px;
 }
 
+.composer.is-landing .composer-highlight {
+  font-size: 14.5px;
+  padding: 10px 14px;
+}
+
 .chat-landing-pills {
   display: flex;
   flex-wrap: wrap;
@@ -956,6 +961,15 @@
   color: var(--accent-cyan);
 }
 
+.command-item.is-skill .command-item-icon {
+  color: var(--accent-primary);
+}
+
+.command-item.is-skill .command-item-label span {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
 .command-item-desc {
   font-size: 11px;
   color: var(--text-muted);
@@ -963,6 +977,40 @@
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 1px;
+}
+
+.command-tooltip {
+  position: fixed;
+  width: 260px;
+  padding: 10px 12px;
+  background: #0f1017;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  pointer-events: none;
+}
+
+.command-tooltip-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  margin-bottom: 4px;
+}
+
+.command-tooltip-summary {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.command-tooltip-meta {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 
 .command-item-shortcut {
@@ -973,6 +1021,12 @@
   padding: 2px 5px;
   border-radius: var(--radius-xs);
   border: 1px solid var(--border-subtle);
+}
+
+.composer-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
 }
 
 .composer-textarea {
@@ -988,6 +1042,29 @@
   min-height: 44px;
   font-family: var(--font-sans);
   padding: 10px 12px;
+}
+
+.composer-input-wrap.has-skill .composer-textarea {
+  color: transparent;
+  caret-color: var(--text-primary);
+}
+
+.composer-highlight {
+  position: absolute;
+  inset: 0;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.composer-skill-token {
+  color: var(--accent-primary);
 }
 
 .composer-footer {

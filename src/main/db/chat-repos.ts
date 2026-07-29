@@ -42,6 +42,7 @@ function mapMessage(row: any): Message {
     conversationId: row.conversation_id,
     role: row.role,
     content: row.content,
+    displayContent: row.display_content ?? undefined,
     model: row.model ?? undefined,
     tokensIn: row.tokens_in ?? undefined,
     tokensOut: row.tokens_out ?? undefined,
@@ -321,8 +322,8 @@ export const chatMessages = {
       `INSERT INTO messages
         (id, conversation_id, role, content, model, tokens_in, tokens_out, created_at, updated_at,
          parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms,
-         finish_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         finish_reason, display_content)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       msg.id,
       msg.conversationId,
@@ -340,7 +341,8 @@ export const chatMessages = {
       msg.generationId ?? null,
       msg.reasoningContent ?? null,
       msg.thinkingDurationMs ?? null,
-      msg.finishReason ?? null
+      msg.finishReason ?? null,
+      msg.displayContent ?? null
     )
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversationId)
     syncMessageFts(msg.id, msg.conversationId, msg.content)
@@ -357,7 +359,7 @@ export const chatMessages = {
       `UPDATE messages SET
         content = ?, model = ?, tokens_in = ?, tokens_out = ?, updated_at = ?,
         parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?,
-        reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?
+        reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?, display_content = ?
        WHERE id = ?`
     ).run(
       next.content,
@@ -373,6 +375,7 @@ export const chatMessages = {
       next.reasoningContent ?? null,
       next.thinkingDurationMs ?? null,
       next.finishReason ?? null,
+      next.displayContent ?? null,
       id
     )
     syncMessageFts(id, next.conversationId, next.content)

@@ -4,6 +4,7 @@ export interface SystemPromptParts {
   basePrompt?: string
   modeSuffix?: string
   contextBlock?: string
+  memoryBlock?: string
 }
 
 export function orderContextItems<T extends { id: string; createdAt?: number }>(items: T[]): T[] {
@@ -33,7 +34,9 @@ export function buildContextBlock(items: ContextItem[]): string {
 }
 
 export function buildSystemPrompt(parts: SystemPromptParts): string {
-  return [parts.basePrompt, parts.modeSuffix, parts.contextBlock].filter(Boolean).join('\n\n')
+  return [parts.basePrompt, parts.modeSuffix, parts.memoryBlock, parts.contextBlock]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export interface RoledMessage {

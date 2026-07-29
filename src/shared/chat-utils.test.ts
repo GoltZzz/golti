@@ -4,6 +4,7 @@ import {
   createThinkStreamParser,
   estimateTokens,
   extractArtifacts,
+  extractAskUser,
   extractShells,
   extractThinkingTags,
   formatConversationMarkdown,
@@ -338,6 +339,31 @@ describe('extractShells', () => {
     expect(shells.length).toBe(1)
     expect(shells[0].language).toBe('python')
     expect(shells[0].content).toContain('print("hello")')
+  })
+})
+
+describe('extractAskUser', () => {
+  const wrap = (body: string) => '```ask-user\n' + body + '\n```'
+
+  it('parses the canonical label/description shape', () => {
+    const prompt = extractAskUser(
+      wrap('{ "question": "Where?", "options": [{"label":"Node","description":"server"}] }')
+    )
+    expect(prompt?.question).toBe('Where?')
+    expect(prompt?.options).toEqual([{ label: 'Node', description: 'server' }])
+  })
+
+  it('accepts weak-model option key aliases instead of dropping them', () => {
+    const prompt = extractAskUser(
+      wrap(
+        '{ "question": "Where?", "options": [{"text":"Node","desc":"server"},{"value":"Browser"},{"title":"Both","subtitle":"shared"}] }'
+      )
+    )
+    expect(prompt?.options).toEqual([
+      { label: 'Node', description: 'server' },
+      { label: 'Browser' },
+      { label: 'Both', description: 'shared' }
+    ])
   })
 })
 

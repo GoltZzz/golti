@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useShallow } from 'zustand/react/shallow'
@@ -18,6 +18,9 @@ import {
   Loader2,
   AlertCircle,
   CornerDownRight,
+  CornerDownLeft,
+  ChevronDown,
+  X,
   Cpu
 } from 'lucide-react'
 import { EggLogo } from '../brand/EggLogo'
@@ -25,7 +28,15 @@ import type { Message } from '../../../shared/types'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
-import { getSiblings, parseEngineMemoryError } from '../../../shared/chat-utils'
+import {
+  getSiblings,
+  parseEngineMemoryError,
+  extractAskUser,
+  stripAskUser,
+  stripSearchRequests,
+  splitStreamingAskUser
+} from '../../../shared/chat-utils'
+import type { AskUserPrompt } from '../../../shared/chat-utils'
 import { isTruncated } from '../../../shared/finish-reason'
 import { parseModelDisplay } from '../../../shared/model-display'
 
@@ -82,7 +93,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
     researchProgress!.phase !== 'error'
 
   const { cleanContent, extractedReasoning } = useMemo(() => {
-    if (isUser || !message.content) {
+    if (isUser) {
+      return { cleanContent: message.displayContent || message.content, extractedReasoning: '' }
+    }
+    if (!message.content) {
       return { cleanContent: message.content, extractedReasoning: '' }
     }
     const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/gi
@@ -97,7 +111,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
       })
       .trimStart()
     return { cleanContent: clean, extractedReasoning: reasoning }
-  }, [isUser, message.content])
+  }, [isUser, message.content, message.displayContent])
 
   const effectiveReasoning = message.reasoningContent || extractedReasoning
 
@@ -106,16 +120,35 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
     return parseEngineMemoryError(message.content || message.error, message.model)
   }, [isUser, message.content, message.error, message.model])
 
+  const askUser = useMemo(
+    () => (isUser || message.isStreaming ? null : extractAskUser(cleanContent)),
+    [isUser, message.isStreaming, cleanContent]
+  )
+
+  const streamingAsk = useMemo(
+    () =>
+      !isUser && message.isStreaming
+        ? splitStreamingAskUser(cleanContent)
+        : { visible: cleanContent, asking: false },
+    [isUser, message.isStreaming, cleanContent]
+  )
+
   const displayCleanContent = useMemo(() => {
     if (!cleanContent) return ''
+    let text = stripSearchRequests(askUser ? stripAskUser(cleanContent) : streamingAsk.visible)
     if (memoryErrorDetails?.isMemoryError) {
-      return cleanContent
+      text = text
         .replace(/\n*\*\[Error:.*?\]\*/gi, '')
         .replace(/\[Error:.*?\]/gi, '')
         .trim()
     }
-    return cleanContent
-  }, [cleanContent, memoryErrorDetails])
+    return text
+  }, [cleanContent, memoryErrorDetails, askUser, streamingAsk])
+
+  const answerAskUser = (answer: string) => {
+    const text = answer.trim()
+    if (text && !isGenerating) sendMessage(text)
+  }
 
   const handleCopyCode = (text: string, index: number) => {
     navigator.clipboard.writeText(text)
@@ -327,6 +360,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                 </ReactMarkdown>
               )}
 
+              {streamingAsk.asking && (
+                <div className="ask-user-pending" role="status">
+                  <Loader2 size={13} className="spin" />
+                  <span>Asking…</span>
+                </div>
+              )}
+
+              {askUser && <AskUserCard prompt={askUser} disabled={isGenerating} onAnswer={answerAskUser} />}
+
               {memoryErrorDetails?.isMemoryError && (
                 <EngineMemoryErrorCard
                   details={memoryErrorDetails}
@@ -526,3 +568,169 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
 })
 
 MessageBubble.displayName = 'MessageBubble'
+
+interface AskUserCardProps {
+  prompt: AskUserPrompt
+  disabled: boolean
+  onAnswer: (answer: string) => void
+}
+
+const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer }) => {
+  const [freeText, setFreeText] = useState('')
+  const [selected, setSelected] = useState<string | null>(null)
+  const [otherOpen, setOtherOpen] = useState(prompt.options.length === 0)
+  const [answered, setAnswered] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const otherIndex = prompt.options.length + 1
+
+  const submit = (value: string) => {
+    const text = value.trim()
+    if (disabled || answered || !text) return
+    setAnswered(true)
+    onAnswer(text)
+  }
+
+  const chooseOption = (label: string) => {
+    if (disabled || answered) return
+    setOtherOpen(false)
+    setSelected(label)
+    submit(label)
+  }
+
+  const chooseOther = () => {
+    if (disabled || answered) return
+    setSelected(null)
+    setOtherOpen(true)
+  }
+
+  useEffect(() => {
+    if (disabled || answered || dismissed || collapsed) return
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      const n = Number(e.key)
+      if (!n) return
+      if (n === otherIndex) {
+        e.preventDefault()
+        chooseOther()
+      } else if (n >= 1 && n <= prompt.options.length) {
+        e.preventDefault()
+        chooseOption(prompt.options[n - 1].label)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  if (dismissed) return null
+
+  const canSubmit = otherOpen ? Boolean(freeText.trim()) : Boolean(selected)
+
+  return (
+    <div className="ask-user-card" data-answered={answered}>
+      <div className="ask-user-head">
+        <div className="ask-user-question">{prompt.question}</div>
+        <div className="ask-user-head-actions">
+          <button
+            className="ask-user-icon-btn"
+            type="button"
+            aria-label={collapsed ? 'Expand question' : 'Collapse question'}
+            onClick={() => setCollapsed((c) => !c)}
+          >
+            <ChevronDown size={14} style={{ transform: collapsed ? 'rotate(-90deg)' : undefined }} />
+          </button>
+          <button
+            className="ask-user-icon-btn"
+            type="button"
+            aria-label="Dismiss question"
+            onClick={() => setDismissed(true)}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <>
+          <div className="ask-user-options">
+            {prompt.options.map((opt, i) => (
+              <button
+                key={opt.label}
+                className="ask-user-option"
+                type="button"
+                disabled={disabled || answered}
+                aria-pressed={selected === opt.label}
+                data-selected={selected === opt.label}
+                onClick={() => chooseOption(opt.label)}
+              >
+                <span className="ask-user-option-text">
+                  <span className="ask-user-option-label">{opt.label}</span>
+                  {opt.description && (
+                    <span className="ask-user-option-desc">{opt.description}</span>
+                  )}
+                </span>
+                <span className="ask-user-option-key">{i + 1}</span>
+              </button>
+            ))}
+
+            {prompt.allowFreeText && (
+              <button
+                className="ask-user-option is-other"
+                type="button"
+                disabled={disabled || answered}
+                data-selected={otherOpen}
+                onClick={chooseOther}
+              >
+                <span className="ask-user-option-text">
+                  <span className="ask-user-option-label">Other</span>
+                </span>
+                {prompt.options.length > 0 && (
+                  <span className="ask-user-option-key">{otherIndex}</span>
+                )}
+              </button>
+            )}
+          </div>
+
+          {prompt.allowFreeText && otherOpen && (
+            <form
+              className="ask-user-freeform"
+              onSubmit={(e) => {
+                e.preventDefault()
+                submit(freeText)
+              }}
+            >
+              <input
+                className="ask-user-input"
+                value={freeText}
+                autoFocus
+                disabled={disabled || answered}
+                placeholder="Type your own answer here"
+                onChange={(e) => setFreeText(e.target.value)}
+              />
+            </form>
+          )}
+
+          <div className="ask-user-foot">
+            <button
+              className="ask-user-skip"
+              type="button"
+              disabled={disabled || answered}
+              onClick={() => setDismissed(true)}
+            >
+              Skip
+            </button>
+            <button
+              className="ask-user-submit"
+              type="button"
+              disabled={disabled || answered || !canSubmit}
+              onClick={() => submit(otherOpen ? freeText : selected || '')}
+            >
+              Submit <CornerDownLeft size={12} />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

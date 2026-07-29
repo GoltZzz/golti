@@ -113,6 +113,96 @@ export interface Citation {
   rank?: number
 }
 
+export interface Memory {
+  id: string
+  category: string
+  title: string
+  summary: string
+  details: string[]
+  sourceConversationId?: string
+  sourceMessageId?: string
+  embeddingModel?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export function memorySearchText(m: Pick<Memory, 'title' | 'summary' | 'details'>): string {
+  return [m.title, m.summary, ...m.details].filter(Boolean).join('\n')
+}
+
+export interface MemorySearchHit extends Memory {
+  score: number
+}
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  instructions: string
+  createdBy: 'user' | 'model'
+  createdAt: number
+  updatedAt: number
+}
+
+/** Skills shipped with the app: hidden from skill management, not user-editable. */
+export const BUILTIN_SKILL_NAMES = ['grill-me']
+
+export function isBuiltinSkill(skill: { name: string }): boolean {
+  return BUILTIN_SKILL_NAMES.includes(skill.name)
+}
+
+/** Normalize a skill name into a slug usable as a /slash-command. */
+export function normalizeSkillName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+}
+
+const SKILL_NAME_STOPWORDS = new Set([
+  'a', 'an', 'the', 'for', 'to', 'of', 'that', 'this', 'me', 'my', 'i', 'you',
+  'and', 'or', 'with', 'skill', 'create', 'make', 'about', 'like', 'when', 'asking',
+  'ask', 'please', 'can', 'help'
+])
+
+const SKILL_REQUEST_PREFIX =
+  /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:(?:i(?:'d| would)?\s+(?:want|like)\s+(?:you\s+)?to\s+)?)(?:create|make|build|save|add|write|generate|set\s+up)\s+(?:me\s+)?(?:a|an|the)?\s*(?:new\s+|reusable\s+|custom\s+)*skill\b/i
+
+/**
+ * Turn a free-text "/skill make me a skill that ..." request into a one-line
+ * description of what the skill does, dropping the imperative framing.
+ */
+export function deriveSkillDescription(raw: string): string {
+  let text = raw.trim().replace(/\s+/g, ' ')
+  text = text.replace(SKILL_REQUEST_PREFIX, '')
+  text = text.replace(/^\s*(?:named|called)\s+["'`]?[a-z0-9][\w-]*["'`]?/i, '')
+  text = text.replace(/^\s*(?:that\s+(?:will\s+|can\s+|should\s+)?|which\s+|to\s+|for\s+|so\s+that\s+|:|-|—)\s*/i, '')
+  text = text.replace(/^please\s+/i, '').trim()
+  if (!text) return ''
+  const sentence = text.split(/(?<=[.!?])\s+/)[0].replace(/[.!?]+$/, '').trim()
+  if (!sentence) return ''
+  return (sentence.charAt(0).toUpperCase() + sentence.slice(1)).slice(0, 120)
+}
+
+/** Pull the name out of a request that states one ("a skill called weekly-recap"). */
+export function extractExplicitSkillName(raw: string): string {
+  const m = /\b(?:named|called)\s+["'`/]?([a-z0-9][a-z0-9 _-]{0,39})["'`]?/i.exec(raw)
+  return m ? normalizeSkillName(m[1].split(/\s+(?:that|which|to|for|so)\b/i)[0]) : ''
+}
+
+/** Derive a short hyphenated skill name from a free-text description. */
+export function deriveSkillName(description: string): string {
+  const words = description
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !SKILL_NAME_STOPWORDS.has(w))
+  const picked = (words.length ? words : description.split(/\s+/)).slice(0, 4).join('-')
+  return normalizeSkillName(picked) || `skill-${Date.now().toString(36).slice(-4)}`
+}
+
 export interface MessagePart {
   type: 'text' | 'context_ref' | 'citation_ref' | 'shell_ref' | 'artifact_ref'
   text?: string
@@ -142,6 +232,7 @@ export interface Message {
   conversationId: string
   role: MessageRole
   content: string
+  displayContent?: string
   model?: string
   tokensIn?: number
   tokensOut?: number
@@ -245,6 +336,8 @@ export interface WebSearchStatus {
 export interface SendMessagePayload {
   conversationId: string
   content: string
+  /** What to show in the user bubble when `content` was expanded from a /skill. */
+  displayContent?: string
   model: string
   providerId: string
   systemPrompt?: string
@@ -266,6 +359,10 @@ export interface SendMessagePayload {
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
   continueMessageId?: string
+  /** Set when the user ran /skill: capture this reply as a new skill's instructions. */
+  skillRequest?: { description: string }
+  /** Set when the message came from a skill that asks clarifying questions (e.g. /grill-me). */
+  askUserEnabled?: boolean
 }
 
 export type StreamEventType =
@@ -493,12 +590,15 @@ export interface Settings {
   systemPrompt: string
   osPlatformOverride?: 'auto' | 'darwin' | 'win32' | 'linux'
   engineEnabled: boolean
+  memoryEnabled: boolean
   engineModelDir?: string
   enginePort: number
   /** GPU layers to offload. Negative = Auto (size from VRAM), 0 = CPU-only, N = exact. */
   engineGpuLayers: number
   /** GPU offload target: 'auto' (pick discrete GPU), 'cpu' (no offload), or a device id like 'Vulkan1'. */
   engineDevice?: string
+  /** GGUF filename of the model used for memory extraction. Empty/undefined = reuse the loaded chat model. */
+  memoryModel?: string
   webSearch?: WebSearchSettings
   /** When true, composer Web Search toggle is on (Auto intent). */
   webSearchEnabled?: boolean

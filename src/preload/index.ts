@@ -8,6 +8,9 @@ import type {
   ConversationSearchHit,
   Message,
   MessageVersion,
+  Memory,
+  MemorySearchHit,
+  Skill,
   ModelInfo,
   SendMessagePayload,
   Settings,
@@ -84,6 +87,32 @@ const api = {
   // Citations
   listCitations: (conversationId: string): Promise<Citation[]> =>
     ipcRenderer.invoke('citations:list', conversationId),
+
+  // Memories (Brain & Memory)
+  listMemories: (): Promise<Memory[]> => ipcRenderer.invoke('memory:list'),
+  deleteMemory: (id: string): Promise<boolean> => ipcRenderer.invoke('memory:delete', id),
+  searchMemories: (query: string): Promise<MemorySearchHit[]> =>
+    ipcRenderer.invoke('memory:search', query),
+  onMemorySaved: (callback: (memories: Memory[]) => void) => {
+    const listener = (_: unknown, memories: Memory[]) => callback(memories)
+    ipcRenderer.on('memory:saved', listener)
+    return () => ipcRenderer.removeListener('memory:saved', listener)
+  },
+
+  // Skills (slash commands)
+  listSkills: (): Promise<Skill[]> => ipcRenderer.invoke('skills:list'),
+  createSkill: (input: { name: string; description?: string; instructions: string }): Promise<Skill> =>
+    ipcRenderer.invoke('skills:create', input),
+  updateSkill: (
+    id: string,
+    input: { name?: string; description?: string; instructions?: string }
+  ): Promise<Skill | undefined> => ipcRenderer.invoke('skills:update', id, input),
+  deleteSkill: (id: string): Promise<boolean> => ipcRenderer.invoke('skills:delete', id),
+  onSkillSaved: (callback: (skill: Skill) => void) => {
+    const listener = (_: unknown, skill: Skill) => callback(skill)
+    ipcRenderer.on('skill:saved', listener)
+    return () => ipcRenderer.removeListener('skill:saved', listener)
+  },
 
   // Tokens
   getTokenBudget: (conversationId: string, draft?: string): Promise<TokenBudget> =>

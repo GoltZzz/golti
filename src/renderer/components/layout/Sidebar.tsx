@@ -9,7 +9,6 @@ import {
   Settings as SettingsIcon,
   PanelLeftClose,
   PanelLeft,
-  Plus,
   Trash2,
   Pin,
   Archive,
@@ -19,11 +18,14 @@ import {
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
+import { useMemoryStore } from '../../stores/memoryStore'
 import { ConfirmDialog } from '../common/ConfirmDialog'
 import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
 
 export const Sidebar: React.FC = () => {
   const { isCollapsed, activeTab, toggleCollapsed, setActiveTab } = useSidebarStore()
+  const unseenMemories = useMemoryStore((s) => s.unseenCount)
+  const markMemoriesSeen = useMemoryStore((s) => s.markSeen)
   const {
     conversations,
     currentConversationId,
@@ -69,7 +71,7 @@ export const Sidebar: React.FC = () => {
   }
 
   const mainNavItems: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'memory', label: 'Brain & Memory', icon: <Brain size={18} /> },
+    { id: 'memory', label: 'Recall', icon: <Brain size={18} /> },
     { id: 'docs', label: 'Document Editor', icon: <FileText size={18} /> },
     { id: 'email', label: 'Mail & Calendar', icon: <Mail size={18} /> },
     { id: 'compare', label: 'Model Comparison', icon: <GitCompare size={18} /> },
@@ -128,28 +130,6 @@ export const Sidebar: React.FC = () => {
           {isCollapsed ? <PanelLeft size={18} /> : <PanelLeftClose size={18} />}
         </button>
 
-        {!isCollapsed && (
-          <button
-            onClick={startNewConversation}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--accent-primary-alpha)',
-              color: 'var(--accent-primary)',
-              fontWeight: 500,
-              fontSize: '13px',
-              gap: '6px'
-            }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.backgroundColor = 'var(--accent-primary-glow)')
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.backgroundColor = 'var(--accent-primary-alpha)')
-            }
-          >
-            <Plus size={16} /> New Chat
-          </button>
-        )}
       </div>
 
       {!isCollapsed && (
@@ -230,10 +210,14 @@ export const Sidebar: React.FC = () => {
           </button>
           {mainNavItems.map((item) => {
             const isActive = activeTab === item.id
+            const badgeCount = item.id === 'memory' ? unseenMemories : 0
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id)
+                  if (item.id === 'memory') markMemoriesSeen()
+                }}
                 title={isCollapsed ? item.label : undefined}
                 style={{
                   display: 'flex',
@@ -248,7 +232,8 @@ export const Sidebar: React.FC = () => {
                   fontWeight: isActive ? 600 : 400,
                   fontSize: '13px',
                   width: '100%',
-                  textAlign: 'left'
+                  textAlign: 'left',
+                  position: 'relative'
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
@@ -257,8 +242,45 @@ export const Sidebar: React.FC = () => {
                   if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'
                 }}
               >
-                <span>{item.icon}</span>
-                {!isCollapsed && <span>{item.label}</span>}
+                <span style={{ position: 'relative', display: 'inline-flex' }}>
+                  {item.icon}
+                  {isCollapsed && badgeCount > 0 && (
+                    <span
+                      aria-hidden
+                      style={{
+                        position: 'absolute',
+                        top: -3,
+                        right: -3,
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        backgroundColor: 'var(--accent-primary)',
+                        boxShadow: '0 0 0 2px var(--bg-sidebar)'
+                      }}
+                    />
+                  )}
+                </span>
+                {!isCollapsed && <span style={{ flex: 1 }}>{item.label}</span>}
+                {!isCollapsed && badgeCount > 0 && (
+                  <span
+                    title={`${badgeCount} new ${badgeCount === 1 ? 'memory' : 'memories'} saved`}
+                    style={{
+                      minWidth: 18,
+                      height: 18,
+                      padding: '0 5px',
+                      borderRadius: 9,
+                      backgroundColor: 'var(--accent-primary)',
+                      color: 'var(--bg-app)',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {badgeCount > 99 ? '99+' : badgeCount}
+                  </span>
+                )}
               </button>
             )
           })}

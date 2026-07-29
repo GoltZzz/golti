@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Server, Key, Check, Trash2, Plus, RefreshCw } from 'lucide-react'
+import { Server, Trash2, Plus } from 'lucide-react'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { AIProviderConfig, ProviderType } from '../../../shared/types'
 
@@ -7,7 +7,6 @@ export const ProviderConfig: React.FC = () => {
   const { providers, fetchProviders, saveProvider, deleteProvider } = useSettingsStore()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [formData, setFormData] = useState<Partial<AIProviderConfig>>({})
-  const [testingStatus, setTestingStatus] = useState<string | null>(null)
 
   useEffect(() => {
     fetchProviders()
@@ -55,32 +54,18 @@ export const ProviderConfig: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 'var(--space-4)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div className="settings-panel settings-panel--narrow">
       <div>
-        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>AI Providers & Backends</h3>
-        <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+        <h3 className="settings-card__title">AI Providers & Backends</h3>
+        <p className="settings-card__desc">
           Add API keys for OpenAI, Anthropic, or Google. Local models run on Golti Engine.
         </p>
       </div>
 
       {/* Add Provider Buttons */}
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+      <div className="settings-btn-row">
         {(['openai', 'anthropic', 'google'] as ProviderType[]).map(t => (
-          <button
-            key={t}
-            onClick={() => handleCreate(t)}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-card)',
-              border: '1px solid var(--border-medium)',
-              fontSize: '12px',
-              color: 'var(--text-primary)',
-              gap: '6px'
-            }}
-            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent-primary)'}
-            onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-medium)'}
-          >
+          <button key={t} onClick={() => handleCreate(t)} className="settings-btn settings-btn--ghost">
             <Plus size={14} /> Add {t.toUpperCase()}
           </button>
         ))}
@@ -91,18 +76,7 @@ export const ProviderConfig: React.FC = () => {
         {providers
           .filter((p) => p.type !== 'golti-engine' && p.id !== 'golti-engine-local' && !p.id.startsWith('golti-engine_'))
           .map(p => (
-          <div
-            key={p.id}
-            style={{
-              padding: 'var(--space-4)',
-              borderRadius: 'var(--radius-md)',
-              backgroundColor: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-3)'
-            }}
-          >
+          <div key={p.id} className="settings-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                 <Server size={18} style={{ color: 'var(--accent-primary)' }} />
@@ -120,33 +94,17 @@ export const ProviderConfig: React.FC = () => {
               </div>
 
               <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                <button
-                  onClick={() => handleEdit(p)}
-                  style={{ fontSize: '12px', color: 'var(--text-secondary)', padding: '4px 8px' }}
-                >
+                <button onClick={() => handleEdit(p)} className="settings-btn settings-btn--ghost">
                   Edit
                 </button>
-                <button
-                  onClick={() => deleteProvider(p.id)}
-                  style={{ fontSize: '12px', color: '#e06c75', padding: '4px 8px' }}
-                >
+                <button onClick={() => deleteProvider(p.id)} className="settings-btn settings-btn--danger">
                   <Trash2 size={14} />
                 </button>
               </div>
             </div>
 
             {p.error && (
-              <div style={{
-                padding: '8px 12px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'rgba(224, 108, 117, 0.1)',
-                border: '1px solid rgba(224, 108, 117, 0.2)',
-                color: '#e06c75',
-                fontSize: '12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px'
-              }}>
+              <div className="settings-error" style={{ gap: '4px' }}>
                 <div style={{ fontWeight: 600 }}>Connection Error</div>
                 <div style={{ opacity: 0.9 }}>{p.error}</div>
               </div>
@@ -161,66 +119,31 @@ export const ProviderConfig: React.FC = () => {
                 borderTop: '1px solid var(--border-subtle)'
               }}>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Display Name
-                  </label>
+                  <label className="settings-field-label">Display Name</label>
                   <input
                     type="text"
                     value={formData.name || ''}
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '8px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-input)',
-                      border: '1px solid var(--border-medium)',
-                      color: 'var(--text-primary)',
-                      fontSize: '13px'
-                    }}
+                    className="settings-input"
                   />
                 </div>
 
-                {(
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                      API Key
-                    </label>
-                    <input
-                      type="password"
-                      value={formData.apiKey || ''}
-                      onChange={e => setFormData({ ...formData, apiKey: e.target.value })}
-                      placeholder="sk-..."
-                      style={{
-                        width: '100%',
-                        padding: '8px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'var(--bg-input)',
-                        border: '1px solid var(--border-medium)',
-                        color: 'var(--text-primary)',
-                        fontSize: '13px'
-                      }}
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="settings-field-label">API Key</label>
+                  <input
+                    type="password"
+                    value={formData.apiKey || ''}
+                    onChange={e => setFormData({ ...formData, apiKey: e.target.value })}
+                    placeholder="sk-..."
+                    className="settings-input"
+                  />
+                </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
-                  <button
-                    onClick={() => setEditingId(null)}
-                    style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--text-muted)' }}
-                  >
+                  <button onClick={() => setEditingId(null)} className="settings-btn settings-btn--link" style={{ padding: '6px 12px' }}>
                     Cancel
                   </button>
-                  <button
-                    onClick={handleSave}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--accent-primary)',
-                      color: 'var(--text-on-accent)',
-                      fontSize: '12px',
-                      fontWeight: 500
-                    }}
-                  >
+                  <button onClick={handleSave} className="settings-btn settings-btn--primary">
                     Save Provider
                   </button>
                 </div>

@@ -20,8 +20,18 @@ import {
   extractThinkingTags,
   createThinkStreamParser,
   getBranchPath,
-  trimHistoryToBudget
+  trimHistoryToBudget,
+  extractSkillBlocks,
+  extractSearchRequest,
+  stripSearchRequests
 } from '../../shared/chat-utils'
+import {
+  normalizeSkillName,
+  deriveSkillName,
+  deriveSkillDescription,
+  extractExplicitSkillName,
+  BUILTIN_SKILL_NAMES
+} from '../../shared/types'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
 import {
   buildContextBlock,
@@ -37,12 +47,15 @@ import {
   dbContext,
   dbConversations,
   dbMessages,
-  dbSettings
+  dbSettings,
+  dbSkills
 } from '../db/database'
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 import { startDeepResearch } from './deep-research'
 import { presentableErrorMessage } from '../../shared/error-display'
+import { extractAndStoreMemories } from './memory-extractor'
+import { buildMemoryRecallBlock } from './memory-recall'
 
 interface ActiveGeneration {
   generationId: string
@@ -56,7 +69,40 @@ interface ActiveGeneration {
 
 const activeGenerations = new Map<string, ActiveGeneration>()
 
-/** Appended when composerMode is 'agent' (tools not wired yet - prompt-only). */
+/** Cap on model-requested mid-turn searches, so a model can't loop on searching forever. */
+const MAX_SEARCH_ROUNDS = 3
+
+/** Appended only when the message came from a skill that asks questions (/grill-me). */
+const ASK_USER_SYSTEM_SUFFIX = [
+  'When the request is missing a detail you need, ask the user instead of guessing. Emit ONE ask-user block and nothing else — no text before or after it.',
+  'The block is valid JSON inside these fences:',
+  '```ask-user',
+  '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means" }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true }',
+  '```',
+  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first, each a short "label" plus a one-line "description" of what choosing it means. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form (a name, a number, a path).',
+  'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up like "what are you trying to build?"; never ask what you can already work out yourself — decide it and state the assumption; keep options concrete and genuinely different, not reworded versions of each other.'
+].join('\n')
+
+/** Lets the model pull fresh web results mid-turn instead of guessing from stale knowledge. */
+const SEARCH_TOOL_SYSTEM_SUFFIX = [
+  'Fresh information: when answering well depends on facts that may have changed since your training data — current versions, prices, recent releases, whether a tool still exists — you can search the web mid-reply.',
+  'To search, emit a fenced block exactly like this and write nothing after it:',
+  '```search',
+  '{ "query": "specific search query" }',
+  '```',
+  'The reply pauses there, the search runs, and the results are handed back to you so you can continue with real data.',
+  `Rules: one block per message, at the very end. At most ${MAX_SEARCH_ROUNDS} searches per turn, so make each query count. Search only when the fresh facts would actually change what you say — not for timeless or subjective topics. Do not announce that you are about to search; just emit the block.`
+].join('\n')
+
+/** Lets the model define a reusable /slash-command when the user asks for one. */
+const SKILL_AUTHOR_SYSTEM_SUFFIX = [
+  'Creating skills: when the user asks you to make, create, or save a "skill" (a reusable /command), define it by emitting a fenced block exactly like this at the end of your reply:',
+  '```skill',
+  '{ "name": "short-name", "description": "one line shown in the / menu", "instructions": "What to do when this skill runs. Use {{input}} where the rest of the user\'s message should be inserted." }',
+  '```',
+  'Rules: "name" becomes /name (lowercase, hyphens only). "description" says what the skill does for the user, in one short phrase starting with a verb ("Research a topic and summarize the best sources") — never repeat the request itself ("Create a skill that..."), never mention the word "skill", and keep it under 100 characters. Only emit this block when the user actually asks to create a skill. After the block, briefly tell the user the skill is saved and how to run it. The block is captured automatically and hidden from the final message.'
+].join('\n')
+
 const COMPOSER_AGENT_SYSTEM_SUFFIX = [
   'You are operating in Agent mode.',
   'Treat the user message as a task to accomplish: clarify the goal if needed, break work into clear steps, and work toward a concrete outcome.',
@@ -160,6 +206,7 @@ export async function startChatGeneration(
   const {
     conversationId,
     content,
+    displayContent,
     model,
     providerId,
     systemPrompt,
@@ -174,7 +221,9 @@ export async function startChatGeneration(
     composerMode,
     contextItemIds,
     generationSettings,
-    continueMessageId
+    continueMessageId,
+    skillRequest,
+    askUserEnabled
   } = payload
 
   const settings = dbSettings.get()
@@ -234,6 +283,7 @@ export async function startChatGeneration(
       conversationId,
       role: 'user',
       content,
+      displayContent: displayContent && displayContent !== content ? displayContent : undefined,
       model,
       createdAt: Date.now(),
       parentId: leaf
@@ -282,20 +332,38 @@ export async function startChatGeneration(
       ]
     : branchPath.filter((m) => m.id !== assistantMsgId)
 
-  const effectiveSystem = buildSystemPrompt({
-    basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
-    modeSuffix: composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
-    contextBlock: buildConversationContextBlock(conversationId, contextItemIds)
-  })
+  const recallQuery =
+    content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
+  const memoryBlock = continuing ? '' : await buildMemoryRecallBlock(recallQuery)
 
-  // Optional web search with explicit lifecycle status (local managed runtime)
-  let searchPreamble = ''
   const mode: WebSearchMode = resolveComposerSearchMode({
     webSearchEnabled,
     forceWebSearch,
     webSearchMode,
     legacyBoolean: webSearch
   })
+
+  // Mid-turn search is only offered alongside a question flow: the model's own
+  // short answers give the intent heuristic nothing to work with, so it has to
+  // ask for results itself.
+  const searchToolEnabled = mode !== 'off' && !continuing && !!askUserEnabled
+
+  const effectiveSystem = buildSystemPrompt({
+    basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
+    modeSuffix: [
+      composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+      askUserEnabled ? ASK_USER_SYSTEM_SUFFIX : '',
+      searchToolEnabled ? SEARCH_TOOL_SYSTEM_SUFFIX : '',
+      skillRequest ? SKILL_AUTHOR_SYSTEM_SUFFIX : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+    memoryBlock,
+    contextBlock: buildConversationContextBlock(conversationId, contextItemIds)
+  })
+
+  // Optional web search with explicit lifecycle status (local managed runtime)
+  let searchPreamble = ''
   const searchQuery =
     content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
   const decision = decideWebSearch(mode, searchQuery)
@@ -311,16 +379,13 @@ export async function startChatGeneration(
     })
   }
 
-  if (mode === 'off' || continuing) {
-    // Quiet when search is off; a continuation reuses the sources already attached.
-  } else if (decision.skipped) {
-    emitSearchStatus({
-      state: 'skipped',
-      message: decision.statusMessage,
-      mode,
-      resultCount: 0
-    })
-  } else {
+  /**
+   * Run one search and return the preamble to hand back to the model, emitting
+   * the status lifecycle and persisting citations as it goes. Returns '' when
+   * the search found nothing or failed — never throws, since a dead search
+   * runtime should degrade to an unsourced answer, not kill the generation.
+   */
+  const runSearchRound = async (query: string, rank0 = 0): Promise<string> => {
     const ws = {
       provider: 'local' as const,
       enabled: true,
@@ -346,14 +411,8 @@ export async function startChatGeneration(
         })
       })
 
-      const results = await runWebSearch(searchQuery, ws)
+      const results = await runWebSearch(query, ws)
       if (results.length > 0) {
-        searchPreamble =
-          'Web search results (cite these sources):\n' +
-          results
-            .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}`)
-            .join('\n\n')
-
         results.forEach((r, i) => {
           const citation: Citation = {
             id: newId('cite'),
@@ -362,7 +421,7 @@ export async function startChatGeneration(
             title: r.title,
             snippet: r.snippet,
             retrievedAt: Date.now(),
-            rank: i + 1
+            rank: rank0 + i + 1
           }
           dbCitations.create(citation)
           sendChunk(win, {
@@ -381,14 +440,20 @@ export async function startChatGeneration(
           mode,
           resultCount: results.length
         })
-      } else {
-        emitSearchStatus({
-          state: 'no-results',
-          message: 'No sources found',
-          mode,
-          resultCount: 0
-        })
+
+        return (
+          'Web search results (cite these sources):\n' +
+          results.map((r, i) => `[${rank0 + i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}`).join('\n\n')
+        )
       }
+
+      emitSearchStatus({
+        state: 'no-results',
+        message: 'No sources found',
+        mode,
+        resultCount: 0
+      })
+      return ''
     } catch (err: any) {
       console.warn('[web-search]', err.message || err)
       emitSearchStatus({
@@ -397,7 +462,24 @@ export async function startChatGeneration(
         mode,
         resultCount: 0
       })
+      return ''
     }
+  }
+
+  let citationCount = 0
+
+  if (mode === 'off' || continuing) {
+    // Quiet when search is off; a continuation reuses the sources already attached.
+  } else if (decision.skipped) {
+    emitSearchStatus({
+      state: 'skipped',
+      message: decision.statusMessage,
+      mode,
+      resultCount: 0
+    })
+  } else {
+    searchPreamble = await runSearchRound(searchQuery)
+    citationCount = (searchPreamble.match(/^URL: /gm) || []).length
   }
 
   const contextWindow =
@@ -483,72 +565,126 @@ export async function startChatGeneration(
     }
 
     try {
-      for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
-        signal: controller.signal,
-        generationSettings: mergedSettings
-      })) {
-        if (event.type === 'thinking' || event.type === 'text') markFirstToken()
+      let searchRounds = 0
 
-        if (event.type === 'thinking') {
-          if (!thinkingStartTime) thinkingStartTime = Date.now()
-          thinkingEndTime = Date.now()
-          reasoningAccumulated += event.text
-          activeGen.reasoningContent = reasoningAccumulated
-          const duration = thinkingEndTime - thinkingStartTime
-          sendChunk(win, {
-            conversationId,
-            messageId: assistantMsgId,
-            generationId,
-            thinkingDelta: event.text,
-            thinkingDurationMs: duration,
-            done: false,
-            eventType: 'thinking'
-          })
-        } else if (event.type === 'text') {
-          const { thinkingDelta, contentDelta } = streamParser(event.text)
+      // Each pass streams until the model either finishes or asks for a web
+      // search; on a search it resumes with the results appended to its history.
+      for (;;) {
+        for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
+          signal: controller.signal,
+          generationSettings: mergedSettings
+        })) {
+          if (event.type === 'thinking' || event.type === 'text') markFirstToken()
 
-          if (thinkingDelta) {
+          if (event.type === 'thinking') {
             if (!thinkingStartTime) thinkingStartTime = Date.now()
             thinkingEndTime = Date.now()
-            reasoningAccumulated += thinkingDelta
+            reasoningAccumulated += event.text
             activeGen.reasoningContent = reasoningAccumulated
             const duration = thinkingEndTime - thinkingStartTime
             sendChunk(win, {
               conversationId,
               messageId: assistantMsgId,
               generationId,
-              thinkingDelta,
+              thinkingDelta: event.text,
               thinkingDurationMs: duration,
               done: false,
               eventType: 'thinking'
             })
-          }
+          } else if (event.type === 'text') {
+            const { thinkingDelta, contentDelta } = streamParser(event.text)
 
-          if (contentDelta) {
-            if (thinkingStartTime && !thinkingEndTime) {
+            if (thinkingDelta) {
+              if (!thinkingStartTime) thinkingStartTime = Date.now()
               thinkingEndTime = Date.now()
+              reasoningAccumulated += thinkingDelta
+              activeGen.reasoningContent = reasoningAccumulated
+              const duration = thinkingEndTime - thinkingStartTime
+              sendChunk(win, {
+                conversationId,
+                messageId: assistantMsgId,
+                generationId,
+                thinkingDelta,
+                thinkingDurationMs: duration,
+                done: false,
+                eventType: 'thinking'
+              })
             }
-            generated += contentDelta
-            activeGen.content = priorContent + generated
-            sendChunk(win, {
-              conversationId,
-              messageId: assistantMsgId,
-              generationId,
-              contentDelta,
-              done: false,
-              eventType: 'text'
-            })
+
+            if (contentDelta) {
+              if (thinkingStartTime && !thinkingEndTime) {
+                thinkingEndTime = Date.now()
+              }
+              generated += contentDelta
+              activeGen.content = priorContent + generated
+              sendChunk(win, {
+                conversationId,
+                messageId: assistantMsgId,
+                generationId,
+                contentDelta,
+                done: false,
+                eventType: 'text'
+              })
+            }
+          } else if (event.type === 'usage') {
+            usage = event.usage
+          } else if (event.type === 'done') {
+            // Providers may emit a real reason and then a generic [DONE]; keep the first.
+            if (event.finishReason && !finishReason) {
+              finishReason = normalizeFinishReason(event.finishReason)
+            }
+          } else if (event.type === 'error') {
+            throw new Error(event.error)
           }
-        } else if (event.type === 'usage') {
-          usage = event.usage
-        } else if (event.type === 'done') {
-          // Providers may emit a real reason and then a generic [DONE]; keep the first.
-          if (event.finishReason && !finishReason) {
-            finishReason = normalizeFinishReason(event.finishReason)
-          }
-        } else if (event.type === 'error') {
-          throw new Error(event.error)
         }
+
+        const searchRequest = searchToolEnabled ? extractSearchRequest(generated) : null
+        if (!searchRequest || controller.signal.aborted) {
+          if (searchRequest) generated = stripSearchRequests(generated)
+          break
+        }
+
+        // Pull the half-written block off the visible reply before the search runs,
+        // so the user never sees the raw JSON sitting in the message.
+        generated = stripSearchRequests(generated)
+        activeGen.content = priorContent + generated
+        sendChunk(win, {
+          conversationId,
+          messageId: assistantMsgId,
+          generationId,
+          correctedContent: priorContent + generated,
+          done: false,
+          eventType: 'correction'
+        })
+
+        let roundNote: string
+        if (searchRounds >= MAX_SEARCH_ROUNDS) {
+          roundNote =
+            'The search limit for this turn is reached. Answer with what you already know and do not search again.'
+        } else {
+          searchRounds++
+          const roundPreamble = await runSearchRound(searchRequest.query, citationCount)
+          citationCount += (roundPreamble.match(/^URL: /gm) || []).length
+          if (controller.signal.aborted) break
+          roundNote = roundPreamble || `The search for "${searchRequest.query}" returned no usable results.`
+        }
+
+        historyForModel.push(
+          {
+            id: `partial_${historyForModel.length}`,
+            conversationId,
+            role: 'assistant',
+            content: priorContent + generated,
+            createdAt: Date.now()
+          },
+          {
+            id: `search_result_${historyForModel.length}`,
+            conversationId,
+            role: 'system',
+            content: `${roundNote}\n\nContinue your reply from where you stopped. Do not repeat what you already wrote, and do not restate the search query.`,
+            createdAt: Date.now()
+          }
+        )
       }
 
       // Check if <think> tags exist in generated text (fallback parsing)
@@ -620,8 +756,67 @@ export async function startChatGeneration(
 
       const shellIds = [...(continuing?.shellIds ?? []), ...createdShells.map((s) => s.id)]
 
+      const emitSkillSaved = (saved: ReturnType<typeof dbSkills.upsert>) => {
+        if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+          win.webContents.send('skill:saved', saved)
+        }
+      }
+
+      const { skills: authoredSkills, cleanContent: contentWithoutSkills } =
+        extractSkillBlocks(accumulated)
+      // Only honor authored skill blocks when the user explicitly ran /skill.
+      // Otherwise the block is stripped from the reply but never saved.
+      const acceptAuthoredSkills = !!skillRequest
+      let storedContent = authoredSkills.length ? contentWithoutSkills : accumulated
+      let skillWasSaved = false
+
+      for (const authored of acceptAuthoredSkills ? authoredSkills : []) {
+        const name = normalizeSkillName(authored.name)
+        if (!name || BUILTIN_SKILL_NAMES.includes(name)) continue
+        try {
+          emitSkillSaved(
+            dbSkills.upsert({
+              id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              name,
+              description: deriveSkillDescription(authored.description) || authored.description,
+              instructions: authored.instructions,
+              createdBy: 'model'
+            })
+          )
+          skillWasSaved = true
+        } catch {
+          // best-effort: a bad skill definition shouldn't fail the message
+        }
+      }
+
+      // Deterministic fallback for /skill: small models can't reliably emit the
+      // block, so when the user explicitly asked to create a skill and none was
+      // parsed, capture the model's prose reply as the skill's instructions.
+      if (skillRequest && !skillWasSaved) {
+        const instructions = contentWithoutSkills.trim()
+        const summary = deriveSkillDescription(skillRequest.description)
+        const name =
+          extractExplicitSkillName(skillRequest.description) ||
+          deriveSkillName(summary || skillRequest.description)
+        if (instructions && !BUILTIN_SKILL_NAMES.includes(name)) {
+          try {
+            const saved = dbSkills.upsert({
+              id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              name,
+              description: summary || `Runs the /${name} instructions`,
+              instructions,
+              createdBy: 'model'
+            })
+            emitSkillSaved(saved)
+            storedContent = `✅ Saved skill **/${saved.name}** — run it any time by typing \`/${saved.name}\`.\n\nIt will follow these instructions:\n\n> ${instructions.replace(/\n/g, '\n> ')}`
+          } catch {
+            // ignore — keep the original reply if saving fails
+          }
+        }
+      }
+
       dbMessages.update(assistantMsgId, {
-        content: accumulated,
+        content: storedContent,
         reasoningContent: reasoningAccumulated || undefined,
         thinkingDurationMs: totalThinkingDurationMs,
         shellIds,
@@ -637,12 +832,30 @@ export async function startChatGeneration(
         messageId: assistantMsgId,
         generationId,
         contentDelta: '',
+        correctedContent: storedContent !== accumulated ? storedContent : undefined,
         thinkingDurationMs: totalThinkingDurationMs,
         done: true,
         usage,
         finishReason,
         eventType: 'done'
       })
+
+      try {
+        const path = getBranchPath(dbMessages.listForConversation(conversationId), assistantMsgId)
+        const lastUser = [...path].reverse().find((m) => m.role === 'user')
+        void extractAndStoreMemories({
+          conversationId,
+          messageId: assistantMsgId,
+          userText: content?.trim() || lastUser?.content || '',
+          assistantText: accumulated
+        }).then((saved) => {
+          if (saved.length && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('memory:saved', saved)
+          }
+        })
+      } catch {
+        // memory extraction is best-effort
+      }
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const totalThinkingDurationMs =

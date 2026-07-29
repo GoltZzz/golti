@@ -164,6 +164,12 @@ export function extractShells(content: string, minLines = 1): ExtractedShell[] {
     const isExplicit = Boolean(shellLang) || language === 'markdown' || language === 'md' || language === 'mermaid'
     if (!isExplicit && lineCount < minLines) continue
 
+    // Interactive question prompts are rendered as a card, not stored as shells.
+    if (/^ask(?:[-_]?user)?$/.test(language)) continue
+    // Same for a mid-turn web-search request; it is consumed by the runtime.
+    if (language === 'search') continue
+    if (language === 'json' && parseAskUserBody(body)) continue
+
     const type = language === 'markdown' || language === 'md' ? 'markdown' : 'code'
     const title =
       type === 'markdown'
@@ -187,6 +193,313 @@ export function extractShells(content: string, minLines = 1): ExtractedShell[] {
   return results
 }
 export const extractArtifacts = extractShells
+
+export interface AskUserOption {
+  label: string
+  description?: string
+}
+
+export interface AskUserPrompt {
+  question: string
+  options: AskUserOption[]
+  allowFreeText: boolean
+  fenceStart: number
+  fenceEnd: number
+}
+
+type AskUserBody = Omit<AskUserPrompt, 'fenceStart' | 'fenceEnd'>
+
+/**
+ * Parse an ask-user JSON body, tolerating the formatting slips small local
+ * models commonly make: single quotes, trailing commas, smart quotes, and a
+ * stray language tag on the first line.
+ */
+function parseAskUserBody(raw: string): AskUserBody | null {
+  const body = raw.trim().replace(/^(?:json|ask[-_]?user)\s*\n/i, '').trim()
+  if (!body.startsWith('{')) return null
+
+  const candidates = [
+    body,
+    body
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/,(\s*[}\]])/g, '$1')
+      .replace(/'/g, '"')
+  ]
+
+  for (const candidate of candidates) {
+    let parsed: { question?: unknown; options?: unknown; allowFreeText?: unknown }
+    try {
+      parsed = JSON.parse(candidate)
+    } catch {
+      continue
+    }
+    if (!parsed || typeof parsed !== 'object') continue
+    const question = typeof parsed.question === 'string' ? parsed.question.trim() : ''
+    if (!question) continue
+    const options = Array.isArray(parsed.options)
+      ? parsed.options
+          .map((o): AskUserOption | null => {
+            if (typeof o === 'string') {
+              return o.trim() ? { label: o.trim() } : null
+            }
+            if (o && typeof o === 'object') {
+              const raw = o as Record<string, unknown>
+              const pick = (...keys: string[]): string => {
+                for (const key of keys) {
+                  const val = raw[key]
+                  if (typeof val === 'string' && val.trim()) return val.trim()
+                }
+                return ''
+              }
+              const label = pick('label', 'option', 'text', 'value', 'title', 'name')
+              if (!label) return null
+              const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
+              return { label, description }
+            }
+            return null
+          })
+          .filter((o): o is AskUserOption => o !== null)
+      : []
+    return { question, options, allowFreeText: parsed.allowFreeText !== false }
+  }
+
+  return null
+}
+
+const ASK_USER_FENCE = /```(?:ask(?:[-_]?user)?|json)?\s*(?:\n|$)([\s\S]*?)```/gi
+
+/**
+ * Find the JSON object starting at `start` by tracking brace depth, ignoring
+ * braces inside strings. Returns the end index (exclusive), or -1 if unbalanced.
+ */
+function findJsonEnd(text: string, start: number): number {
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"' || ch === "'") inString = false
+      continue
+    }
+    if (ch === '"' || ch === "'") inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return i + 1
+    }
+  }
+
+  return -1
+}
+
+/**
+ * Detect an interactive question emitted by the model. The canonical form is a
+ * ```ask-user``` fence wrapping `{ question, options?, allowFreeText? }`, but
+ * small models often drop the fence or mislabel it, so bare JSON objects
+ * carrying a `question` key are accepted too. Returns the last complete match
+ * (models sometimes ask after some preamble), or null when none is present.
+ */
+export function extractAllAskUser(content: string): AskUserPrompt[] {
+  if (!content || !content.includes('{')) return []
+
+  const fenced: AskUserPrompt[] = []
+  const fenceRe = new RegExp(ASK_USER_FENCE.source, 'gi')
+  let match: RegExpExecArray | null
+  while ((match = fenceRe.exec(content)) !== null) {
+    const parsed = parseAskUserBody(match[1] || '')
+    if (!parsed) continue
+    fenced.push({ ...parsed, fenceStart: match.index, fenceEnd: match.index + match[0].length })
+  }
+  if (fenced.length) return fenced
+
+  // Unfenced fallback: scan for balanced JSON objects carrying a question key.
+  const bare: AskUserPrompt[] = []
+  for (let i = content.indexOf('{'); i !== -1; i = content.indexOf('{', i + 1)) {
+    const end = findJsonEnd(content, i)
+    if (end === -1) break
+    const parsed = parseAskUserBody(content.slice(i, end))
+    if (parsed) {
+      bare.push({ ...parsed, fenceStart: i, fenceEnd: end })
+      i = end - 1
+    }
+  }
+
+  return bare
+}
+
+export function extractAskUser(content: string): AskUserPrompt | null {
+  const all = extractAllAskUser(content)
+  return all.length ? all[all.length - 1] : null
+}
+
+/**
+ * Expand a leading slash-command in a composer draft into the instruction the
+ * model actually receives. Returns the text unchanged when no command matches.
+ */
+export interface SlashSkill {
+  name: string
+  instructions: string
+}
+
+export function expandSlashCommand(text: string, skills: SlashSkill[] = []): string {
+  const trimmed = text.trim()
+  const match = /^\/([a-z0-9-]+)\b\s*([\s\S]*)$/i.exec(trimmed)
+  if (!match) return text
+  const command = match[1].toLowerCase()
+  const rest = match[2].trim()
+
+  if (command === 'skill') {
+    const request = rest || 'a skill based on what we have been discussing'
+    return [
+      `I want to save a reusable skill for: ${request}.`,
+      'Reply with ONLY the instructions that skill should follow every time it runs — written as direct commands to you, in plain text.',
+      'Do not greet me, explain, or add anything before or after. Just the instructions.'
+    ].join(' ')
+  }
+
+  const skill = skills.find((s) => s.name.toLowerCase() === command)
+  if (!skill) return text
+
+  const input = rest || 'what I actually need'
+  const body = skill.instructions.includes('{{input}}')
+    ? skill.instructions.split('{{input}}').join(input)
+    : rest
+      ? `${skill.instructions}\n\n${rest}`
+      : skill.instructions
+  return body.trim()
+}
+
+export interface ParsedSkillBlock {
+  name: string
+  description: string
+  instructions: string
+}
+
+/**
+ * Extract ```skill fenced blocks the model emits to define a reusable command.
+ * The body is JSON: { "name", "description", "instructions" }. Returns the parsed
+ * skills plus the content with those blocks removed.
+ */
+export function extractSkillBlocks(content: string): {
+  skills: ParsedSkillBlock[]
+  cleanContent: string
+} {
+  const skills: ParsedSkillBlock[] = []
+  const re = /```skill\s*\n([\s\S]*?)```/gi
+  const cleanContent = content.replace(re, (_match, body: string) => {
+    try {
+      const parsed = JSON.parse(body.trim())
+      const name = typeof parsed?.name === 'string' ? parsed.name.trim() : ''
+      const instructions = typeof parsed?.instructions === 'string' ? parsed.instructions.trim() : ''
+      if (name && instructions) {
+        skills.push({
+          name,
+          description: typeof parsed?.description === 'string' ? parsed.description.trim() : '',
+          instructions
+        })
+      }
+    } catch {
+      // ignore malformed skill blocks
+    }
+    return ''
+  })
+  return { skills, cleanContent: cleanContent.trim() }
+}
+
+const ASK_USER_OPENER = /```search|```(?:ask(?:[-_]?user)?|json)?\s*\n?\s*\{|\{\s*(?:"|')?question(?:"|')?\s*:/i
+
+/**
+ * While a reply is still streaming, an ask-user block arrives character by
+ * character and would otherwise render as raw JSON. Split the text at the first
+ * point that looks like the start of such a block so the UI can show an
+ * "Asking…" placeholder instead of the half-written payload.
+ */
+export function splitStreamingAskUser(content: string): { visible: string; asking: boolean } {
+  if (!content) return { visible: '', asking: false }
+  const match = ASK_USER_OPENER.exec(content)
+  if (!match) return { visible: content, asking: false }
+  return { visible: content.slice(0, match.index).trimEnd(), asking: true }
+}
+
+export interface SearchRequest {
+  query: string
+  fenceStart: number
+  fenceEnd: number
+}
+
+const SEARCH_FENCE = /```search\s*(?:\n|$)([\s\S]*?)```/gi
+
+/**
+ * The body is normally `{ "query": "..." }`, but small models often emit the
+ * bare query text instead, so a non-JSON body is taken as the query verbatim.
+ */
+function parseSearchBody(raw: string): string {
+  const body = raw.trim().replace(/^(?:json|search)\s*\n/i, '').trim()
+  if (!body) return ''
+  if (body.startsWith('{')) {
+    for (const candidate of [body, body.replace(/[“”]/g, '"').replace(/,(\s*[}\]])/g, '$1')]) {
+      try {
+        const parsed = JSON.parse(candidate)
+        const query = typeof parsed?.query === 'string' ? parsed.query.trim() : ''
+        if (query) return query
+      } catch {
+        continue
+      }
+    }
+    return ''
+  }
+  return body.split('\n')[0].trim().replace(/^["']|["']$/g, '')
+}
+
+export function extractAllSearchRequests(content: string): SearchRequest[] {
+  if (!content || !content.includes('```search')) return []
+  const found: SearchRequest[] = []
+  const re = new RegExp(SEARCH_FENCE.source, 'gi')
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    const query = parseSearchBody(match[1] || '')
+    if (query) {
+      found.push({ query, fenceStart: match.index, fenceEnd: match.index + match[0].length })
+    }
+  }
+  return found
+}
+
+/**
+ * A model asking for fresh web results mid-turn. Returns the last request, since
+ * only the trailing one can still be unanswered.
+ */
+export function extractSearchRequest(content: string): SearchRequest | null {
+  const all = extractAllSearchRequests(content)
+  return all.length ? all[all.length - 1] : null
+}
+
+/** Remove any ```search``` blocks so they aren't rendered as raw markdown. */
+export function stripSearchRequests(content: string): string {
+  const found = extractAllSearchRequests(content)
+  if (!found.length) return content
+  let out = content
+  for (let i = found.length - 1; i >= 0; i--) {
+    out = out.slice(0, found[i].fenceStart) + out.slice(found[i].fenceEnd)
+  }
+  return out.trim()
+}
+
+/** Remove any ```ask-user``` blocks from text so they aren't rendered as raw markdown. */
+export function stripAskUser(content: string): string {
+  const found = extractAllAskUser(content)
+  if (!found.length) return content
+  let out = content
+  for (let i = found.length - 1; i >= 0; i--) {
+    out = out.slice(0, found[i].fenceStart) + out.slice(found[i].fenceEnd)
+  }
+  return out.trim()
+}
 
 /**
  * Parses inline <think>...</think> tags out of content text.
