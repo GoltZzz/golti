@@ -90,7 +90,13 @@ export const chatSkills = {
   }
 }
 
-/** Seed built-in skills once, so the /grill-me command survives the move off hardcoding. */
+const GRILL_ME_INSTRUCTIONS =
+  'Interview me about {{input}} before giving any solution. Ask probing questions ONE at a time using an ask-user block, and always give 2-5 concrete clickable "options" (your best guesses at my likely answers, each with a label and a one-line description) instead of leaving me an empty text box. Do not answer or make assumptions until you have enough detail; keep asking follow-ups based on my replies. Once you understand my needs, summarize what you learned and then give your answer. Ask your first question now.'
+
+/**
+ * Seed built-in skills. Only creates grill-me when it is missing, so an existing
+ * one — edited or not — is never overwritten.
+ */
 export function seedDefaultSkills(): void {
   if (chatSkills.getByName('grill-me')) return
   chatSkills.upsert({
@@ -98,12 +104,6 @@ export function seedDefaultSkills(): void {
     name: 'grill-me',
     description: 'Have Golti interview you with questions before it answers',
     createdBy: 'user',
-    instructions: [
-      'Interview me about {{input}} before giving any solution.',
-      'Ask probing questions ONE at a time using an ask-user block, and always give 2-5 concrete clickable "options" (your best guesses at my likely answers, each with a label and a one-line description) instead of leaving me an empty text box.',
-      'Do not answer or make assumptions until you have enough detail; keep asking follow-ups based on my replies.',
-      'Once you understand my needs, summarize what you learned and then give your answer.',
-      'Ask your first question now.'
-    ].join(' ')
+    instructions: GRILL_ME_INSTRUCTIONS
   })
 }

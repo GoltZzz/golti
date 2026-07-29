@@ -144,6 +144,13 @@ export interface Skill {
   updatedAt: number
 }
 
+/** Skills shipped with the app: hidden from skill management, not user-editable. */
+export const BUILTIN_SKILL_NAMES = ['grill-me']
+
+export function isBuiltinSkill(skill: { name: string }): boolean {
+  return BUILTIN_SKILL_NAMES.includes(skill.name)
+}
+
 /** Normalize a skill name into a slug usable as a /slash-command. */
 export function normalizeSkillName(raw: string): string {
   return raw
@@ -159,6 +166,31 @@ const SKILL_NAME_STOPWORDS = new Set([
   'and', 'or', 'with', 'skill', 'create', 'make', 'about', 'like', 'when', 'asking',
   'ask', 'please', 'can', 'help'
 ])
+
+const SKILL_REQUEST_PREFIX =
+  /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:(?:i(?:'d| would)?\s+(?:want|like)\s+(?:you\s+)?to\s+)?)(?:create|make|build|save|add|write|generate|set\s+up)\s+(?:me\s+)?(?:a|an|the)?\s*(?:new\s+|reusable\s+|custom\s+)*skill\b/i
+
+/**
+ * Turn a free-text "/skill make me a skill that ..." request into a one-line
+ * description of what the skill does, dropping the imperative framing.
+ */
+export function deriveSkillDescription(raw: string): string {
+  let text = raw.trim().replace(/\s+/g, ' ')
+  text = text.replace(SKILL_REQUEST_PREFIX, '')
+  text = text.replace(/^\s*(?:named|called)\s+["'`]?[a-z0-9][\w-]*["'`]?/i, '')
+  text = text.replace(/^\s*(?:that\s+(?:will\s+|can\s+|should\s+)?|which\s+|to\s+|for\s+|so\s+that\s+|:|-|—)\s*/i, '')
+  text = text.replace(/^please\s+/i, '').trim()
+  if (!text) return ''
+  const sentence = text.split(/(?<=[.!?])\s+/)[0].replace(/[.!?]+$/, '').trim()
+  if (!sentence) return ''
+  return (sentence.charAt(0).toUpperCase() + sentence.slice(1)).slice(0, 120)
+}
+
+/** Pull the name out of a request that states one ("a skill called weekly-recap"). */
+export function extractExplicitSkillName(raw: string): string {
+  const m = /\b(?:named|called)\s+["'`/]?([a-z0-9][a-z0-9 _-]{0,39})["'`]?/i.exec(raw)
+  return m ? normalizeSkillName(m[1].split(/\s+(?:that|which|to|for|so)\b/i)[0]) : ''
+}
 
 /** Derive a short hyphenated skill name from a free-text description. */
 export function deriveSkillName(description: string): string {
@@ -329,6 +361,8 @@ export interface SendMessagePayload {
   continueMessageId?: string
   /** Set when the user ran /skill: capture this reply as a new skill's instructions. */
   skillRequest?: { description: string }
+  /** Set when the message came from a skill that asks clarifying questions (e.g. /grill-me). */
+  askUserEnabled?: boolean
 }
 
 export type StreamEventType =

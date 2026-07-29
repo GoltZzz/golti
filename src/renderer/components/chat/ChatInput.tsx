@@ -25,9 +25,19 @@ import { UsageMeter } from './UsageMeter'
 import { Tooltip } from './Tooltip'
 import { ModelSelector } from './ModelSelector'
 import { CommandPalette, CommandItem } from './CommandPalette'
+import { Skill } from '../../../shared/types'
 
 interface ChatInputProps {
   isLanding?: boolean
+}
+
+function summarizeSkill(skill: Skill): string {
+  const source = (skill.description || skill.instructions || '').replace(/\s+/g, ' ').trim()
+  if (!source) return 'No description yet.'
+  if (source.length <= 220) return source
+  const cut = source.slice(0, 220)
+  const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '))
+  return (lastStop > 120 ? cut.slice(0, lastStop + 1) : cut.trimEnd() + '…')
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
@@ -198,6 +208,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
       label: s.name,
       description: s.description || 'Custom skill',
       icon: s.name === 'grill-me' ? <HelpCircle size={14} /> : <Sparkles size={14} />,
+      tooltip: {
+        title: `/${s.name}`,
+        summary: summarizeSkill(s),
+        meta: `${s.createdBy === 'model' ? 'Created by Golti' : 'Created by you'} · updated ${new Date(s.updatedAt).toLocaleDateString()}`
+      },
       action: () => {
         removeAtQueryFromDraft(`/${s.name} `)
         textareaRef.current?.focus()

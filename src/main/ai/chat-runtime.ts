@@ -23,7 +23,13 @@ import {
   trimHistoryToBudget,
   extractSkillBlocks
 } from '../../shared/chat-utils'
-import { normalizeSkillName, deriveSkillName } from '../../shared/types'
+import {
+  normalizeSkillName,
+  deriveSkillName,
+  deriveSkillDescription,
+  extractExplicitSkillName,
+  BUILTIN_SKILL_NAMES
+} from '../../shared/types'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
 import {
   buildContextBlock,
@@ -61,7 +67,7 @@ interface ActiveGeneration {
 
 const activeGenerations = new Map<string, ActiveGeneration>()
 
-/** Appended when composerMode is 'agent' (tools not wired yet — prompt-only). */
+/** Appended only when the message came from a skill that asks questions (/grill-me). */
 const ASK_USER_SYSTEM_SUFFIX = [
   'Clarifying questions: when the user request is ambiguous or missing a detail you need to give a good answer, ask the user instead of guessing.',
   'To ask, emit a fenced block exactly like this (JSON body, nothing else inside):',
@@ -78,7 +84,7 @@ const SKILL_AUTHOR_SYSTEM_SUFFIX = [
   '```skill',
   '{ "name": "short-name", "description": "one line shown in the / menu", "instructions": "What to do when this skill runs. Use {{input}} where the rest of the user\'s message should be inserted." }',
   '```',
-  'Rules: "name" becomes /name (lowercase, hyphens only). Only emit this block when the user actually asks to create a skill. After the block, briefly tell the user the skill is saved and how to run it. The block is captured automatically and hidden from the final message.'
+  'Rules: "name" becomes /name (lowercase, hyphens only). "description" says what the skill does for the user, in one short phrase starting with a verb ("Research a topic and summarize the best sources") — never repeat the request itself ("Create a skill that..."), never mention the word "skill", and keep it under 100 characters. Only emit this block when the user actually asks to create a skill. After the block, briefly tell the user the skill is saved and how to run it. The block is captured automatically and hidden from the final message.'
 ].join('\n')
 
 const COMPOSER_AGENT_SYSTEM_SUFFIX = [
@@ -200,7 +206,8 @@ export async function startChatGeneration(
     contextItemIds,
     generationSettings,
     continueMessageId,
-    skillRequest
+    skillRequest,
+    askUserEnabled
   } = payload
 
   const settings = dbSettings.get()
@@ -317,7 +324,7 @@ export async function startChatGeneration(
     basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
     modeSuffix: [
       composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
-      ASK_USER_SYSTEM_SUFFIX,
+      askUserEnabled ? ASK_USER_SYSTEM_SUFFIX : '',
       SKILL_AUTHOR_SYSTEM_SUFFIX
     ]
       .filter(Boolean)
@@ -671,13 +678,13 @@ export async function startChatGeneration(
 
       for (const authored of authoredSkills) {
         const name = normalizeSkillName(authored.name)
-        if (!name) continue
+        if (!name || BUILTIN_SKILL_NAMES.includes(name)) continue
         try {
           emitSkillSaved(
             dbSkills.upsert({
               id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
               name,
-              description: authored.description,
+              description: deriveSkillDescription(authored.description) || authored.description,
               instructions: authored.instructions,
               createdBy: 'model'
             })
@@ -693,13 +700,16 @@ export async function startChatGeneration(
       // parsed, capture the model's prose reply as the skill's instructions.
       if (skillRequest && !skillWasSaved) {
         const instructions = contentWithoutSkills.trim()
-        if (instructions) {
-          const name = deriveSkillName(skillRequest.description)
+        const summary = deriveSkillDescription(skillRequest.description)
+        const name =
+          extractExplicitSkillName(skillRequest.description) ||
+          deriveSkillName(summary || skillRequest.description)
+        if (instructions && !BUILTIN_SKILL_NAMES.includes(name)) {
           try {
             const saved = dbSkills.upsert({
               id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
               name,
-              description: skillRequest.description.slice(0, 120),
+              description: summary || `Runs the /${name} instructions`,
               instructions,
               createdBy: 'model'
             })

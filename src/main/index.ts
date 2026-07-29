@@ -74,7 +74,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
-import { normalizeSkillName } from '../shared/types'
+import { normalizeSkillName, isBuiltinSkill, BUILTIN_SKILL_NAMES } from '../shared/types'
 
 const execAsync = promisify(exec)
 
@@ -557,6 +557,7 @@ function setupIpcHandlers(): void {
     (_, input: { name: string; description?: string; instructions: string }) => {
       const name = normalizeSkillName(input.name)
       if (!name) throw new Error('Skill name is required')
+      if (BUILTIN_SKILL_NAMES.includes(name)) throw new Error(`/${name} is a built-in skill`)
       if (!input.instructions?.trim()) throw new Error('Skill instructions are required')
       return dbSkills.upsert({
         id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -570,12 +571,21 @@ function setupIpcHandlers(): void {
   ipcMain.handle(
     'skills:update',
     (_, id: string, input: { name?: string; description?: string; instructions?: string }) => {
+      const existing = dbSkills.get(id)
+      if (existing && isBuiltinSkill(existing)) throw new Error(`/${existing.name} is a built-in skill`)
       const patch = { ...input }
       if (patch.name !== undefined) patch.name = normalizeSkillName(patch.name)
+      if (patch.name && BUILTIN_SKILL_NAMES.includes(patch.name)) {
+        throw new Error(`/${patch.name} is a built-in skill`)
+      }
       return dbSkills.update(id, patch)
     }
   )
-  ipcMain.handle('skills:delete', (_, id: string) => dbSkills.delete(id))
+  ipcMain.handle('skills:delete', (_, id: string) => {
+    const existing = dbSkills.get(id)
+    if (existing && isBuiltinSkill(existing)) throw new Error(`/${existing.name} is a built-in skill`)
+    return dbSkills.delete(id)
+  })
 
   // Artifacts
   ipcMain.handle('artifacts:list', (_, conversationId: string) =>

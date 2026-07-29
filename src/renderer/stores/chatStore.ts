@@ -454,6 +454,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ? { description: skillMatch[1].trim() || 'a skill based on what we have been discussing' }
       : undefined
 
+    const askUserEnabled = text !== rawInput && /ask-user/i.test(text)
+
     let convId = get().currentConversationId
     if (!convId) {
       convId = await get().newConversation()
@@ -542,7 +544,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
       generationSettings: get().generationSettings,
-      skillRequest
+      skillRequest,
+      askUserEnabled
     })
 
     set((state) => {

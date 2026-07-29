@@ -10,6 +10,12 @@ import {
   Check
 } from 'lucide-react'
 
+export interface CommandTooltip {
+  title: string
+  summary: string
+  meta?: string
+}
+
 export interface CommandItem {
   id: string
   label: string
@@ -17,6 +23,7 @@ export interface CommandItem {
   icon: React.ReactNode
   shortcut?: string
   isActive?: boolean
+  tooltip?: CommandTooltip
   action: () => void
 }
 
@@ -39,6 +46,34 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const isSkills = trigger === '/'
   const containerRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = React.useState(0)
+  const [hovered, setHovered] = React.useState<{ item: CommandItem; top: number; left: number } | null>(null)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearHoverTimer = (): void => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+  }
+
+  const showTooltip = (cmd: CommandItem, el: HTMLElement): void => {
+    clearHoverTimer()
+    if (!cmd.tooltip) {
+      setHovered(null)
+      return
+    }
+    const rect = el.getBoundingClientRect()
+    hoverTimer.current = setTimeout(() => {
+      setHovered({ item: cmd, top: rect.top, left: rect.right + 10 })
+    }, 320)
+  }
+
+  const hideTooltip = (): void => {
+    clearHoverTimer()
+    setHovered(null)
+  }
+
+  useEffect(() => clearHoverTimer, [])
 
   const filteredCommands = commands.filter((cmd) =>
     cmd.label.toLowerCase().includes(filter.toLowerCase()) ||
@@ -101,7 +136,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             key={cmd.id}
             className={`command-item ${idx === selectedIndex ? 'is-selected' : ''} ${cmd.isActive ? 'is-active' : ''} ${isSkills ? 'is-skill' : ''}`}
             onClick={() => onSelect(cmd)}
-            onMouseEnter={() => setSelectedIndex(idx)}
+            onMouseEnter={(e) => {
+              setSelectedIndex(idx)
+              showTooltip(cmd, e.currentTarget)
+            }}
+            onMouseLeave={hideTooltip}
+            onFocus={(e) => showTooltip(cmd, e.currentTarget)}
+            onBlur={hideTooltip}
             role="menuitem"
           >
             <div className="command-item-icon">{cmd.icon}</div>
@@ -116,6 +157,19 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           </button>
         ))}
       </div>
+      {hovered && (
+        <div
+          className="command-tooltip animate-fade-in"
+          role="tooltip"
+          style={{ top: hovered.top, left: hovered.left }}
+        >
+          <div className="command-tooltip-title">{hovered.item.tooltip?.title}</div>
+          <div className="command-tooltip-summary">{hovered.item.tooltip?.summary}</div>
+          {hovered.item.tooltip?.meta && (
+            <div className="command-tooltip-meta">{hovered.item.tooltip.meta}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
