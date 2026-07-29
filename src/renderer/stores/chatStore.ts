@@ -77,6 +77,7 @@ interface ChatState {
   fetchConversations: () => Promise<void>
   selectConversation: (id: string) => Promise<void>
   newConversation: () => Promise<string>
+  startBlankConversation: () => void
   deleteConversation: (id: string) => Promise<void>
   pinConversation: (id: string, pinned: boolean) => Promise<void>
   archiveConversation: (id: string) => Promise<void>
@@ -357,6 +358,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     return newConv.id
+  },
+
+  startBlankConversation: () => {
+    set({
+      ...conversationScopedReset(),
+      currentConversationId: null,
+      isLoadingConversation: false,
+      generationSettings: { temperature: 0.7, topP: 0.9 }
+    })
+    selectSeq += 1
   },
 
   deleteConversation: async (id: string) => {
