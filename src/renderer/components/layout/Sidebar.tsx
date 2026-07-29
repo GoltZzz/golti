@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react'
 import {
   MessageSquare,
-  Search,
+  Home,
+  Code2,
   Brain,
   FileText,
   Mail,
@@ -25,7 +26,7 @@ export const Sidebar: React.FC = () => {
     conversations,
     currentConversationId,
     selectConversation,
-    newConversation,
+    startBlankConversation,
     deleteConversation,
     pinConversation,
     archiveConversation,
@@ -37,6 +38,7 @@ export const Sidebar: React.FC = () => {
   } = useChatStore()
 
   const [localQuery, setLocalQuery] = useState('')
+  const [topTab, setTopTab] = useState<'home' | 'code'>('home')
 
   const displayedConversations = useMemo(() => {
     if (searchHits.length > 0 && localQuery.trim()) {
@@ -46,11 +48,22 @@ export const Sidebar: React.FC = () => {
     if (localQuery.trim() && searchHits.length === 0) {
       return []
     }
-    return conversations
-  }, [conversations, searchHits, localQuery])
+    return conversations.filter(
+      (c) => c.title !== 'New Conversation' || c.id === currentConversationId
+    )
+  }, [conversations, searchHits, localQuery, currentConversationId])
+
+  const openConversation = async (id: string) => {
+    setActiveTab('chat')
+    await selectConversation(id)
+  }
+
+  const startNewConversation = async () => {
+    setActiveTab('chat')
+    startBlankConversation()
+  }
 
   const mainNavItems: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'chat', label: 'Chat', icon: <MessageSquare size={18} /> },
     { id: 'memory', label: 'Brain & Memory', icon: <Brain size={18} /> },
     { id: 'docs', label: 'Document Editor', icon: <FileText size={18} /> },
     { id: 'email', label: 'Mail & Calendar', icon: <Mail size={18} /> },
@@ -97,7 +110,7 @@ export const Sidebar: React.FC = () => {
 
         {!isCollapsed && (
           <button
-            onClick={() => newConversation()}
+            onClick={startNewConversation}
             style={{
               padding: '6px 12px',
               borderRadius: 'var(--radius-sm)',
@@ -119,8 +132,82 @@ export const Sidebar: React.FC = () => {
         )}
       </div>
 
+      {!isCollapsed && (
+        <div
+          style={{
+            display: 'flex',
+            gap: '4px',
+            padding: 'var(--space-2)',
+            borderBottom: '1px solid var(--border-subtle)'
+          }}
+        >
+          {(['home', 'code'] as const).map((t) => {
+            const isActive = topTab === t
+            return (
+              <button
+                key={t}
+                onClick={() => setTopTab(t)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: isActive ? 'var(--bg-card)' : 'transparent',
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontWeight: isActive ? 600 : 400,
+                  fontSize: '13px'
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'
+                }}
+              >
+                {t === 'home' ? <Home size={16} /> : <Code2 size={16} />}
+                <span>{t === 'home' ? 'Home' : 'Code'}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-2)' }}>
+        {topTab === 'code' && !isCollapsed ? (
+          <div style={{ padding: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+            Code view coming soon.
+          </div>
+        ) : (
+        <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <button
+            onClick={startNewConversation}
+            title={isCollapsed ? 'New Chat' : undefined}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-3)',
+              padding: isCollapsed ? '10px' : '8px 12px',
+              justifyContent: isCollapsed ? 'center' : 'flex-start',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'transparent',
+              color: 'var(--text-secondary)',
+              borderLeft: '3px solid transparent',
+              fontSize: '13px',
+              width: '100%',
+              textAlign: 'left'
+            }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)')
+            }
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+          >
+            <MessageSquare size={18} />
+            {!isCollapsed && <span>New</span>}
+          </button>
           {mainNavItems.map((item) => {
             const isActive = activeTab === item.id
             return (
@@ -157,7 +244,7 @@ export const Sidebar: React.FC = () => {
           })}
         </div>
 
-        {!isCollapsed && activeTab === 'chat' && (
+        {!isCollapsed && (
           <div
             style={{
               marginTop: 'var(--space-4)',
@@ -175,7 +262,7 @@ export const Sidebar: React.FC = () => {
                 padding: '0 8px 8px 8px'
               }}
             >
-              Recent Chats
+              Recents
             </div>
 
             <div className="conv-search">
@@ -199,7 +286,7 @@ export const Sidebar: React.FC = () => {
                   <div
                     key={conv.id}
                     className="conv-item"
-                    onClick={() => selectConversation(conv.id)}
+                    onClick={() => openConversation(conv.id)}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -296,6 +383,8 @@ export const Sidebar: React.FC = () => {
               )}
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
 
