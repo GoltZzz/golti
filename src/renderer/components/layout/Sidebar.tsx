@@ -1,8 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import {
   MessageSquare,
-  Home,
-  Code2,
   Brain,
   FileText,
   Mail,
