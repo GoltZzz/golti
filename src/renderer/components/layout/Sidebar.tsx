@@ -15,7 +15,9 @@ import {
   Trash2,
   Pin,
   Archive,
-  Download
+  Download,
+  Home,
+  Code2
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
