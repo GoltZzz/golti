@@ -112,9 +112,19 @@ input:focus-visible, textarea:focus-visible {
 
 .ask-user-question {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-weight: 600;
   font-size: 14px;
   color: var(--text-primary);
+}
+
+.ask-user-multi-badge {
+  display: inline-self-start;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-purple);
 }
 
 .ask-user-head-actions {
@@ -158,7 +168,7 @@ input:focus-visible, textarea:focus-visible {
   text-align: left;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, opacity 0.15s ease;
 }
 
 .ask-user-option:hover:not(:disabled),
@@ -166,9 +176,58 @@ input:focus-visible, textarea:focus-visible {
   background: var(--bg-card-hover);
 }
 
+.ask-user-option[data-selected='true'] {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+
+.ask-user-card[data-answered='true'] .ask-user-option:not([data-selected='true']) {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .ask-user-option:disabled {
   cursor: default;
-  opacity: 0.6;
+}
+
+.ask-user-option-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.ask-user-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-medium);
+  transition: all 0.12s ease;
+}
+
+.ask-user-radio.is-checked {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+  box-shadow: inset 0 0 0 3px var(--bg-card);
+}
+
+.ask-user-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--border-medium);
+  color: var(--text-on-accent);
+  transition: all 0.12s ease;
+}
+
+.ask-user-checkbox.is-checked {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
 }
 
 .ask-user-option-text {
@@ -178,8 +237,28 @@ input:focus-visible, textarea:focus-visible {
   gap: 2px;
 }
 
+.ask-user-option-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .ask-user-option-label {
   font-weight: 500;
+}
+
+.ask-user-recommended-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--status-success-soft);
+  color: var(--accent-green);
+  border: 1px solid var(--status-success-border);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .ask-user-option-desc {

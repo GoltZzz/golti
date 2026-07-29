@@ -77,9 +77,9 @@ const ASK_USER_SYSTEM_SUFFIX = [
   'When the request is missing a detail you need, ask the user instead of guessing. Emit ONE ask-user block and nothing else — no text before or after it.',
   'The block is valid JSON inside these fences:',
   '```ask-user',
-  '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means" }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true }',
+  '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means", "recommended": true }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true, "multiSelect": false }',
   '```',
-  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first, each a short "label" plus a one-line "description" of what choosing it means. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form (a name, a number, a path).',
+  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first with "recommended": true on it. Each option needs a short "label" plus a one-line "description". Set "multiSelect": true if multiple options can be chosen at once. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form (a name, a number, a path).',
   'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up like "what are you trying to build?"; never ask what you can already work out yourself — decide it and state the assumption; keep options concrete and genuinely different, not reworded versions of each other.'
 ].join('\n')
 

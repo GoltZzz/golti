@@ -197,12 +197,14 @@ export const extractArtifacts = extractShells
 export interface AskUserOption {
   label: string
   description?: string
+  recommended?: boolean
 }
 
 export interface AskUserPrompt {
   question: string
   options: AskUserOption[]
   allowFreeText: boolean
+  multiSelect?: boolean
   fenceStart: number
   fenceEnd: number
 }
@@ -228,7 +230,7 @@ function parseAskUserBody(raw: string): AskUserBody | null {
   ]
 
   for (const candidate of candidates) {
-    let parsed: { question?: unknown; options?: unknown; allowFreeText?: unknown }
+    let parsed: { question?: unknown; options?: unknown; allowFreeText?: unknown; multiSelect?: unknown; multi_select?: unknown }
     try {
       parsed = JSON.parse(candidate)
     } catch {
@@ -255,13 +257,15 @@ function parseAskUserBody(raw: string): AskUserBody | null {
               const label = pick('label', 'option', 'text', 'value', 'title', 'name')
               if (!label) return null
               const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
-              return { label, description }
+              const recommended = Boolean(raw.recommended || raw.isRecommended || raw.is_recommended) || undefined
+              return { label, description, recommended }
             }
             return null
           })
           .filter((o): o is AskUserOption => o !== null)
       : []
-    return { question, options, allowFreeText: parsed.allowFreeText !== false }
+    const multiSelect = Boolean(parsed.multiSelect || parsed.multi_select) || undefined
+    return { question, options, allowFreeText: parsed.allowFreeText !== false, multiSelect }
   }
 
   return null

@@ -577,12 +577,14 @@ interface AskUserCardProps {
 
 const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer }) => {
   const [freeText, setFreeText] = useState('')
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set())
   const [otherOpen, setOtherOpen] = useState(prompt.options.length === 0)
   const [answered, setAnswered] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const otherIndex = prompt.options.length + 1
+
+  const isMulti = Boolean(prompt.multiSelect)
 
   const submit = (value: string) => {
     const text = value.trim()
@@ -591,17 +593,42 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
     onAnswer(text)
   }
 
-  const chooseOption = (label: string) => {
+  const toggleOption = (label: string) => {
     if (disabled || answered) return
     setOtherOpen(false)
-    setSelected(label)
-    submit(label)
+
+    if (isMulti) {
+      const next = new Set(selectedSet)
+      if (next.has(label)) {
+        next.delete(label)
+      } else {
+        next.add(label)
+      }
+      setSelectedSet(next)
+    } else {
+      setSelectedSet(new Set([label]))
+      submit(label)
+    }
   }
 
   const chooseOther = () => {
     if (disabled || answered) return
-    setSelected(null)
+    setSelectedSet(new Set())
     setOtherOpen(true)
+  }
+
+  const submitMulti = () => {
+    if (disabled || answered) return
+    if (otherOpen) {
+      submit(freeText)
+    } else {
+      const selectedList = prompt.options
+        .map((o) => o.label)
+        .filter((l) => selectedSet.has(l))
+      if (selectedList.length > 0) {
+        submit(selectedList.join('; '))
+      }
+    }
   }
 
   useEffect(() => {
@@ -616,7 +643,7 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
         chooseOther()
       } else if (n >= 1 && n <= prompt.options.length) {
         e.preventDefault()
-        chooseOption(prompt.options[n - 1].label)
+        toggleOption(prompt.options[n - 1].label)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -625,12 +652,21 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
 
   if (dismissed) return null
 
-  const canSubmit = otherOpen ? Boolean(freeText.trim()) : Boolean(selected)
+  const canSubmit = otherOpen ? Boolean(freeText.trim()) : selectedSet.size > 0
 
   return (
-    <div className="ask-user-card" data-answered={answered}>
+    <div
+      className="ask-user-card"
+      data-answered={answered}
+      data-multi-select={isMulti}
+    >
       <div className="ask-user-head">
-        <div className="ask-user-question">{prompt.question}</div>
+        <div className="ask-user-question">
+          {prompt.question}
+          {isMulti && (
+            <span className="ask-user-multi-badge">Select all that apply</span>
+          )}
+        </div>
         <div className="ask-user-head-actions">
           <button
             className="ask-user-icon-btn"
@@ -654,25 +690,43 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
       {!collapsed && (
         <>
           <div className="ask-user-options">
-            {prompt.options.map((opt, i) => (
-              <button
-                key={opt.label}
-                className="ask-user-option"
-                type="button"
-                disabled={disabled || answered}
-                aria-pressed={selected === opt.label}
-                data-selected={selected === opt.label}
-                onClick={() => chooseOption(opt.label)}
-              >
-                <span className="ask-user-option-text">
-                  <span className="ask-user-option-label">{opt.label}</span>
-                  {opt.description && (
-                    <span className="ask-user-option-desc">{opt.description}</span>
-                  )}
-                </span>
-                <span className="ask-user-option-key">{i + 1}</span>
-              </button>
-            ))}
+            {prompt.options.map((opt, i) => {
+              const isSelected = selectedSet.has(opt.label)
+              return (
+                <button
+                  key={opt.label}
+                  className="ask-user-option"
+                  type="button"
+                  disabled={disabled || answered}
+                  aria-pressed={isSelected}
+                  data-selected={isSelected}
+                  data-recommended={opt.recommended}
+                  onClick={() => toggleOption(opt.label)}
+                >
+                  <span className="ask-user-option-indicator">
+                    {isMulti ? (
+                      <span className={`ask-user-checkbox ${isSelected ? 'is-checked' : ''}`}>
+                        {isSelected && <Check size={10} />}
+                      </span>
+                    ) : (
+                      <span className={`ask-user-radio ${isSelected ? 'is-checked' : ''}`} />
+                    )}
+                  </span>
+                  <span className="ask-user-option-text">
+                    <span className="ask-user-option-label-row">
+                      <span className="ask-user-option-label">{opt.label}</span>
+                      {opt.recommended && (
+                        <span className="ask-user-recommended-badge">Recommended</span>
+                      )}
+                    </span>
+                    {opt.description && (
+                      <span className="ask-user-option-desc">{opt.description}</span>
+                    )}
+                  </span>
+                  <span className="ask-user-option-key">{i + 1}</span>
+                </button>
+              )
+            })}
 
             {prompt.allowFreeText && (
               <button
@@ -682,6 +736,15 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
                 data-selected={otherOpen}
                 onClick={chooseOther}
               >
+                <span className="ask-user-option-indicator">
+                  {isMulti ? (
+                    <span className={`ask-user-checkbox ${otherOpen ? 'is-checked' : ''}`}>
+                      {otherOpen && <Check size={10} />}
+                    </span>
+                  ) : (
+                    <span className={`ask-user-radio ${otherOpen ? 'is-checked' : ''}`} />
+                  )}
+                </span>
                 <span className="ask-user-option-text">
                   <span className="ask-user-option-label">Other</span>
                 </span>
@@ -724,7 +787,7 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
               className="ask-user-submit"
               type="button"
               disabled={disabled || answered || !canSubmit}
-              onClick={() => submit(otherOpen ? freeText : selected || '')}
+              onClick={submitMulti}
             >
               Submit <CornerDownLeft size={12} />
             </button>

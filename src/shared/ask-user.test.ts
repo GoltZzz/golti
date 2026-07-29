@@ -30,6 +30,18 @@ describe('extractAskUser', () => {
     expect(extractAskUser('```js\nconst a = { b: 1 }\n```')).toBeNull()
   })
 
+  it('parses recommended option flag and multiSelect flag', () => {
+    const t =
+      '```ask-user\n{ "question": "Which frameworks?", "multiSelect": true, "options": [{ "label": "React", "description": "UI library", "recommended": true }, { "label": "Vue", "description": "Alternative" }] }\n```'
+    const r = extractAskUser(t)!
+    expect(r.question).toBe('Which frameworks?')
+    expect(r.multiSelect).toBe(true)
+    expect(r.options).toEqual([
+      { label: 'React', description: 'UI library', recommended: true },
+      { label: 'Vue', description: 'Alternative' }
+    ])
+  })
+
   it('does not turn an ask-user block into a shell', () => {
     const t = '```ask-user\n{ "question": "Which DB?" }\n```'
     expect(extractShells(t)).toHaveLength(0)
