@@ -50,7 +50,7 @@ export const Sidebar: React.FC = () => {
   }, [conversations, searchHits, localQuery])
 
   const mainNavItems: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'chat', label: 'AI Chat', icon: <MessageSquare size={18} /> },
+    { id: 'chat', label: 'Chat', icon: <MessageSquare size={18} /> },
     { id: 'memory', label: 'Brain & Memory', icon: <Brain size={18} /> },
     { id: 'docs', label: 'Document Editor', icon: <FileText size={18} /> },
     { id: 'email', label: 'Mail & Calendar', icon: <Mail size={18} /> },
