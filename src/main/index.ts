@@ -12,6 +12,7 @@ import {
   initDatabase
 } from './db/database'
 import { getAllModels } from './ai/provider-manager'
+import { generateConversationTitle, type GenerateTitleRequest } from './ai/title-generator'
 import {
   cancelAllGenerations,
   cancelGeneration,
@@ -644,6 +645,10 @@ function setupIpcHandlers(): void {
       ...payload,
       continueMessageId: payload.messageId || payload.continueMessageId
     })
+  })
+
+  ipcMain.handle('ai:generate-title', async (_, request: GenerateTitleRequest) => {
+    return generateConversationTitle(request)
   })
 
   // System Info

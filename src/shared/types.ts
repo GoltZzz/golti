@@ -308,6 +308,11 @@ export interface StreamChunkPayload {
 export interface ChatRequestOptions {
   signal?: AbortSignal
   generationSettings?: GenerationSettings
+  /**
+   * Lower bound for the local engine's output budget. Only set it for short
+   * utility completions; chat replies want the default floor.
+   */
+  outputTokenFloor?: number
 }
 
 export type ProviderStreamEvent =

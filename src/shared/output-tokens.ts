@@ -28,10 +28,17 @@ export interface LocalOutputTokensInput {
   requested?: number
   contextWindow?: number
   promptTokens?: number
+  /**
+   * Lower bound on the returned budget. Defaults to LOCAL_OUTPUT_FLOOR, which
+   * exists so a chat reply is never cut off mid-sentence. Short utility calls
+   * that want a handful of tokens (conversation titling) pass a smaller floor.
+   */
+  floor?: number
 }
 
 export function resolveLocalMaxOutputTokens(input: LocalOutputTokensInput): number {
   const { modelName, requested, contextWindow, promptTokens = 0 } = input
+  const floor = input.floor && input.floor > 0 ? input.floor : LOCAL_OUTPUT_FLOOR
 
   const explicit = typeof requested === 'number' && requested > 0
   const desired = explicit ? requested : baselineLocalOutputTokens(modelName)
@@ -40,8 +47,8 @@ export function resolveLocalMaxOutputTokens(input: LocalOutputTokensInput): numb
 
   if (contextWindow && contextWindow > 0) {
     const room = contextWindow - promptTokens - CONTEXT_SAFETY_MARGIN
-    limit = Math.min(limit, Math.max(room, LOCAL_OUTPUT_FLOOR))
+    limit = Math.min(limit, Math.max(room, floor))
   }
 
-  return Math.max(Math.floor(limit), LOCAL_OUTPUT_FLOOR)
+  return Math.max(Math.floor(limit), floor)
 }
