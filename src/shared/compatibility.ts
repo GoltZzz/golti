@@ -1,96 +1,165 @@
-import { SystemInfoFull, CookbookModel, ModelCompatibility, OllamaRuntimeInfo } from './types'
+import { SystemInfoFull, CookbookModel, ModelCompatibility, MemoryPressure, DiskFit } from './types'
 
-const BYTES_PER_GB = 1024 ** 3
+const APPLE_SILICON_ALLOC_CAP = 0.75
+const OS_RESERVE_FRACTION = 0.28
+const OS_RESERVE_MIN_GB = 3
+const OS_RESERVE_MAX_GB = 10
+const VRAM_DISPLAY_RESERVE_GB = 0.8
 
-/**
- * Live GPU occupancy, folded into the capacity maths below.
- *
- * Without this the cookbook rates every model against an *idle* GPU, so a card
- * already holding a 7B model still advertises its full VRAM.
- */
-export interface RuntimeVramUsage {
-  /** VRAM currently occupied, in GB. */
-  usedGB: number
-  /**
-   * Total VRAM as reported by the same source as `usedGB`. When present it wins
-   * over `system.gpu.vramGB`: the driver and the engine binary disagree slightly
-   * on totals (reserved regions are counted differently), and mixing the two
-   * produces a small permanent error in the free-VRAM figure.
-   */
-  totalGB?: number
+const KV_CACHE_GB_PER_PARAM_B = 0.06
+const KV_CACHE_MIN_GB = 0.3
+const KV_CACHE_MAX_GB = 3
+
+const PRESSURE_BUSY_FREE_FRACTION = 0.35
+const PRESSURE_CRITICAL_FREE_FRACTION = 0.15
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function osReserveGB(totalGB: number): number {
+  return clamp(totalGB * OS_RESERVE_FRACTION, OS_RESERVE_MIN_GB, OS_RESERVE_MAX_GB)
 }
 
 /**
- * Preferred source: a driver-level reading, which counts *every* VRAM consumer
- * — our engine, Ollama (including one started outside Golti), the compositor,
- * anything else on the card.
+ * Working memory the model needs beyond its weights, for the attention cache that
+ * grows with conversation length. The catalog's ramRequiredGB covers weights only.
  */
-export function getVramUsage(
-  reading: { totalMiB: number; usedMiB: number } | null
-): RuntimeVramUsage | null {
-  if (!reading || reading.totalMiB <= 0) return null
-  return {
-    usedGB: reading.usedMiB / 1024,
-    totalGB: reading.totalMiB / 1024
-  }
+export function estimateKvCacheGB(model: CookbookModel): number {
+  return clamp(model.parameterBillions * KV_CACHE_GB_PER_PARAM_B, KV_CACHE_MIN_GB, KV_CACHE_MAX_GB)
+}
+
+/** Total RAM this model needs while running: weights plus attention cache. */
+export function estimateRuntimeGB(model: CookbookModel): number {
+  return model.ramRequiredGB + estimateKvCacheGB(model)
 }
 
 /**
- * Fallback source for when no driver tool is installed. Sees only what Ollama
- * itself loaded, so it under-reports whenever anything else holds VRAM.
+ * Memory this machine can realistically give a model. Depends only on installed
+ * hardware, never on what happens to be running, so the answer is stable across scans.
  */
-export function getRuntimeVramUsage(runtime: OllamaRuntimeInfo | null): RuntimeVramUsage | null {
-  if (!runtime) return null
-  return { usedGB: runtime.totalVramBytes / BYTES_PER_GB }
-}
-
-export function getCompatibility(
-  system: SystemInfoFull | null,
-  model: CookbookModel,
-  runtimeVram?: RuntimeVramUsage | null
-): ModelCompatibility {
-  if (!system) return 'runs'
-
-  // Calculate system total capacity limit for LLMs
-  let totalCapacityLimit = 0
+export function getUsableMemoryGB(system: SystemInfoFull, needGB = 0): number {
+  const totalGB = system.ram.totalGB
+  const systemBudget = totalGB - osReserveGB(totalGB)
 
   if (system.gpu?.isAppleSilicon) {
-    // Apple Silicon unified memory (macOS restricts single allocations to ~75% total RAM by default)
-    totalCapacityLimit = system.ram.totalGB * 0.75
-  } else {
-    // Windows/Linux/Intel Mac. Anything already resident on the card is not
-    // available to the model being rated, so score against what is left. Both
-    // figures come from the same source when a live reading is available.
-    const totalVram = runtimeVram?.totalGB ?? system.gpu?.vramGB ?? 0
-    const vram = Math.max(0, totalVram - (runtimeVram?.usedGB || 0))
-    if (vram > 0) {
-      if (vram >= model.ramRequiredGB) {
-        // Can fit completely in VRAM -> GPU inference
-        totalCapacityLimit = vram
-      } else {
-        // Exceeds dedicated VRAM, falls back to CPU system RAM
-        totalCapacityLimit = system.ram.totalGB * 0.70
-      }
-    } else {
-      // Integrated graphics / CPU only
-      totalCapacityLimit = system.ram.totalGB * 0.70
-    }
+    return Math.max(0, Math.min(totalGB * APPLE_SILICON_ALLOC_CAP, systemBudget))
   }
 
-  // Real-time free memory estimation (unallocated RAM + 1.5 GB OS dynamic headroom)
-  const currentFreeRAM = system.ram.totalGB * (1 - Math.min(100, Math.max(0, system.ram.usedPercent)) / 100)
-  const realTimeHeadroom = system.gpu?.isAppleSilicon || !system.gpu?.vramGB
-    ? Math.min(totalCapacityLimit, currentFreeRAM + 1.5)
-    : totalCapacityLimit
-
-  // Tiered compatibility rules
-  if (totalCapacityLimit >= model.ramRecommendedGB && realTimeHeadroom >= model.ramRecommendedGB * 1.1) {
-    return 'great'
-  } else if (totalCapacityLimit >= model.ramRequiredGB && realTimeHeadroom >= model.ramRequiredGB) {
-    return 'runs'
-  } else if (totalCapacityLimit >= model.ramRequiredGB * 0.85) {
-    return 'tight'
-  } else {
-    return 'wont_fit'
+  const vram = system.gpu?.vramGB || 0
+  const usableVram = vram > 0 ? vram - VRAM_DISPLAY_RESERVE_GB : 0
+  if (usableVram >= needGB && usableVram > 0) {
+    return usableVram
   }
+
+  return Math.max(0, systemBudget)
+}
+
+/**
+ * Whether the model fits this machine at all. Static by design — downloading or
+ * loading a model must not change its own rating.
+ */
+export function getCompatibility(system: SystemInfoFull | null, model: CookbookModel): ModelCompatibility {
+  if (!system) return 'runs'
+
+  const kvCacheGB = estimateKvCacheGB(model)
+  const needGB = model.ramRequiredGB + kvCacheGB
+  const wantGB = model.ramRecommendedGB + kvCacheGB
+  const usableGB = getUsableMemoryGB(system, needGB)
+
+  if (usableGB >= wantGB) return 'great'
+  if (usableGB >= needGB) return 'runs'
+  if (usableGB >= needGB * 0.85) return 'tight'
+  return 'wont_fit'
+}
+
+/**
+ * How busy memory is right now — a separate question from whether a model fits.
+ * `loadedModelGB` is added back so a model the user deliberately started does not
+ * make the machine look overloaded to itself.
+ */
+export function getMemoryPressure(
+  system: SystemInfoFull | null,
+  loadedModelGB = 0
+): { level: MemoryPressure; availableGB: number; usedByOthersPercent: number } {
+  if (!system) return { level: 'ok', availableGB: 0, usedByOthersPercent: 0 }
+
+  const totalGB = system.ram.totalGB
+  const usedPercent = clamp(system.ram.usedPercent, 0, 100)
+  const freeGB = totalGB * (1 - usedPercent / 100)
+  const availableGB = clamp(freeGB + Math.max(0, loadedModelGB), 0, totalGB)
+  const freeFraction = totalGB > 0 ? availableGB / totalGB : 0
+
+  const level: MemoryPressure =
+    freeFraction >= PRESSURE_BUSY_FREE_FRACTION
+      ? 'ok'
+      : freeFraction >= PRESSURE_CRITICAL_FREE_FRACTION
+        ? 'busy'
+        : 'critical'
+
+  return {
+    level,
+    availableGB,
+    usedByOthersPercent: Math.round((1 - freeFraction) * 100)
+  }
+}
+
+/**
+ * Whether now is a good moment to start this model, given what else is running.
+ * Distinct from getCompatibility, which answers whether it fits at all.
+ */
+export function getRuntimeFit(
+  system: SystemInfoFull | null,
+  model: CookbookModel,
+  loadedModelGB = 0
+): 'comfortable' | 'snug' | 'no_room' {
+  if (!system) return 'comfortable'
+
+  const needGB = estimateRuntimeGB(model)
+  const { availableGB } = getMemoryPressure(system, loadedModelGB)
+
+  if (availableGB >= needGB * 1.15) return 'comfortable'
+  if (availableGB >= needGB) return 'snug'
+  return 'no_room'
+}
+
+/**
+ * Bytes the download itself needs beyond the finished file: resumable downloads
+ * write a partial alongside the target, and a volume with no slack left thrashes.
+ */
+const DISK_HEADROOM_GB = 2
+const DISK_TIGHT_MULTIPLIER = 1.15
+
+export function estimateDownloadSizeGB(model: CookbookModel): number {
+  if (model.ggufFileSize && model.ggufFileSize > 0) {
+    return model.ggufFileSize / 1024 ** 3
+  }
+  return model.diskSizeGB
+}
+
+/**
+ * Whether this machine has room to store the model. Separate from getCompatibility:
+ * a model can fit on disk and still be unrunnable, or run fine with nowhere to land.
+ */
+export function getDiskFit(system: SystemInfoFull | null, model: CookbookModel): DiskFit {
+  const freeGB = system?.disk?.freeGB
+  if (freeGB === null || freeGB === undefined) return 'unknown'
+
+  const needGB = estimateDownloadSizeGB(model)
+  if (freeGB >= needGB + DISK_HEADROOM_GB) return 'ok'
+  if (freeGB >= needGB * DISK_TIGHT_MULTIPLIER) return 'tight'
+  return 'insufficient'
+}
+
+export function describeDiskFit(system: SystemInfoFull | null, model: CookbookModel): string | null {
+  const fit = getDiskFit(system, model)
+  if (fit === 'ok' || fit === 'unknown') return null
+
+  const freeGB = system?.disk?.freeGB ?? 0
+  const needGB = estimateDownloadSizeGB(model)
+
+  if (fit === 'insufficient') {
+    return `Needs ~${needGB.toFixed(1)} GB but only ${freeGB.toFixed(1)} GB is free on this disk.`
+  }
+  return `Will leave under ${DISK_HEADROOM_GB} GB free (~${needGB.toFixed(1)} GB of ${freeGB.toFixed(1)} GB available).`
 }

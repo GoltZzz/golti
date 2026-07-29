@@ -169,7 +169,14 @@ describe('deriveCatalogEntry', () => {
     expect(entry?.ollamaTag).toBe('qwen3:latest')
   })
 
-  it('leaves GGUF fields unset — the registry has no direct download', () => {
+  it('points GGUF fields at the registry blob when a digest is known', () => {
+    const entry = deriveCatalogEntry(qwen3, { ...qwen3_8b, blobDigest: 'sha256:abc123' })
+    expect(entry?.ggufUrl).toBe('https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:abc123')
+    expect(entry?.ggufFilename).toBe('qwen3-8b-q4_k_m.gguf')
+    expect(entry?.ggufFileSize).toBe(qwen3_8b.sizeBytes)
+  })
+
+  it('leaves GGUF fields unset when no digest was resolved', () => {
     const entry = deriveCatalogEntry(qwen3, qwen3_8b)
     expect(entry?.ggufUrl).toBeUndefined()
     expect(entry?.ggufFilename).toBeUndefined()
@@ -178,6 +185,21 @@ describe('deriveCatalogEntry', () => {
   it('returns null on unusable registry data', () => {
     expect(deriveCatalogEntry(qwen3, { ...qwen3_8b, modelType: '?' })).toBeNull()
     expect(deriveCatalogEntry(qwen3, { ...qwen3_8b, sizeBytes: 0 })).toBeNull()
+  })
+
+  it('drops embedding-only models the engine cannot chat with', () => {
+    const embedder: OllamaLibraryModel = {
+      name: 'nomic-embed-text',
+      description: 'An embedding model.',
+      capabilities: ['embedding']
+    }
+    expect(deriveCatalogEntry(embedder, { ...qwen3_8b, modelType: '137m' })).toBeNull()
+  })
+
+  it('drops models too large for consumer disks', () => {
+    expect(
+      deriveCatalogEntry(qwen3, { ...qwen3_8b, modelType: '671B', sizeBytes: 1_342_300_000_000 })
+    ).toBeNull()
   })
 
   it('truncates long descriptions at a sentence boundary', () => {
@@ -229,6 +251,30 @@ describe('mergeCatalog', () => {
     const generated = deriveCatalogEntry(qwen3, { ...qwen3_8b, tag: '14b', modelType: '14.8B' })!
     const merged = mergeCatalog([curated], [generated])
     expect(merged.map((m) => m.id)).toEqual([curated.id, generated.id])
+  })
+
+  it('lends a download link to a curated entry that lacks one', () => {
+    const generated = deriveCatalogEntry(qwen3, { ...qwen3_8b, blobDigest: 'sha256:abc123' })!
+    const [merged] = mergeCatalog([{ ...curated, ggufUrl: undefined }], [generated])
+    expect(merged.ggufUrl).toBe(generated.ggufUrl)
+    expect(merged.ggufFileSize).toBe(qwen3_8b.sizeBytes)
+    expect(merged.description).toBe('Hand written.')
+  })
+
+  it('refuses to lend a link across a quantization mismatch', () => {
+    const generated = deriveCatalogEntry(qwen3, {
+      ...qwen3_8b,
+      fileType: 'Q8_0',
+      blobDigest: 'sha256:abc123'
+    })!
+    const [merged] = mergeCatalog([{ ...curated, ggufUrl: undefined }], [generated])
+    expect(merged.ggufUrl).toBeUndefined()
+  })
+
+  it('never overwrites a curated entry that already has a link', () => {
+    const generated = deriveCatalogEntry(qwen3, { ...qwen3_8b, blobDigest: 'sha256:abc123' })!
+    const [merged] = mergeCatalog([curated], [generated])
+    expect(merged.ggufUrl).toBe('https://example.invalid/qwen3.gguf')
   })
 
   it('deduplicates within the generated list', () => {

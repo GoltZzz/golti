@@ -4,8 +4,7 @@ import type {
   ModelInfo,
   ProviderStreamEvent
 } from '../../shared/types'
-import { dbProviders, dbSettings } from '../db/database'
-import { fetchOllamaModels, streamOllamaChat } from './providers/ollama'
+import { dbProviders } from '../db/database'
 import { fetchOpenAIModels, streamOpenAIChat } from './providers/openai'
 import { fetchAnthropicModels, streamAnthropicChat } from './providers/anthropic'
 import { fetchGoogleModels, streamGoogleChat } from './providers/google'
@@ -29,9 +28,7 @@ export async function getAllModels(): Promise<ModelInfo[]> {
   for (const provider of activeProviders) {
     try {
       let modelsList: string[] = []
-      if (provider.type === 'ollama') {
-        modelsList = await fetchOllamaModels(provider.endpoint)
-      } else if (provider.type === 'openai') {
+      if (provider.type === 'openai') {
         modelsList = await fetchOpenAIModels(provider)
       } else if (provider.type === 'anthropic') {
         modelsList = await fetchAnthropicModels(provider)
@@ -73,20 +70,6 @@ function guessContextWindow(modelName: string): number {
   return 8192
 }
 
-/**
- * Folds the persisted `ollamaGpuLayers` preference into a request, unless the
- * caller already specified one. A negative stored value means "Auto", which we
- * express by sending no `num_gpu` at all.
- */
-export function withOllamaOffload(options?: ChatRequestOptions): ChatRequestOptions | undefined {
-  if (options?.ollama?.numGpu !== undefined) return options
-
-  const layers = dbSettings.get().ollamaGpuLayers
-  if (typeof layers !== 'number' || layers < 0) return options
-
-  return { ...options, ollama: { ...options?.ollama, numGpu: layers } }
-}
-
 export async function* streamChatResponse(
   providerId: string,
   model: string,
@@ -101,9 +84,7 @@ export async function* streamChatResponse(
     throw new Error(`Provider not found: ${providerId}`)
   }
 
-  if (provider.type === 'ollama') {
-    yield* streamOllamaChat(provider, model, messages, systemPrompt, withOllamaOffload(options))
-  } else if (provider.type === 'openai') {
+  if (provider.type === 'openai') {
     yield* streamOpenAIChat(provider, model, messages, systemPrompt, options)
   } else if (provider.type === 'anthropic') {
     yield* streamAnthropicChat(provider, model, messages, systemPrompt, options)

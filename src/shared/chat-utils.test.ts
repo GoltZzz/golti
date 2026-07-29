@@ -10,7 +10,8 @@ import {
   getBranchPath,
   getChildren,
   getSiblings,
-  parseEngineMemoryError
+  parseEngineMemoryError,
+  trimHistoryToBudget
 } from '../shared/chat-utils'
 import type { Message } from '../shared/types'
 
@@ -61,6 +62,56 @@ describe('extractArtifacts', () => {
   })
 })
 
+describe('trimHistoryToBudget', () => {
+  const turn = (id: string, role: 'user' | 'assistant') => ({
+    id,
+    role,
+    content: 'a'.repeat(40)
+  })
+
+  const conversation = [
+    turn('u1', 'user'),
+    turn('a1', 'assistant'),
+    turn('u2', 'user'),
+    turn('a2', 'assistant'),
+    turn('u3', 'user')
+  ]
+
+  it('keeps the whole history when it fits', () => {
+    const result = trimHistoryToBudget(conversation, 1000)
+    expect(result.kept).toHaveLength(5)
+    expect(result.droppedCount).toBe(0)
+    expect(result.droppedTokens).toBe(0)
+  })
+
+  it('drops the oldest turns when over budget', () => {
+    const result = trimHistoryToBudget(conversation, 35)
+    expect(result.kept.map((m) => m.id)).toEqual(['u2', 'a2', 'u3'])
+    expect(result.droppedCount).toBe(2)
+    expect(result.droppedTokens).toBe(20)
+  })
+
+  it('never starts the kept history with an assistant turn', () => {
+    const result = trimHistoryToBudget(conversation, 20)
+    expect(result.kept[0].role).toBe('user')
+    expect(result.kept.map((m) => m.id)).toEqual(['u3'])
+  })
+
+  it('always keeps the latest message even if it alone exceeds the budget', () => {
+    const result = trimHistoryToBudget([turn('u1', 'user'), turn('u2', 'user')], 0)
+    expect(result.kept.map((m) => m.id)).toEqual(['u2'])
+    expect(result.droppedCount).toBe(1)
+  })
+
+  it('handles empty history', () => {
+    expect(trimHistoryToBudget([], 100)).toEqual({
+      kept: [],
+      droppedCount: 0,
+      droppedTokens: 0
+    })
+  })
+})
+
 describe('computeTokenBudget', () => {
   it('flags overflow', () => {
     const budget = computeTokenBudget({
@@ -72,6 +123,45 @@ describe('computeTokenBudget', () => {
       draft: ''
     })
     expect(budget.overflow).toBe(true)
+  })
+
+  it('reports trimmed messages instead of overflowing on a long history', () => {
+    const history: Message[] = Array.from({ length: 40 }, (_, i) => ({
+      id: `m${i}`,
+      conversationId: 'c',
+      role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: 'a'.repeat(400),
+      createdAt: i
+    }))
+
+    const budget = computeTokenBudget({
+      contextWindow: 1000,
+      reservedOutputTokens: 200,
+      systemPrompt: 'You are helpful.',
+      contextItems: [],
+      history,
+      draft: ''
+    })
+
+    expect(budget.trimmedMessages).toBeGreaterThan(0)
+    expect(budget.overflow).toBe(false)
+    expect(budget.usedTokens).toBeLessThanOrEqual(budget.contextWindow)
+  })
+
+  it('still overflows when the latest message alone cannot fit', () => {
+    const budget = computeTokenBudget({
+      contextWindow: 200,
+      reservedOutputTokens: 50,
+      systemPrompt: '',
+      contextItems: [],
+      history: [
+        { id: 'm', conversationId: 'c', role: 'user', content: 'a'.repeat(4000), createdAt: 1 }
+      ],
+      draft: ''
+    })
+
+    expect(budget.overflow).toBe(true)
+    expect(budget.trimmedMessages).toBe(0)
   })
 
   it('sums categories', () => {

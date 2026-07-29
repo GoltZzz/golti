@@ -4,7 +4,6 @@ import { useCookbookStore } from '../../stores/cookbookStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { useEngineStore } from '../../stores/engineStore'
-import { normalizeOllamaTag } from '../../../shared/ollama-tags'
 import {
   MessageSquare,
   Trash2,
@@ -21,13 +20,13 @@ interface InstalledModelCardProps {
 }
 
 export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model }) => {
-  const { deleteOllamaModel, deleteLocalEngineModel, deletingOllamaTag } = useCookbookStore()
+  const { deleteLocalEngineModel, deletingModel } = useCookbookStore()
   const { loadModel, localModels } = useEngineStore()
   const [isDeleting, setIsDeleting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const isDeletingThis = deletingOllamaTag === model.tag || isDeleting
+  const isDeletingThis = deletingModel === model.tag || isDeleting
 
   const handleStartChat = async () => {
     const chatStore = useChatStore.getState()
@@ -44,22 +43,9 @@ export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model })
       await chatStore.fetchModels()
     }
 
-    let matchingModel
-    if (model.isGoltiEngine) {
-      matchingModel = chatStore.models.find((m) => m.providerType === 'golti-engine')
-    } else {
-      matchingModel = chatStore.models.find(
-        (m) =>
-          m.providerType === 'ollama' &&
-          normalizeOllamaTag(m.name) === normalizeOllamaTag(model.tag)
-      )
-    }
+    const matchingModel = chatStore.models.find((m) => m.providerType === 'golti-engine')
 
-    const providerId = matchingModel
-      ? matchingModel.providerId
-      : model.isGoltiEngine
-      ? 'golti-engine-local'
-      : model.providerId || 'ollama-local'
+    const providerId = matchingModel ? matchingModel.providerId : 'golti-engine-local'
 
     const fullModelTag = matchingModel ? matchingModel.name : model.tag
 
@@ -97,12 +83,7 @@ export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model })
     setErrorMsg(null)
 
     try {
-      let res
-      if (model.isGoltiEngine) {
-        res = await deleteLocalEngineModel(model.tag)
-      } else {
-        res = await deleteOllamaModel(model.tag)
-      }
+      const res = await deleteLocalEngineModel(model.tag)
 
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to delete model')

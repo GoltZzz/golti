@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { SystemInfoFull, OllamaRuntimeInfo, VramReading } from '../../../shared/types'
+import { SystemInfoFull } from '../../../shared/types'
+import { getUsableMemoryGB } from '../../../shared/compatibility'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { RamBreakdownModal } from './RamBreakdownModal'
 import {
@@ -17,10 +18,6 @@ import {
 
 interface HardwareCardProps {
   systemInfo: SystemInfoFull | null
-  /** Driver-level VRAM reading: the whole card, every consumer. Null when unknown. */
-  vramReading?: VramReading | null
-  /** Per-model attribution from Ollama's /api/ps; null when unknown. */
-  ollamaRuntime?: OllamaRuntimeInfo | null
   loading: boolean
   scanError: string | null
   onRescan: () => void
@@ -47,8 +44,6 @@ const getRamBarColor = (pct: number) => {
 
 export const HardwareCard: React.FC<HardwareCardProps> = ({
   systemInfo,
-  vramReading,
-  ollamaRuntime,
   loading,
   scanError,
   onRescan
@@ -116,19 +111,6 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
 
   const { cpu, ram, gpu, disk, thermals, platform, arch } = systemInfo
   const ramUsedGB = (ram.totalGB * (ram.usedPercent / 100)).toFixed(1)
-
-  // The driver reading covers the whole card; Ollama's own figure only covers
-  // what it loaded, so it is a fallback. null means "could not read it", which
-  // renders as no bar at all rather than a misleading 0 GB.
-  const vramTotalGB = vramReading ? vramReading.totalMiB / 1024 : gpu.vramGB
-  const vramUsedGB = vramReading
-    ? vramReading.usedMiB / 1024
-    : ollamaRuntime
-      ? ollamaRuntime.totalVramBytes / 1024 ** 3
-      : null
-  const vramUsedPercent =
-    vramUsedGB !== null && vramTotalGB ? Math.min(100, Math.round((vramUsedGB / vramTotalGB) * 100)) : 0
-  const loadedOnGpu = (ollamaRuntime?.loaded || []).filter((m) => m.vramBytes > 0)
 
   const shortCpuModel = cpu.model
     ? cpu.model.replace(/\(R\)|\(TM\)|Processor|CPU/gi, '').trim()
@@ -240,38 +222,6 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                   <span>System Shared Memory</span>
                 )}
               </div>
-
-              {/* Measured VRAM occupancy from Ollama, not an estimate. */}
-              {vramUsedGB !== null && vramTotalGB ? (
-                <>
-                  <div className="progress-bar-bg ram-bar" style={{ marginTop: '8px' }}>
-                    <div
-                      className="progress-bar-fill"
-                      style={{
-                        width: `${vramUsedPercent}%`,
-                        backgroundColor: getRamBarColor(vramUsedPercent)
-                      }}
-                    />
-                  </div>
-                  <div className="sub-specs" style={{ marginTop: '6px', fontSize: '11px' }}>
-                    <span>
-                      In use: <span className="spec-num">{vramUsedGB.toFixed(1)} GB</span>
-                    </span>
-                    <span className="spec-dot">•</span>
-                    <span>
-                      Free: <span className="spec-num">{Math.max(0, vramTotalGB - vramUsedGB).toFixed(1)} GB</span>
-                    </span>
-                  </div>
-                  {loadedOnGpu.length > 0 && (
-                    <div className="sub-specs" style={{ marginTop: '4px', fontSize: '11px' }}>
-                      <span title={loadedOnGpu.map((m) => `${m.name} — ${m.gpuPercent}% on GPU`).join('\n')}>
-                        {loadedOnGpu.length} Ollama model{loadedOnGpu.length > 1 ? 's' : ''} resident
-                        {loadedOnGpu.some((m) => m.placement === 'partial') ? ' (partly on CPU)' : ''}
-                      </span>
-                    </div>
-                  )}
-                </>
-              ) : null}
             </div>
           </div>
 
@@ -331,7 +281,7 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                 </span>
                 <span className="spec-dot">•</span>
                 <span>
-                  Max LLM Cap: <span className="spec-num">{(gpu.isAppleSilicon ? ram.totalGB * 0.75 : (gpu.vramGB || ram.totalGB * 0.70)).toFixed(1)} GB</span>
+                  Max LLM Cap: <span className="spec-num">{getUsableMemoryGB(systemInfo).toFixed(1)} GB</span>
                 </span>
               </div>
               {ram.usedPercent > 85 ? (
@@ -359,10 +309,18 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
           <div className="hardware-item">
             <div className="item-header">
               <HardDrive size={16} className="item-icon disk-icon" aria-hidden />
-              <h3>Storage Disk Speed</h3>
+              <h3>Storage Disk</h3>
             </div>
             <div className="item-body">
               <div className="disk-details">
+                {disk.freeGB !== null && (
+                  <div className="disk-speed-row">
+                    <span className="speed-label">Free</span>
+                    <span className="speed-val">
+                      {disk.freeGB} GB{disk.totalGB !== null ? ` of ${disk.totalGB} GB` : ''}
+                    </span>
+                  </div>
+                )}
                 {disk.readMBps && disk.writeMBps ? (
                   <>
                     <div className="disk-speed-row">

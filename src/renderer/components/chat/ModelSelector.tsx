@@ -91,7 +91,6 @@ export const ModelSelector: React.FC = () => {
     return models.filter(m => {
       // Category filter
       if (activeCategory === 'golti' && m.providerType !== 'golti-engine') return false
-      if (activeCategory === 'ollama' && m.providerType !== 'ollama') return false
       if (activeCategory === 'reasoning' && !isReasoning(m.name)) return false
 
       // Search query filter
@@ -257,15 +256,6 @@ export const ModelSelector: React.FC = () => {
               }}
             >
               <Brain size={10} style={{ marginRight: 3 }} /> Reasoning
-            </button>
-            <button
-              className={`model-selector-chip ${activeCategory === 'ollama' ? 'is-active' : ''}`}
-              onClick={() => {
-                setActiveCategory('ollama')
-                setHighlightedIndex(0)
-              }}
-            >
-              <Server size={10} style={{ marginRight: 3 }} /> Ollama
             </button>
           </div>
 

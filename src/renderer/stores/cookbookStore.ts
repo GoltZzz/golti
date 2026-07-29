@@ -1,124 +1,55 @@
 import { create } from 'zustand'
-import { SystemInfoFull, ModelUseCase, ModelFamily, ModelSizeTier, QuantizationType, ModelSource, PullProgress, InstalledLocalModelInfo, OllamaRuntimeInfo, VramReading } from '../../shared/types'
+import { SystemInfoFull, InstalledLocalModelInfo } from '../../shared/types'
+import { ModelFilters, ModelFilterListKey, EMPTY_MODEL_FILTERS } from '../../shared/model-filter'
 import { useChatStore } from './chatStore'
 import { useEngineStore } from './engineStore'
 
-interface CookbookFilters {
-  sources: ModelSource[]
-  useCases: ModelUseCase[]
-  families: ModelFamily[]
-  sizeTiers: ModelSizeTier[]
-  quantizations: QuantizationType[]
-  compatibleOnly: boolean
-}
-
 interface CookbookState {
   systemInfo: SystemInfoFull | null
-  /** Driver-level VRAM reading — the capacity signal; null when unmeasurable. */
-  vramReading: VramReading | null
-  /** Per-model attribution from Ollama's /api/ps; null when it is unreachable. */
-  ollamaRuntime: OllamaRuntimeInfo | null
   loadingInfo: boolean
   scanError: string | null
-  ollamaOnline: boolean
-  checkingOllama: boolean
   installedModels: string[]
   detailedInstalledModels: InstalledLocalModelInfo[]
   fetchingInstalled: boolean
-  filters: CookbookFilters
+  filters: ModelFilters
   sortBy: 'name' | 'size' | 'compatibility' | 'family'
   searchQuery: string
-  pullingModels: Record<string, PullProgress>
-  pullErrors: Record<string, string>
-  deletingOllamaTag: string | null
+  deletingModel: string | null
   deleteError: string | null
 
   scanHardware: () => Promise<void>
-  fetchVramReading: () => Promise<void>
-  fetchOllamaRuntime: () => Promise<void>
-  checkOllama: () => Promise<void>
   fetchInstalled: () => Promise<void>
-  pullModel: (ollamaTag: string) => Promise<void>
-  cancelPull: (ollamaTag: string) => Promise<void>
-  clearPullState: (ollamaTag: string) => void
-  deleteOllamaModel: (ollamaTag: string) => Promise<{ success: boolean; error?: string }>
   deleteLocalEngineModel: (filename: string) => Promise<{ success: boolean; error?: string }>
-  setFilter: <K extends keyof CookbookFilters>(key: K, value: CookbookFilters[K]) => void
+  setFilter: <K extends keyof ModelFilters>(key: K, value: ModelFilters[K]) => void
+  toggleFilterValue: <K extends ModelFilterListKey>(key: K, value: ModelFilters[K][number]) => void
   resetFilters: () => void
   isHardwareCardCollapsed: boolean
   toggleHardwareCardCollapsed: () => void
   setSort: (sortBy: CookbookState['sortBy']) => void
   setSearch: (query: string) => void
-  setupPullListeners: () => () => void
   clearDeleteError: () => void
 }
 
-function removePullEntry(
-  pullingModels: Record<string, PullProgress>,
-  pullErrors: Record<string, string>,
-  tag: string
-) {
-  const nextPulling = { ...pullingModels }
-  delete nextPulling[tag]
-  const nextErrors = { ...pullErrors }
-  delete nextErrors[tag]
-  return { pullingModels: nextPulling, pullErrors: nextErrors }
-}
-
 export const useCookbookStore = create<CookbookState>((set, get) => {
-  let cleanupListener: (() => void) | null = null
-
   return {
     systemInfo: null,
-    vramReading: null,
-    ollamaRuntime: null,
     loadingInfo: false,
     scanError: null,
-    ollamaOnline: false,
-    checkingOllama: false,
     installedModels: [],
     detailedInstalledModels: [],
     fetchingInstalled: false,
     isHardwareCardCollapsed: false,
-    filters: {
-      sources: [],
-      useCases: [],
-      families: [],
-      sizeTiers: [],
-      quantizations: [],
-      compatibleOnly: false
-    },
+    filters: { ...EMPTY_MODEL_FILTERS },
     sortBy: 'compatibility',
     searchQuery: '',
-    pullingModels: {},
-    pullErrors: {},
-    deletingOllamaTag: null,
+    deletingModel: null,
     deleteError: null,
-
-    fetchVramReading: async () => {
-      try {
-        set({ vramReading: await window.goltiAPI.getVramReading() })
-      } catch {
-        // Keep the last reading rather than implying the GPU emptied.
-      }
-    },
-
-    fetchOllamaRuntime: async () => {
-      try {
-        set({ ollamaRuntime: await window.goltiAPI.getOllamaRuntime() })
-      } catch {
-        // Daemon down or mid-restart: leave the last reading rather than
-        // flashing "0 GB used", which would read as a real measurement.
-      }
-    },
 
     scanHardware: async () => {
       set({ loadingInfo: true, scanError: null })
       try {
         const info = await window.goltiAPI.getSystemInfoFull()
         set({ systemInfo: info, loadingInfo: false, scanError: null })
-        get().fetchVramReading()
-        get().fetchOllamaRuntime()
       } catch (err) {
         console.error('Failed to scan hardware:', err)
         const message =
@@ -127,224 +58,38 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
       }
     },
 
-    checkOllama: async () => {
-      set({ checkingOllama: true })
-      try {
-        const status = await window.goltiAPI.getOllamaStatus()
-        set({ ollamaOnline: status.online, checkingOllama: false })
-      } catch (err) {
-        set({ ollamaOnline: false, checkingOllama: false })
-      }
-    },
-
     fetchInstalled: async () => {
       set({ fetchingInstalled: true })
       try {
-        const list = await window.goltiAPI.getInstalledModels()
         const detailed = (await window.goltiAPI.getDetailedInstalledModels?.()) || []
-        set({ installedModels: list, detailedInstalledModels: detailed, fetchingInstalled: false })
+        set({
+          installedModels: detailed.map((m: InstalledLocalModelInfo) => m.tag),
+          detailedInstalledModels: detailed,
+          fetchingInstalled: false
+        })
       } catch (err) {
         console.error('Failed to get installed models:', err)
         set({ fetchingInstalled: false })
       }
     },
 
-    setupPullListeners: () => {
-      // Keep a single long-lived listener so in-flight pulls still settle
-      // if the user leaves the Cookbook tab mid-download.
-      if (cleanupListener) {
-        return () => {}
-      }
-
-      cleanupListener = window.goltiAPI.onPullProgress((data: any) => {
-        const tag = data.modelTag as string
-        if (!tag) return
-
-        if (data.status === 'success') {
-          set((state) => removePullEntry(state.pullingModels, state.pullErrors, tag))
-          get().fetchInstalled()
-          useChatStore.getState().fetchModels()
-        } else if (data.status === 'error') {
-          set((state) => {
-            const nextErrors = {
-              ...state.pullErrors,
-              [tag]: data.error || 'Failed to download model'
-            }
-            return {
-              pullingModels: {
-                ...state.pullingModels,
-                [tag]: {
-                  modelTag: tag,
-                  status: 'error',
-                  completed: data.completed || state.pullingModels[tag]?.completed || 0,
-                  total: data.total || state.pullingModels[tag]?.total || 0,
-                  percent: data.percent || state.pullingModels[tag]?.percent || 0
-                }
-              },
-              pullErrors: nextErrors
-            }
-          })
-        } else if (data.status === 'cancelled') {
-          // Keep last progress so Resume can show where we left off
-          set((state) => {
-            const nextErrors = { ...state.pullErrors }
-            delete nextErrors[tag]
-            return {
-              pullingModels: {
-                ...state.pullingModels,
-                [tag]: {
-                  modelTag: tag,
-                  status: 'cancelled',
-                  completed: data.completed || state.pullingModels[tag]?.completed || 0,
-                  total: data.total || state.pullingModels[tag]?.total || 0,
-                  percent: data.percent || state.pullingModels[tag]?.percent || 0
-                }
-              },
-              pullErrors: nextErrors
-            }
-          })
-        } else {
-          set((state) => ({
-            pullingModels: {
-              ...state.pullingModels,
-              [tag]: {
-                modelTag: tag,
-                status: data.status,
-                completed: data.completed,
-                total: data.total,
-                percent: data.percent
-              }
-            }
-          }))
-        }
-      })
-
-      return () => {}
-    },
-
-    pullModel: async (ollamaTag: string) => {
-      const existing = get().pullingModels[ollamaTag]
-      // Block only while an active pull is in flight (allow resume after cancelled/error)
-      if (existing && existing.status !== 'cancelled' && existing.status !== 'error') return
-
-      set((state) => {
-        const nextErrors = { ...state.pullErrors }
-        delete nextErrors[ollamaTag]
-        return {
-          pullingModels: {
-            ...state.pullingModels,
-            [ollamaTag]: {
-              modelTag: ollamaTag,
-              status: 'starting',
-              completed: existing?.completed || 0,
-              total: existing?.total || 0,
-              percent: existing?.percent || 0
-            }
-          },
-          pullErrors: nextErrors
-        }
-      })
-
-      // Ensure a long-lived listener is attached even if CookbookView hasn't mounted yet
-      if (!cleanupListener) {
-        get().setupPullListeners()
-      }
-
-      try {
-        const result = await window.goltiAPI.pullOllamaModel(ollamaTag)
-        if (!result.success) {
-          set((state) => {
-            const { pullingModels } = removePullEntry(state.pullingModels, state.pullErrors, ollamaTag)
-            return {
-              pullingModels,
-              pullErrors: {
-                ...state.pullErrors,
-                [ollamaTag]: result.error || 'Failed to start pull'
-              }
-            }
-          })
-        }
-      } catch (err: any) {
-        set((state) => {
-          const { pullingModels } = removePullEntry(state.pullingModels, state.pullErrors, ollamaTag)
-          return {
-            pullingModels,
-            pullErrors: {
-              ...state.pullErrors,
-              [ollamaTag]: err.message || 'Error occurred during pull request'
-            }
-          }
-        })
-      }
-    },
-
-    cancelPull: async (ollamaTag: string) => {
-      try {
-        const result = await window.goltiAPI.cancelOllamaPull(ollamaTag)
-        if (result && result.success === false) {
-          set((state) => ({
-            pullErrors: {
-              ...state.pullErrors,
-              [ollamaTag]: result.error || 'Could not cancel — try again'
-            }
-          }))
-        }
-      } catch (err: any) {
-        console.warn('[CookbookStore] Failed to cancel pull:', err)
-        set((state) => ({
-          pullErrors: {
-            ...state.pullErrors,
-            [ollamaTag]: err.message || 'Could not cancel — try again'
-          }
-        }))
-      }
-    },
-
-    clearPullState: (ollamaTag: string) => {
-      set((state) => removePullEntry(state.pullingModels, state.pullErrors, ollamaTag))
-    },
-
-    deleteOllamaModel: async (ollamaTag: string) => {
-      if (get().deletingOllamaTag) {
-        return { success: false, error: 'Another model is currently being deleted' }
-      }
-
-      set({ deletingOllamaTag: ollamaTag, deleteError: null })
-      try {
-        const result = await window.goltiAPI.deleteOllamaModel(ollamaTag)
-        if (result?.success) {
-          await get().fetchInstalled()
-          useChatStore.getState().fetchModels()
-          set({ deletingOllamaTag: null, deleteError: null })
-          return { success: true }
-        }
-        const error = result?.error || 'Failed to delete Ollama model'
-        set({ deletingOllamaTag: null, deleteError: error })
-        return { success: false, error }
-      } catch (err: any) {
-        const error = err.message || 'Failed to delete Ollama model'
-        set({ deletingOllamaTag: null, deleteError: error })
-        return { success: false, error }
-      }
-    },
-
     deleteLocalEngineModel: async (filename: string) => {
-      set({ deletingOllamaTag: filename, deleteError: null })
+      set({ deletingModel: filename, deleteError: null })
       try {
         const result = await window.goltiAPI.deleteLocalModel(filename)
         if (result?.success) {
           await get().fetchInstalled()
           useChatStore.getState().fetchModels()
           useEngineStore.getState().setupListeners()
-          set({ deletingOllamaTag: null, deleteError: null })
+          set({ deletingModel: null, deleteError: null })
           return { success: true }
         }
         const error = result?.error || 'Failed to delete Golti Engine model'
-        set({ deletingOllamaTag: null, deleteError: error })
+        set({ deletingModel: null, deleteError: error })
         return { success: false, error }
       } catch (err: any) {
         const error = err.message || 'Failed to delete Golti Engine model'
-        set({ deletingOllamaTag: null, deleteError: error })
+        set({ deletingModel: null, deleteError: error })
         return { success: false, error }
       }
     },
@@ -360,16 +105,25 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
       }))
     },
 
+    toggleFilterValue: (key, value) => {
+      set((state) => {
+        const list = state.filters[key] as string[]
+        const next = list.includes(value as string)
+          ? list.filter((v) => v !== value)
+          : [...list, value]
+        return {
+          filters: {
+            ...state.filters,
+            [key]: next
+          }
+        }
+      })
+    },
+
     resetFilters: () => {
       set({
-        filters: {
-          sources: [],
-          useCases: [],
-          families: [],
-          sizeTiers: [],
-          quantizations: [],
-          compatibleOnly: false
-        }
+        filters: { ...EMPTY_MODEL_FILTERS },
+        searchQuery: ''
       })
     },
 

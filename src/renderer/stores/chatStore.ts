@@ -77,6 +77,7 @@ interface ChatState {
   fetchConversations: () => Promise<void>
   selectConversation: (id: string) => Promise<void>
   newConversation: () => Promise<string>
+  startBlankConversation: () => void
   deleteConversation: (id: string) => Promise<void>
   pinConversation: (id: string, pinned: boolean) => Promise<void>
   archiveConversation: (id: string) => Promise<void>
@@ -140,6 +141,7 @@ function emptyBudget(): TokenBudget {
     reservedOutputTokens: DEFAULT_RESERVED_OUTPUT,
     availableTokens: DEFAULT_CONTEXT_WINDOW - DEFAULT_RESERVED_OUTPUT,
     overflow: false,
+    trimmedMessages: 0,
     items: []
   }
 }
@@ -320,7 +322,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       id: newClientId('conv'),
       title: 'New Conversation',
       model: selected ? selected.name : 'llama3:latest',
-      providerId: selected ? selected.providerId : 'ollama-local',
+      providerId: selected ? selected.providerId : 'golti-engine-local',
       createdAt: Date.now(),
       updatedAt: Date.now(),
       pinned: false,
@@ -356,6 +358,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     return newConv.id
+  },
+
+  startBlankConversation: () => {
+    set({
+      ...conversationScopedReset(),
+      currentConversationId: null,
+      isLoadingConversation: false,
+      generationSettings: { temperature: 0.7, topP: 0.9 }
+    })
+    selectSeq += 1
   },
 
   deleteConversation: async (id: string) => {
@@ -430,7 +442,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const selected = get().selectedModel
     const modelName = selected ? selected.name : 'llama3:latest'
-    const providerId = selected ? selected.providerId : 'ollama-local'
+    const providerId = selected ? selected.providerId : 'golti-engine-local'
     const conv = get().conversations.find((c) => c.id === convId)
     const settings = await window.goltiAPI.getSettings()
     const forceWebSearch = Boolean(options?.forceWebSearch || get().forceWebSearchNext)
@@ -593,12 +605,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const settings = await window.goltiAPI.getSettings()
     const conv = get().conversations.find((c) => c.id === convId)
 
-    set({ isGenerating: true })
+    const target = get().messages.find((m) => m.id === assistantMessageId)
+    const now = Date.now()
+    const tempAssistantMsg: Message = {
+      id: `temp_r_${now}`,
+      conversationId: convId,
+      role: 'assistant',
+      content: '',
+      createdAt: now,
+      isStreaming: true,
+      parentId: target?.parentId ?? null,
+      isDeepResearch: get().deepResearchEnabled || undefined
+    }
+
+    set((state) => {
+      const messages = [...state.messages, tempAssistantMsg]
+      return {
+        messages,
+        visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
+        isGenerating: true,
+        generatingConversationIds: state.generatingConversationIds.includes(convId)
+          ? state.generatingConversationIds
+          : [...state.generatingConversationIds, convId]
+      }
+    })
+
     const result = await window.goltiAPI.regenerateMessage({
       conversationId: convId,
       content: '',
       model: selected?.name || 'llama3:latest',
-      providerId: selected?.providerId || 'ollama-local',
+      providerId: selected?.providerId || 'golti-engine-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       messageId: assistantMessageId,
       webSearchEnabled: get().webSearchEnabled,
@@ -609,8 +645,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
     set({ forceWebSearchNext: false })
 
-    const msgs = await window.goltiAPI.getMessages(convId)
+    const fetched = await window.goltiAPI.getMessages(convId)
     if (get().currentConversationId !== convId) return
+    const msgs = fetched.map((m: Message) =>
+      m.id === result.assistantMsgId
+        ? { ...m, isStreaming: true, generationId: result.generationId }
+        : m
+    )
     set({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, result.assistantMsgId),
@@ -640,7 +681,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: convId,
       content: '',
       model: selected?.name || conv?.model || 'llama3:latest',
-      providerId: selected?.providerId || conv?.providerId || 'ollama-local',
+      providerId: selected?.providerId || conv?.providerId || 'golti-engine-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       messageId: assistantMessageId,
       composerMode: get().composerMode,
@@ -661,14 +702,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const selected = get().selectedModel
     const settings = await window.goltiAPI.getSettings()
     const conv = get().conversations.find((c) => c.id === convId)
-    const prev = get().messages.find((m) => m.id === userMessageId)?.content
+    const original = get().messages.find((m) => m.id === userMessageId)
+    const prev = original?.content
 
-    set({ isGenerating: true })
+    const now = Date.now()
+    const tempUserMsg: Message = {
+      id: `temp_e_${now}`,
+      conversationId: convId,
+      role: 'user',
+      content,
+      createdAt: now,
+      parentId: original?.parentId ?? null
+    }
+    const tempAssistantMsg: Message = {
+      id: `temp_ea_${now}`,
+      conversationId: convId,
+      role: 'assistant',
+      content: '',
+      createdAt: now + 1,
+      isStreaming: true,
+      parentId: tempUserMsg.id,
+      isDeepResearch: get().deepResearchEnabled || undefined
+    }
+
+    set((state) => {
+      const messages = [...state.messages, tempUserMsg, tempAssistantMsg]
+      return {
+        messages,
+        visibleMessages: recomputeVisible(messages, tempAssistantMsg.id),
+        isGenerating: true,
+        generatingConversationIds: state.generatingConversationIds.includes(convId)
+          ? state.generatingConversationIds
+          : [...state.generatingConversationIds, convId]
+      }
+    })
+
     const result = await window.goltiAPI.sendMessage({
       conversationId: convId,
       content,
       model: selected?.name || 'llama3:latest',
-      providerId: selected?.providerId || 'ollama-local',
+      providerId: selected?.providerId || 'golti-engine-local',
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
       editMessageId: userMessageId,
       webSearchEnabled: get().webSearchEnabled,
@@ -692,8 +765,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
 
-    const msgs = await window.goltiAPI.getMessages(convId)
+    const fetched = await window.goltiAPI.getMessages(convId)
     if (get().currentConversationId !== convId) return
+    const msgs = fetched.map((m: Message) =>
+      m.id === result.assistantMsgId
+        ? { ...m, isStreaming: true, generationId: result.generationId }
+        : m
+    )
     set({
       messages: msgs,
       visibleMessages: recomputeVisible(msgs, result.assistantMsgId),

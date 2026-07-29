@@ -503,11 +503,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                   {forceWebSearchNext ? 'Force search next' : 'Web Search on'}
                 </span>
               )}
-              {tokenBudget?.overflow && (
+              {tokenBudget?.overflow ? (
                 <span style={{ fontSize: 11, color: 'var(--accent-yellow)' }}>
-                  Context over budget
+                  This message alone exceeds the context window — shorten it, remove attached
+                  context, or raise the context size in Settings.
                 </span>
-              )}
+              ) : tokenBudget && tokenBudget.trimmedMessages > 0 ? (
+                <span style={{ fontSize: 11, color: 'var(--accent-yellow)' }}>
+                  {tokenBudget.trimmedMessages} older message
+                  {tokenBudget.trimmedMessages === 1 ? '' : 's'} will be left out to fit the context
+                  window
+                </span>
+              ) : null}
             </div>
 
             {isGenerating ? (

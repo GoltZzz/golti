@@ -1,111 +1,182 @@
-import { describe, expect, it } from 'vitest'
-import { getCompatibility, getRuntimeVramUsage, getVramUsage } from './compatibility'
-import type { CookbookModel, SystemInfoFull } from './types'
+import { describe, it, expect } from 'vitest'
+import {
+  getCompatibility,
+  getMemoryPressure,
+  getRuntimeFit,
+  estimateRuntimeGB,
+  getUsableMemoryGB,
+  getDiskFit,
+  describeDiskFit,
+  estimateDownloadSizeGB
+} from './compatibility'
+import { SystemInfoFull, CookbookModel } from './types'
 
-const GB = 1024 ** 3
-
-function system(overrides: {
-  vramGB?: number | null
-  totalRamGB?: number
+function makeSystem(overrides: {
+  totalGB?: number
   usedPercent?: number
   isAppleSilicon?: boolean
-}): SystemInfoFull {
+  vramGB?: number | null
+  freeDiskGB?: number | null
+} = {}): SystemInfoFull {
+  const totalGB = overrides.totalGB ?? 16
+  const usedPercent = overrides.usedPercent ?? 30
   return {
-    platform: 'linux',
-    arch: 'x64',
-    cpu: { model: 'Test CPU', cores: 8, threads: 16, speedGHz: 3.5 },
+    platform: 'darwin',
+    arch: 'arm64',
+    cpu: { model: 'Apple M2', cores: 8, threads: 8, speedGHz: 3.5 },
     ram: {
-      totalGB: overrides.totalRamGB ?? 32,
-      freeGB: 16,
-      usedPercent: overrides.usedPercent ?? 30
+      totalGB,
+      freeGB: totalGB * (1 - usedPercent / 100),
+      usedPercent
     },
     gpu: {
-      name: 'Test GPU',
-      vramGB: overrides.vramGB === undefined ? 16 : overrides.vramGB,
-      isAppleSilicon: overrides.isAppleSilicon ?? false
+      name: 'Apple M2 GPU',
+      vramGB: overrides.vramGB ?? null,
+      isAppleSilicon: overrides.isAppleSilicon ?? true
     },
-    disk: { readMBps: null, writeMBps: null },
+    disk: {
+      readMBps: 2000,
+      writeMBps: 1500,
+      freeGB: overrides.freeDiskGB === undefined ? 500 : overrides.freeDiskGB,
+      totalGB: 1000
+    },
     thermals: { cpuTempC: null }
   }
 }
 
-const model = (requiredGB: number, recommendedGB: number) =>
-  ({ ramRequiredGB: requiredGB, ramRecommendedGB: recommendedGB }) as CookbookModel
+function makeModel(overrides: Partial<CookbookModel> = {}): CookbookModel {
+  return {
+    id: 'test:7b',
+    name: 'Test 7B',
+    family: 'llama',
+    parameterBillions: 7,
+    sizeTier: 'medium',
+    quantization: 'Q4_K_M',
+    useCases: ['chat'],
+    ramRequiredGB: 5,
+    ramRecommendedGB: 8,
+    diskSizeGB: 4,
+    ollamaTag: 'test:7b',
+    description: 'test',
+    highlights: [],
+    ...overrides
+  } as CookbookModel
+}
 
-describe('getRuntimeVramUsage', () => {
-  it('converts resident VRAM bytes to GB', () => {
-    expect(getRuntimeVramUsage({ loaded: [], totalSizeBytes: 0, totalVramBytes: 8 * GB })).toEqual({
-      usedGB: 8
-    })
+describe('getCompatibility', () => {
+  it('returns the same rating regardless of how much memory is in use', () => {
+    const model = makeModel()
+    const idle = getCompatibility(makeSystem({ usedPercent: 20 }), model)
+    const modelLoaded = getCompatibility(makeSystem({ usedPercent: 75 }), model)
+
+    expect(modelLoaded).toBe(idle)
   })
 
-  it('returns null when the runtime reading is unavailable', () => {
-    expect(getRuntimeVramUsage(null)).toBeNull()
+  it('does not degrade when the machine is nearly full', () => {
+    const model = makeModel()
+    expect(getCompatibility(makeSystem({ usedPercent: 95 }), model)).toBe('great')
+  })
+
+  it('budgets for the attention cache on top of model weights', () => {
+    const model = makeModel({ parameterBillions: 30, ramRequiredGB: 5, ramRecommendedGB: 8 })
+    expect(estimateRuntimeGB(model)).toBeGreaterThan(model.ramRequiredGB)
+  })
+
+  it('leaves headroom for the OS rather than promising 75% of total RAM', () => {
+    const usable = getUsableMemoryGB(makeSystem({ totalGB: 8 }))
+    expect(usable).toBeLessThan(8 * 0.75)
+  })
+
+  it('rejects models that exceed the machine outright', () => {
+    const huge = makeModel({ ramRequiredGB: 40, ramRecommendedGB: 48, parameterBillions: 70 })
+    expect(getCompatibility(makeSystem({ totalGB: 16 }), huge)).toBe('wont_fit')
+  })
+
+  it('uses dedicated VRAM when the model fits inside it', () => {
+    const system = makeSystem({ totalGB: 16, isAppleSilicon: false, vramGB: 12 })
+    expect(getUsableMemoryGB(system, 6)).toBeCloseTo(11.2, 5)
+  })
+
+  it('falls back to system RAM when the model exceeds VRAM', () => {
+    const system = makeSystem({ totalGB: 32, isAppleSilicon: false, vramGB: 4 })
+    expect(getUsableMemoryGB(system, 20)).toBeGreaterThan(4)
+  })
+
+  it('assumes it runs when hardware is unknown', () => {
+    expect(getCompatibility(null, makeModel())).toBe('runs')
   })
 })
 
-describe('getVramUsage', () => {
-  it('carries total alongside used so both come from the driver', () => {
-    expect(getVramUsage({ totalMiB: 4096, usedMiB: 1024 })).toEqual({ usedGB: 1, totalGB: 4 })
+describe('getMemoryPressure', () => {
+  it('reports an idle machine as ok', () => {
+    expect(getMemoryPressure(makeSystem({ usedPercent: 30 })).level).toBe('ok')
   })
 
-  it('returns null when there is no reading to use', () => {
-    expect(getVramUsage(null)).toBeNull()
-    expect(getVramUsage({ totalMiB: 0, usedMiB: 0 })).toBeNull()
+  it('reports a loaded machine as critical', () => {
+    expect(getMemoryPressure(makeSystem({ usedPercent: 92 })).level).toBe('critical')
   })
 
-  it('prefers the driver total over the probed one when they disagree', () => {
-    // The engine binary reports 4342 MiB (4.24 GB) for the same card nvidia-smi
-    // calls 4096 MiB (4.0 GB). RAM is kept small so the VRAM figure decides.
-    const sys = system({ vramGB: 4.24, totalRamGB: 5 })
-    const target = model(4.1, 4.1)
+  it('discounts memory held by a model the user deliberately started', () => {
+    const system = makeSystem({ totalGB: 16, usedPercent: 80 })
+    const withoutModel = getMemoryPressure(system)
+    const withModel = getMemoryPressure(system, 6)
 
-    // Probed total: 4.24 GB clears the 4.1 GB requirement.
-    expect(getCompatibility(sys, target, { usedGB: 0 })).toBe('runs')
-    // Driver total: 4.0 GB does not, so it correctly drops a tier.
-    const driver = getVramUsage({ totalMiB: 4096, usedMiB: 0 })!
-    expect(getCompatibility(sys, target, driver)).toBe('tight')
+    expect(withoutModel.level).toBe('busy')
+    expect(withModel.level).toBe('ok')
+    expect(withModel.availableGB).toBeGreaterThan(withoutModel.availableGB)
   })
 })
 
-describe('getCompatibility with live VRAM', () => {
-  it('is unchanged when no runtime reading is supplied', () => {
-    expect(getCompatibility(system({ vramGB: 16 }), model(8, 12))).toBe('great')
-    expect(getCompatibility(system({ vramGB: 16 }), model(8, 12), null)).toBe('great')
+describe('getRuntimeFit', () => {
+  it('separates "fits this machine" from "fits right now"', () => {
+    const model = makeModel()
+    const busy = makeSystem({ totalGB: 16, usedPercent: 90 })
+
+    expect(getCompatibility(busy, model)).toBe('great')
+    expect(getRuntimeFit(busy, model)).toBe('no_room')
   })
 
-  it('downgrades a model once another one occupies the GPU', () => {
-    // System RAM is deliberately small here: with a large RAM budget the CPU
-    // fallback absorbs the loss and the rating would not move at all.
-    const sys = system({ vramGB: 16, totalRamGB: 16 })
-    const target = model(10, 12)
-    expect(getCompatibility(sys, target)).toBe('great')
-    // 12 GB resident leaves 4 GB free, too little for a 10 GB model, and 70% of
-    // 16 GB of system RAM cannot absorb it either.
-    expect(getCompatibility(sys, target, { usedGB: 12 })).not.toBe('great')
+  it('is comfortable on an idle machine', () => {
+    expect(getRuntimeFit(makeSystem({ usedPercent: 20 }), makeModel())).toBe('comfortable')
+  })
+})
+
+describe('getDiskFit', () => {
+  it('is ok when the model fits with headroom to spare', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: 100 }), makeModel({ diskSizeGB: 4 }))).toBe('ok')
   })
 
-  it('falls back to the system-RAM budget when free VRAM runs out', () => {
-    const sys = system({ vramGB: 16, totalRamGB: 64 })
-    // 15 GB resident: the 8 GB model no longer fits in VRAM, so it is rated
-    // against 70% of 64 GB rather than being written off.
-    expect(getCompatibility(sys, model(8, 10), { usedGB: 15 })).toBe('great')
+  it('is tight when the download would leave almost nothing free', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: 5 }), makeModel({ diskSizeGB: 4 }))).toBe('tight')
   })
 
-  it('ignores GPU occupancy on Apple Silicon, which is scored on unified memory', () => {
-    const sys = system({ isAppleSilicon: true, totalRamGB: 32, vramGB: null })
-    expect(getCompatibility(sys, model(8, 12), { usedGB: 10 })).toBe(
-      getCompatibility(sys, model(8, 12))
+  it('is insufficient when the model is larger than the free space', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: 3 }), makeModel({ diskSizeGB: 40 }))).toBe(
+      'insufficient'
     )
   })
 
-  it('never lets occupancy push free VRAM below zero', () => {
-    const sys = system({ vramGB: 8, totalRamGB: 32 })
-    expect(() => getCompatibility(sys, model(4, 6), { usedGB: 99 })).not.toThrow()
-    expect(getCompatibility(sys, model(4, 6), { usedGB: 99 })).toBe('great')
+  it('is unknown when free space could not be probed', () => {
+    expect(getDiskFit(makeSystem({ freeDiskGB: null }), makeModel())).toBe('unknown')
+    expect(getDiskFit(null, makeModel())).toBe('unknown')
   })
 
-  it('still returns runs when no system info is available', () => {
-    expect(getCompatibility(null, model(8, 12), { usedGB: 4 })).toBe('runs')
+  it('prefers the exact GGUF file size over the catalog estimate', () => {
+    const model = makeModel({ diskSizeGB: 4, ggufFileSize: 40 * 1024 ** 3 })
+    expect(estimateDownloadSizeGB(model)).toBeCloseTo(40, 5)
+    expect(getDiskFit(makeSystem({ freeDiskGB: 20 }), model)).toBe('insufficient')
+  })
+})
+
+describe('describeDiskFit', () => {
+  it('says nothing when there is room', () => {
+    expect(describeDiskFit(makeSystem({ freeDiskGB: 500 }), makeModel())).toBeNull()
+    expect(describeDiskFit(makeSystem({ freeDiskGB: null }), makeModel())).toBeNull()
+  })
+
+  it('reports both the requirement and what is actually free', () => {
+    const note = describeDiskFit(makeSystem({ freeDiskGB: 3 }), makeModel({ diskSizeGB: 40 }))
+    expect(note).toContain('40.0 GB')
+    expect(note).toContain('3.0 GB')
   })
 })

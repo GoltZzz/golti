@@ -1,7 +1,7 @@
 /**
  * Every provider spells "I ran out of room" differently:
- * OpenAI / llama.cpp `length`, Anthropic `max_tokens`, Google `MAX_TOKENS`,
- * Ollama `length`. Normalise before anything downstream reasons about it.
+ * OpenAI / llama.cpp `length`, Anthropic `max_tokens`, Google `MAX_TOKENS`.
+ * Normalise before anything downstream reasons about it.
  */
 export type NormalizedFinishReason = 'stop' | 'length' | 'content_filter' | 'tool_use' | 'other'
 

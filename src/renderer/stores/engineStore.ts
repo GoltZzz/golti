@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { EngineState, EngineDownloadProgress, ModelDownloadResult } from '../../shared/types'
+import { EngineState, EngineDownloadProgress, ModelDownloadResult, QuantizationType } from '../../shared/types'
 import { useChatStore } from './chatStore'
 
 declare global {
@@ -11,6 +11,12 @@ declare global {
 function isActivelyDownloading(progress?: EngineDownloadProgress): boolean {
   if (!progress) return false
   return !progress.status || progress.status === 'downloading'
+}
+
+export interface ResolvedModelRef {
+  ggufUrl: string
+  ggufFilename: string
+  repoId?: string
 }
 
 interface EngineStore {
@@ -28,6 +34,11 @@ interface EngineStore {
   startEngine: () => Promise<void>
   stopEngine: () => Promise<void>
   downloadModel: (url: string, filename: string) => Promise<void>
+  resolveAndDownload: (ollamaTag: string, quantization?: QuantizationType) => Promise<void>
+  resolving: Record<string, boolean>
+  resolvedModels: Record<string, ResolvedModelRef>
+  resolveErrors: Record<string, string>
+  clearResolveError: (ollamaTag: string) => void
   pauseDownload: (filename: string) => Promise<void>
   resumeDownload: (url: string, filename: string) => Promise<void>
   cancelDownload: (filename: string) => Promise<void>
@@ -53,6 +64,33 @@ function removeDownloadError(downloadErrors: Record<string, string>, filename: s
   return next
 }
 
+function removeResolveError(resolveErrors: Record<string, string>, ollamaTag: string) {
+  const next = { ...resolveErrors }
+  delete next[ollamaTag]
+  return next
+}
+
+const RESOLVED_MODELS_KEY = 'golti.engine.resolvedModels'
+
+function loadResolvedModels(): Record<string, ResolvedModelRef> {
+  try {
+    const raw = localStorage.getItem(RESOLVED_MODELS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveResolvedModels(map: Record<string, ResolvedModelRef>): void {
+  try {
+    localStorage.setItem(RESOLVED_MODELS_KEY, JSON.stringify(map))
+  } catch {
+    // storage unavailable; in-memory map still works for this session
+  }
+}
+
 let engineListenersAttached = false
 
 export const useEngineStore = create<EngineStore>((set, get) => ({
@@ -65,6 +103,9 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
   binaryDownloadProgress: null,
   localModels: [],
   isInstallingBinary: false,
+  resolving: {},
+  resolvedModels: loadResolvedModels(),
+  resolveErrors: {},
   error: null,
 
   fetchStatus: async () => {
@@ -224,6 +265,61 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
         error: message
       }))
     }
+  },
+
+  resolveAndDownload: async (ollamaTag: string, quantization?: QuantizationType) => {
+    set((state) => ({
+      resolving: { ...state.resolving, [ollamaTag]: true },
+      resolveErrors: removeResolveError(state.resolveErrors, ollamaTag),
+      error: null
+    }))
+
+    const stopResolving = (extra?: Partial<EngineStore>) =>
+      set((state) => {
+        const next = { ...state.resolving }
+        delete next[ollamaTag]
+        return { resolving: next, ...extra } as Partial<EngineStore>
+      })
+
+    try {
+      const result = await window.goltiAPI.resolveModelGguf(ollamaTag, quantization)
+
+      if (!result?.resolution) {
+        const message = result?.error || `Could not find a GGUF download for "${ollamaTag}".`
+        stopResolving()
+        set((state) => ({
+          resolveErrors: { ...state.resolveErrors, [ollamaTag]: message },
+          error: message
+        }))
+        return
+      }
+
+      const { ggufUrl, ggufFilename, repoId } = result.resolution
+
+      set((state) => {
+        const resolvedModels = {
+          ...state.resolvedModels,
+          [ollamaTag]: { ggufUrl, ggufFilename, repoId }
+        }
+        saveResolvedModels(resolvedModels)
+        const next = { ...state.resolving }
+        delete next[ollamaTag]
+        return { resolvedModels, resolving: next }
+      })
+
+      await get().downloadModel(ggufUrl, ggufFilename)
+    } catch (err: any) {
+      const message = err.message || String(err)
+      stopResolving()
+      set((state) => ({
+        resolveErrors: { ...state.resolveErrors, [ollamaTag]: message },
+        error: message
+      }))
+    }
+  },
+
+  clearResolveError: (ollamaTag: string) => {
+    set((state) => ({ resolveErrors: removeResolveError(state.resolveErrors, ollamaTag) }))
   },
 
   pauseDownload: async (filename: string) => {

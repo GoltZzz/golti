@@ -42,9 +42,6 @@ const defaultSettings: Settings = {
   accentColor: '#e06c75',
   fontSize: 'medium',
   sidebarCollapsed: false,
-  ollamaAutoDetect: true,
-  ollamaDevice: 'auto',
-  ollamaGpuLayers: -1,
   systemPrompt:
     'You are Golti, an intelligent, helpful AI personal assistant. Note: Golti is your name; do not confuse general terms or technologies (such as the Go/Golang programming language) with the app.',
   engineEnabled: true,
@@ -80,15 +77,6 @@ const defaultProviders: AIProviderConfig[] = [
     apiKey: '',
     isActive: true,
     models: []
-  },
-  {
-    id: 'ollama-local',
-    type: 'ollama',
-    name: 'Ollama (Local)',
-    endpoint: 'http://localhost:11434',
-    apiKey: '',
-    isActive: true,
-    models: []
   }
 ]
 
@@ -108,6 +96,13 @@ function loadDb(): DBData {
         if (!dbData.messages) dbData.messages = []
         dbData.settings = { ...defaultSettings, ...dbData.settings }
         let updated = false
+        const withoutOllama = dbData.providers.filter(
+          (prov) => (prov.type as string) !== 'ollama'
+        )
+        if (withoutOllama.length !== dbData.providers.length) {
+          dbData.providers = withoutOllama
+          updated = true
+        }
         if (dbData.settings.systemPrompt === LEGACY_DEFAULT_SYSTEM_PROMPT) {
           dbData.settings.systemPrompt = defaultSettings.systemPrompt
           updated = true

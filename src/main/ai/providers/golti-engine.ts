@@ -114,7 +114,8 @@ export async function* streamGoltiEngineChat(
         temperature: gen.temperature,
         top_p: gen.topP,
         max_tokens: maxOutputTokens,
-        stop: gen.stopSequences
+        stop: gen.stopSequences,
+        cache_prompt: true
       }),
       signal: options?.signal
     })

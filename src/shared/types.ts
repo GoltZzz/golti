@@ -1,6 +1,8 @@
-export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'golti-engine'
+import type { EngineFailure } from './engine-startup'
 
-export type ModelSource = 'ollama' | 'golti-engine'
+export type { EngineFailure }
+
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'golti-engine'
 
 /** Composer Chat vs Agent mode (Cursor-style Shift+Tab toggle). */
 export type ComposerMode = 'chat' | 'agent'
@@ -30,66 +32,8 @@ export interface EngineState {
   contextSize?: number
   /** Last stderr output lines for error diagnostic log copying. */
   lastLogs?: string
-}
-
-export interface OllamaState {
-  status: 'not-installed' | 'stopped' | 'starting' | 'running' | 'error'
-  error?: string
-  binaryPath?: string | null
-  port?: number
-  pid?: number | null
-  isSystemProcess?: boolean
-  /** systemd unit owning the process, when Ollama is installed as a Linux service. */
-  serviceUnit?: string
-  /** True when stopping the owning unit requires root. */
-  needsPrivilegedStop?: boolean
-  host?: string
-  version?: string
-  logs?: string[]
-  /** The `ollamaDevice` choice the running daemon was actually spawned with. */
-  gpuDevice?: string
-  /**
-   * True when Ollama is running outside Golti, so our GPU environment was never
-   * applied and `gpuDevice` reflects only the stored preference.
-   */
-  gpuSettingIgnored?: boolean
-}
-
-/**
- * Driver-level VRAM reading for one GPU — the capacity signal model
- * compatibility is scored against. Counts every consumer on the card, not just
- * the processes Golti started.
- */
-export interface VramReading {
-  /** Vendor device index, matching the ids used for device selection. */
-  index: string
-  name: string
-  totalMiB: number
-  usedMiB: number
-  freeMiB: number
-}
-
-/** One model Ollama currently holds resident, as reported by `/api/ps`. */
-export interface OllamaLoadedModel {
-  name: string
-  /** Total resident size in bytes (GPU + system RAM). */
-  sizeBytes: number
-  /** Portion of `sizeBytes` actually resident in VRAM. */
-  vramBytes: number
-  /** `vramBytes` as a percentage of `sizeBytes`, rounded. */
-  gpuPercent: number
-  placement: 'gpu' | 'partial' | 'cpu'
-  expiresAt?: string
-}
-
-/**
- * Measured runtime state of the Ollama daemon. Unlike our VRAM probes and layer
- * heuristics, these numbers are what Ollama reports *after* loading a model.
- */
-export interface OllamaRuntimeInfo {
-  loaded: OllamaLoadedModel[]
-  totalSizeBytes: number
-  totalVramBytes: number
+  /** Plain-language classification of the last startup failure. */
+  failure?: EngineFailure
 }
 
 export type EngineDownloadStatus =
@@ -283,6 +227,7 @@ export interface TokenBudget {
   reservedOutputTokens: number
   availableTokens: number
   overflow: boolean
+  trimmedMessages: number
   items: Array<{ id: string; label: string; tokens: number; category: 'system' | 'context' | 'history' | 'draft' | 'reserve' }>
 }
 
@@ -363,14 +308,6 @@ export interface StreamChunkPayload {
 export interface ChatRequestOptions {
   signal?: AbortSignal
   generationSettings?: GenerationSettings
-  /**
-   * Ollama-only runtime overrides. Other providers ignore this. Kept separate
-   * from `generationSettings` because it controls placement, not sampling.
-   */
-  ollama?: {
-    /** Layers to offload to GPU: 0 = CPU-only, N = exact. Omitted means Ollama decides. */
-    numGpu?: number
-  }
 }
 
 export type ProviderStreamEvent =
@@ -413,6 +350,8 @@ export interface SystemInfoFull {
   disk: {
     readMBps: number | null
     writeMBps: number | null
+    freeGB: number | null
+    totalGB: number | null
   }
   thermals: {
     cpuTempC: number | null
@@ -420,6 +359,10 @@ export interface SystemInfoFull {
 }
 
 export type ModelCompatibility = 'great' | 'runs' | 'tight' | 'wont_fit'
+
+export type MemoryPressure = 'ok' | 'busy' | 'critical'
+
+export type DiskFit = 'ok' | 'tight' | 'insufficient' | 'unknown'
 
 export type ModelUseCase = 'chat' | 'code' | 'vision' | 'embedding' | 'reasoning' | 'creative' | 'agentic'
 
@@ -448,14 +391,6 @@ export interface CookbookModel {
   highlights: string[]
 }
 
-export interface PullProgress {
-  modelTag: string
-  status: string
-  completed: number
-  total: number
-  percent: number
-}
-
 export interface InstalledLocalModelInfo {
   id: string
   name: string
@@ -471,7 +406,6 @@ export interface InstalledLocalModelInfo {
   modifiedAt?: string
   modifiedAtFormatted?: string
   isGoltiEngine?: boolean
-  isOllama?: boolean
   isCatalogModel?: boolean
   catalogModelId?: string
 }
@@ -537,7 +471,6 @@ export interface Settings {
   defaultModel?: string
   defaultProviderId?: string
   sidebarCollapsed: boolean
-  ollamaAutoDetect: boolean
   systemPrompt: string
   osPlatformOverride?: 'auto' | 'darwin' | 'win32' | 'linux'
   engineEnabled: boolean
@@ -547,18 +480,6 @@ export interface Settings {
   engineGpuLayers: number
   /** GPU offload target: 'auto' (pick discrete GPU), 'cpu' (no offload), or a device id like 'Vulkan1'. */
   engineDevice?: string
-  /**
-   * Which GPU `ollama serve` may use: 'auto' (let Ollama choose), 'cpu' (force
-   * CPU), or a vendor device index like '0'. Applied as environment variables at
-   * spawn time, so it only affects an Ollama that Golti started.
-   */
-  ollamaDevice?: string
-  /**
-   * Layers Ollama should offload per request (`num_gpu`). Negative = Auto (let
-   * Ollama size it), 0 = CPU-only, N = exact. Unlike `ollamaDevice` this needs
-   * no daemon restart, since it travels with each request.
-   */
-  ollamaGpuLayers?: number
   webSearch?: WebSearchSettings
   /** When true, composer Web Search toggle is on (Auto intent). */
   webSearchEnabled?: boolean

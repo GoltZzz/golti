@@ -1,8 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
-import { getCompatibility, type RuntimeVramUsage } from '../../../shared/compatibility'
-import { normalizeOllamaTag } from '../../../shared/ollama-tags'
-import { useCookbookStore } from '../../stores/cookbookStore'
+import { describeDiskFit, getCompatibility, getDiskFit } from '../../../shared/compatibility'
 import { useChatStore } from '../../stores/chatStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { useEngineStore } from '../../stores/engineStore'
@@ -15,7 +13,6 @@ import {
   Cpu,
   HardDrive,
   CheckCircle2,
-  Download,
   AlertTriangle,
   XCircle,
   MessageSquare,
@@ -25,44 +22,34 @@ import {
   Trash2,
   Pause,
   Play,
-  X
+  X,
+  Search
 } from 'lucide-react'
 
 interface ModelCardProps {
   model: CookbookModel
   systemInfo: SystemInfoFull | null
-  /** Live VRAM occupancy, so the badge reflects the GPU's current state. */
-  vramUsage?: RuntimeVramUsage | null
-  isInstalled: boolean
-  installedOllamaTag?: string
-  isOllamaOnline: boolean
+  isInstalled?: boolean
 }
 
 export const ModelCard: React.FC<ModelCardProps> = ({
   model,
   systemInfo,
-  vramUsage,
-  isInstalled,
-  installedOllamaTag,
-  isOllamaOnline
+  isInstalled
 }) => {
-  const {
-    pullingModels,
-    pullErrors,
-    pullModel,
-    cancelPull,
-    clearPullState,
-    deleteOllamaModel,
-    deletingOllamaTag
-  } = useCookbookStore()
   const {
     localModels,
     downloadingModels,
     downloadErrors,
     isInstallingBinary,
     engineState,
+    resolving,
+    resolvedModels,
+    resolveErrors,
+    clearResolveError,
     installEngine,
     downloadModel,
+    resolveAndDownload,
     pauseDownload,
     resumeDownload,
     cancelDownload,
@@ -78,18 +65,20 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [engineActionBusy, setEngineActionBusy] = useState(false)
-  const [ollamaActionBusy, setOllamaActionBusy] = useState(false)
 
   const isEngineInstalled = engineState.status !== 'not-installed'
-  const isEngineModelDownloaded = model.ggufFilename
-    ? localModels.some((lm) => lm.filename === model.ggufFilename)
+
+  const resolved = model.ollamaTag ? resolvedModels[model.ollamaTag] : undefined
+  const ggufFilename = model.ggufFilename || resolved?.ggufFilename
+  const ggufUrl = model.ggufUrl || resolved?.ggufUrl
+
+  const isEngineModelDownloaded = ggufFilename
+    ? localModels.some((lm) => lm.filename === ggufFilename)
     : false
 
-  const engineDownloadProgress = model.ggufFilename
-    ? downloadingModels[model.ggufFilename]
-    : undefined
-  const engineDownloadError = model.ggufFilename
-    ? downloadErrors[model.ggufFilename] || engineDownloadProgress?.error
+  const engineDownloadProgress = ggufFilename ? downloadingModels[ggufFilename] : undefined
+  const engineDownloadError = ggufFilename
+    ? downloadErrors[ggufFilename] || engineDownloadProgress?.error
     : undefined
   const engineStatus = engineDownloadProgress?.status
   const isEngineDownloading = Boolean(engineDownloadProgress) && (!engineStatus || engineStatus === 'downloading')
@@ -99,78 +88,46 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     Boolean(engineDownloadProgress) &&
     (isEngineDownloading || isEnginePaused || isEngineErrored)
 
-  const pullProgress = pullingModels[model.ollamaTag]
-  const pullError = pullErrors[model.ollamaTag]
-  const isPullCancelled = pullProgress?.status === 'cancelled'
-  const isPullErrored = pullProgress?.status === 'error' || Boolean(pullError)
-  const isCurrentPulling =
-    Boolean(pullProgress) && pullProgress?.status !== 'cancelled' && pullProgress?.status !== 'error'
-  const showOllamaProgress = isCurrentPulling || isPullCancelled || (isPullErrored && Boolean(pullProgress))
+  const isResolving = !!resolving[model.ollamaTag]
+  const resolveError = model.ollamaTag ? resolveErrors[model.ollamaTag] : undefined
 
-  const comp = getCompatibility(systemInfo, model, vramUsage)
+  const comp = getCompatibility(systemInfo, model)
+  const diskFit = getDiskFit(systemInfo, model)
+  const diskNote = describeDiskFit(systemInfo, model)
+  const diskBlocked = diskFit === 'insufficient'
 
   const isEngineActive = useMemo(() => {
-    if (!model.ggufFilename || !engineState.loadedModel) return false
-    return engineState.loadedModel.split(/[/\\]/).pop() === model.ggufFilename
-  }, [model.ggufFilename, engineState.loadedModel])
+    if (!ggufFilename || !engineState.loadedModel) return false
+    return engineState.loadedModel.split(/[/\\]/).pop() === ggufFilename
+  }, [ggufFilename, engineState.loadedModel])
 
   const isEngineSelectedInChat = useMemo(() => {
-    if (!selectedModel || selectedModel.providerType !== 'golti-engine' || !model.ggufFilename) {
+    if (!selectedModel || selectedModel.providerType !== 'golti-engine' || !ggufFilename) {
       return false
     }
     const selectedName = selectedModel.name.toLowerCase().replace(/\.gguf$/, '')
-    const ggufName = model.ggufFilename.toLowerCase().replace(/\.gguf$/, '')
-    return selectedName === ggufName || selectedModel.name === model.ggufFilename
-  }, [selectedModel, model.ggufFilename])
-
-  const isOllamaActive = useMemo(() => {
-    if (!selectedModel || selectedModel.providerType !== 'ollama') return false
-    const tag = installedOllamaTag || model.ollamaTag
-    return normalizeOllamaTag(selectedModel.name) === normalizeOllamaTag(tag)
-  }, [selectedModel, installedOllamaTag, model.ollamaTag])
+    const ggufName = ggufFilename.toLowerCase().replace(/\.gguf$/, '')
+    return selectedName === ggufName || selectedModel.name === ggufFilename
+  }, [selectedModel, ggufFilename])
 
   const deleteSources: DeleteSourceOption[] = useMemo(() => {
     const sources: DeleteSourceOption[] = []
-
-    if (isEngineModelDownloaded && model.ggufFilename) {
+    if (isEngineModelDownloaded && ggufFilename) {
       const blocked = isEngineActive || isEngineSelectedInChat
       sources.push({
         id: 'engine',
         label: 'Golti Engine (GGUF)',
-        detail: model.ggufFilename,
+        detail: ggufFilename,
         blocked,
         blockedReason: blocked
           ? isEngineActive
-            ? 'Currently loaded in Golti Engine. Switch or unload it in Chat or Settings first.'
+            ? 'Currently loaded in Golti Engine. Switch or unload it first.'
             : 'Currently selected for chat. Choose a different model first.'
           : undefined
       })
     }
-
-    if (isInstalled) {
-      const tag = installedOllamaTag || model.ollamaTag
-      sources.push({
-        id: 'ollama',
-        label: 'Ollama',
-        detail: tag,
-        blocked: isOllamaActive,
-        blockedReason: isOllamaActive
-          ? 'Currently selected for chat. Choose a different model first.'
-          : undefined
-      })
-    }
-
     return sources
-  }, [
-    isEngineModelDownloaded,
-    model.ggufFilename,
-    isEngineActive,
-    isEngineSelectedInChat,
-    isInstalled,
-    installedOllamaTag,
-    model.ollamaTag,
-    isOllamaActive
-  ])
+  }, [isEngineModelDownloaded, ggufFilename, isEngineActive, isEngineSelectedInChat])
 
   const getCompBadge = () => {
     switch (comp) {
@@ -203,12 +160,12 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     }
   }
 
-  const handleOpenInChat = async (viaEngine = false) => {
+  const handleOpenInChat = async () => {
     const chatStore = useChatStore.getState()
     const sidebarStore = useSidebarStore.getState()
 
-    if (viaEngine && model.ggufFilename) {
-      const matchLocal = localModels.find((lm) => lm.filename === model.ggufFilename)
+    if (ggufFilename) {
+      const matchLocal = localModels.find((lm) => lm.filename === ggufFilename)
       if (matchLocal) {
         await loadModel(matchLocal.filepath)
       }
@@ -218,29 +175,18 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       await chatStore.fetchModels()
     }
 
-    let matchingModel
-    if (viaEngine) {
-      matchingModel = chatStore.models.find((m) => m.providerType === 'golti-engine')
-    } else {
-      matchingModel = chatStore.models.find(
-        (m) =>
-          m.providerType === 'ollama' &&
-          normalizeOllamaTag(m.name) === normalizeOllamaTag(installedOllamaTag || model.ollamaTag)
-      )
-    }
+    const matchingModel = chatStore.models.find((m) => m.providerType === 'golti-engine')
 
-    const providerId = matchingModel ? matchingModel.providerId : viaEngine ? 'golti-engine-local' : 'ollama-local'
+    const providerId = matchingModel ? matchingModel.providerId : 'golti-engine-local'
     const fullModelTag = matchingModel
       ? matchingModel.name
-      : viaEngine
-        ? model.ggufFilename?.replace(/\.gguf$/, '') || model.name
-        : installedOllamaTag || model.ollamaTag
+      : ggufFilename?.replace(/\.gguf$/, '') || model.name
 
     const targetModelInfo = matchingModel || {
       id: `${providerId}:${fullModelTag}`,
       name: fullModelTag,
       providerId,
-      providerType: viaEngine ? 'golti-engine' : 'ollama'
+      providerType: 'golti-engine' as const
     }
 
     chatStore.setSelectedModel(targetModelInfo)
@@ -272,23 +218,17 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     sidebarStore.setActiveTab('chat')
   }
 
-  const handleOllamaInstall = () => {
-    if (!isOllamaOnline || isCurrentPulling) return
-    // Fire-and-forget so Engine downloads on this/other cards stay independently clickable
-    void pullModel(model.ollamaTag)
-  }
-
   const handleEngineInstall = async () => {
-    if (isInstallingBinary || isEngineDownloading || engineActionBusy) return
+    if (isInstallingBinary || isEngineDownloading || engineActionBusy || diskBlocked || isResolving) return
     setEngineActionBusy(true)
     try {
       if (!isEngineInstalled) {
         await installEngine()
       }
-      // Do not await the transfer — progress is tracked in engineStore so
-      // Ollama pulls (and other Engine downloads) can start concurrently.
-      if (model.ggufUrl && model.ggufFilename) {
-        void downloadModel(model.ggufUrl, model.ggufFilename)
+      if (ggufUrl && ggufFilename) {
+        void downloadModel(ggufUrl, ggufFilename)
+      } else if (model.ollamaTag) {
+        void resolveAndDownload(model.ollamaTag, model.quantization)
       }
     } finally {
       setEngineActionBusy(false)
@@ -296,59 +236,39 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   }
 
   const handleEnginePause = async () => {
-    if (!model.ggufFilename || engineActionBusy) return
+    if (!ggufFilename || engineActionBusy) return
     setEngineActionBusy(true)
     try {
-      await pauseDownload(model.ggufFilename)
+      await pauseDownload(ggufFilename)
     } finally {
       setEngineActionBusy(false)
     }
   }
 
   const handleEngineCancel = async () => {
-    if (!model.ggufFilename || engineActionBusy) return
+    if (!ggufFilename || engineActionBusy) return
     setEngineActionBusy(true)
     try {
-      await cancelDownload(model.ggufFilename)
+      await cancelDownload(ggufFilename)
     } finally {
       setEngineActionBusy(false)
     }
   }
 
   const handleEngineResume = () => {
-    if (!model.ggufUrl || !model.ggufFilename || engineActionBusy || isEngineDownloading) return
-    // Kick off resume without awaiting the full download (keeps Pause/Cancel usable
-    // and allows concurrent Ollama pulls).
-    void resumeDownload(model.ggufUrl, model.ggufFilename)
+    if (!ggufUrl || !ggufFilename || engineActionBusy || isEngineDownloading) return
+    if (diskBlocked) return
+    void resumeDownload(ggufUrl, ggufFilename)
   }
 
   const handleEngineClear = async () => {
-    if (!model.ggufFilename || engineActionBusy) return
+    if (!ggufFilename || engineActionBusy) return
     setEngineActionBusy(true)
     try {
-      await clearDownload(model.ggufFilename)
+      await clearDownload(ggufFilename)
     } finally {
       setEngineActionBusy(false)
     }
-  }
-
-  const handleOllamaCancel = async () => {
-    if (ollamaActionBusy) return
-    setOllamaActionBusy(true)
-    try {
-      await cancelPull(model.ollamaTag)
-    } finally {
-      setOllamaActionBusy(false)
-    }
-  }
-
-  const handleOllamaResume = () => {
-    if (!isOllamaOnline || ollamaActionBusy || isCurrentPulling) return
-    void pullModel(model.ollamaTag)
-  }
-
-  const handleOllamaClear = () => {
-    clearPullState(model.ollamaTag)
   }
 
   const openDeleteDialog = () => {
@@ -372,36 +292,20 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   }
 
   const handleConfirmDelete = async () => {
-    if (!selectedSource) return
+    if (!selectedSource || selectedSource !== 'engine') return
     const source = deleteSources.find((s) => s.id === selectedSource)
-    if (!source || source.blocked) return
+    if (!source || source.blocked || !ggufFilename) return
 
     setIsDeleting(true)
     setDeleteError(null)
 
     try {
-      if (selectedSource === 'engine') {
-        if (!model.ggufFilename) {
-          setDeleteError('Missing GGUF filename')
-          setIsDeleting(false)
-          return
-        }
-        const result = await deleteLocalModel(model.ggufFilename)
-        if (!result.success) {
-          setDeleteError(result.error || 'Failed to delete Engine model')
-          setIsDeleting(false)
-          return
-        }
-      } else {
-        const tag = installedOllamaTag || model.ollamaTag
-        const result = await deleteOllamaModel(tag)
-        if (!result.success) {
-          setDeleteError(result.error || 'Failed to delete Ollama model')
-          setIsDeleting(false)
-          return
-        }
+      const result = await deleteLocalModel(ggufFilename)
+      if (!result.success) {
+        setDeleteError(result.error || 'Failed to delete model')
+        setIsDeleting(false)
+        return
       }
-
       setIsDeleting(false)
       setDialogOpen(false)
       setSelectedSource(null)
@@ -411,14 +315,12 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     }
   }
 
-  const showDelete = isInstalled || isEngineModelDownloaded
-  const deletingThisOllama =
-    deletingOllamaTag !== null &&
-    normalizeOllamaTag(deletingOllamaTag) ===
-      normalizeOllamaTag(installedOllamaTag || model.ollamaTag)
+  const showDelete = isEngineModelDownloaded
+  const hasGgufUrl = !!ggufUrl
+  const canDownload = hasGgufUrl || !!model.ollamaTag
 
   return (
-    <div className={`model-card animate-scale-in ${isInstalled || isEngineModelDownloaded ? 'installed-border' : ''}`}>
+    <div className={`model-card animate-scale-in ${isEngineModelDownloaded ? 'installed-border' : ''}`}>
       {/* Card Header */}
       <div className="card-header">
         <div className="title-row">
@@ -451,7 +353,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       <div className="requirements-grid">
         <div
           className="req-item"
-          title={`Minimum RAM needed (Model weights + ~4K KV context buffer). Recommended: ${model.ramRecommendedGB} GB for long context.`}
+          title={`Minimum RAM needed. Recommended: ${model.ramRecommendedGB} GB for long context.`}
         >
           <Cpu size={14} className="req-icon" />
           <div className="req-text">
@@ -459,7 +361,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             <span className="req-val">{model.ramRequiredGB} GB</span>
           </div>
         </div>
-        <div className="req-item" title="Storage disk space required for GGUF model binary file">
+        <div className="req-item" title="Storage disk space required for GGUF model file">
           <HardDrive size={14} className="req-icon" />
           <div className="req-text">
             <span className="req-label">Disk Space</span>
@@ -468,16 +370,22 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         </div>
       </div>
 
+      {diskNote && !isEngineModelDownloaded && (
+        <div className={`disk-note ${diskBlocked ? 'disk-note-blocked' : ''}`}>
+          <AlertTriangle size={13} />
+          <span>{diskNote}</span>
+        </div>
+      )}
+
       {/* Footer / Actions */}
       <div className="card-footer" style={{ flexDirection: 'column', gap: '8px' }}>
-        {/* Engine Section */}
         {isEngineModelDownloaded ? (
           <div className="installed-action-container" style={{ width: '100%' }}>
             <span className="installed-label" style={{ color: '#98c379' }}>
-              <Zap size={14} className="installed-icon" /> Golti Engine Ready
+              <Zap size={14} className="installed-icon" /> Ready
             </span>
-            <button onClick={() => handleOpenInChat(true)} className="action-btn open-chat-btn">
-              <MessageSquare size={13} /> Chat (Engine)
+            <button onClick={handleOpenInChat} className="action-btn open-chat-btn">
+              <MessageSquare size={13} /> Chat
             </button>
           </div>
         ) : showEngineProgress ? (
@@ -495,7 +403,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
                   ? 'Paused'
                   : isEngineErrored
                     ? 'Download failed'
-                    : engineDownloadProgress?.speed || 'Downloading GGUF...'}
+                    : engineDownloadProgress?.speed || 'Downloading...'}
               </span>
               <span className="percent-text">{engineDownloadProgress?.percent || 0}%</span>
             </div>
@@ -554,10 +462,11 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               )}
             </div>
           </div>
-        ) : model.ggufUrl ? (
+        ) : canDownload ? (
           <button
             onClick={handleEngineInstall}
-            disabled={isInstallingBinary || isEngineDownloading || engineActionBusy}
+            disabled={isInstallingBinary || isEngineDownloading || engineActionBusy || diskBlocked || isResolving}
+            title={diskBlocked ? diskNote || 'Not enough free disk space' : undefined}
             className="action-btn"
             style={{
               width: '100%',
@@ -572,123 +481,63 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               gap: '6px',
               fontWeight: 500,
               fontSize: '12px',
-              cursor: 'pointer'
+              cursor: diskBlocked ? 'not-allowed' : 'pointer',
+              opacity: diskBlocked ? 0.5 : 1
             }}
           >
-            <Zap size={14} />
-            <span>
-              {isInstallingBinary
-                ? 'Installing Golti Engine...'
-                : !isEngineInstalled
-                ? 'Install with Golti Engine (1-Click)'
-                : 'Download for Golti Engine'}
-            </span>
+            {isResolving ? (
+              <>
+                <Search size={14} className="spin" />
+                <span>Finding GGUF on Hugging Face…</span>
+              </>
+            ) : (
+              <>
+                <Zap size={14} />
+                <span>
+                  {diskBlocked
+                    ? 'Not enough disk space'
+                    : isInstallingBinary
+                      ? 'Installing Golti Engine...'
+                      : !isEngineInstalled
+                        ? 'Install & Download (1-Click)'
+                        : 'Download'}
+                </span>
+              </>
+            )}
           </button>
         ) : null}
-
-        {/* Ollama Section */}
-        {isInstalled ? (
-          <div className="installed-action-container" style={{ width: '100%' }}>
-            <span className="installed-label">
-              <CheckCircle2 size={14} className="installed-icon" /> Ollama Installed
-            </span>
-            <button onClick={() => handleOpenInChat(false)} className="action-btn open-chat-btn">
-              <MessageSquare size={13} /> Chat (Ollama)
-            </button>
-          </div>
-        ) : showOllamaProgress ? (
-          <div className="pull-progress-container" style={{ width: '100%' }}>
-            <div className="pull-status-row">
-              <span className="status-text">
-                {isCurrentPulling ? (
-                  <RefreshCw size={12} className="spin" />
-                ) : isPullErrored ? (
-                  <AlertTriangle size={12} />
-                ) : (
-                  <Pause size={12} />
-                )}{' '}
-                {isPullCancelled
-                  ? 'Cancelled'
-                  : isPullErrored
-                    ? 'Download failed'
-                    : pullProgress?.status || 'Downloading...'}
-              </span>
-              <span className="percent-text">{pullProgress?.percent || 0}%</span>
-            </div>
-            <div className="progress-bar-bg">
-              <div
-                className="progress-bar-fill"
-                style={{
-                  width: `${pullProgress?.percent || 0}%`,
-                  backgroundColor: isPullErrored ? '#e06c75' : undefined
-                }}
-              ></div>
-            </div>
-            <div className="pull-action-row">
-              {isCurrentPulling ? (
-                <button
-                  type="button"
-                  className="pull-action-btn pull-action-danger"
-                  onClick={handleOllamaCancel}
-                  disabled={ollamaActionBusy}
-                  title="Cancel pull"
-                >
-                  <X size={12} /> Cancel
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="pull-action-btn"
-                    onClick={handleOllamaResume}
-                    disabled={!isOllamaOnline || ollamaActionBusy}
-                    title="Resume pull"
-                  >
-                    <Play size={12} /> Resume
-                  </button>
-                  <button
-                    type="button"
-                    className="pull-action-btn pull-action-danger"
-                    onClick={handleOllamaClear}
-                    disabled={ollamaActionBusy}
-                    title="Clear cancelled pull"
-                  >
-                    <Trash2 size={12} /> Delete
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={handleOllamaInstall}
-            disabled={!isOllamaOnline || isCurrentPulling}
-            className={`action-btn install-btn ${!isOllamaOnline ? 'disabled' : ''}`}
-            style={{ width: '100%' }}
-            title={!isOllamaOnline ? 'Ollama is offline. Start Ollama to install.' : 'Pull model to Ollama'}
-          >
-            <Download size={14} />
-            <span>{isOllamaOnline ? 'Install with Ollama' : 'Ollama Offline'}</span>
-          </button>
-        )}
 
         {showDelete && (
           <button
             type="button"
             className="action-btn delete-model-btn"
             onClick={openDeleteDialog}
-            disabled={isDeleting || deletingThisOllama}
-            title="Delete downloaded copy"
+            disabled={isDeleting}
+            title="Delete downloaded model"
           >
             <Trash2 size={14} />
-            <span>{isDeleting || deletingThisOllama ? 'Deleting…' : 'Delete downloaded'}</span>
+            <span>{isDeleting ? 'Deleting…' : 'Delete'}</span>
           </button>
         )}
       </div>
 
-      {(pullError || engineDownloadError) && (
+      {engineDownloadError && (
         <div className="card-error-banner" role="alert">
-          <AlertTriangle size={12} /> {pullError || engineDownloadError}
+          <AlertTriangle size={12} /> {engineDownloadError}
+        </div>
+      )}
+
+      {!engineDownloadError && resolveError && (
+        <div className="card-error-banner" role="alert">
+          <AlertTriangle size={12} /> {resolveError}
+          <button
+            type="button"
+            className="card-error-dismiss"
+            onClick={() => clearResolveError(model.ollamaTag)}
+            aria-label="Dismiss error"
+          >
+            <X size={11} />
+          </button>
         </div>
       )}
 

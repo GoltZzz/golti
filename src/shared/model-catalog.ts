@@ -1,8 +1,6 @@
 import { CookbookModel } from './types'
 import { mergeCatalog } from './ollama-catalog'
-import { OLLAMA_LIBRARY_CATALOG, OLLAMA_LIBRARY_SYNCED_AT } from './model-catalog.generated'
-
-export { OLLAMA_LIBRARY_SYNCED_AT }
+import { OLLAMA_LIBRARY_CATALOG } from './model-catalog.generated'
 
 export const CURATED_MODEL_CATALOG: CookbookModel[] = [
   // Llama 3.2 family
@@ -115,7 +113,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     description: 'State-of-the-art 70B model from Meta. Performs on par with much larger closed-source models.',
     highlights: ['Superb reasoning', 'Excellent for complex coding tasks', 'Requires high-end GPU/Unified Memory']
   },
-
   // DeepSeek R1 Reasoning Family
   {
     id: 'deepseek-r1:1.5b-q4',
@@ -225,54 +222,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     description: 'DeepSeek R1 distilled into Llama 70B. Superb reasoning capacity matching top closed models.',
     highlights: ['Exceptional performance', 'Full complex analysis', 'Requires high-end Mac Studio or multi-GPU PC']
   },
-
-  // Gemma family
-  {
-    id: 'gemma2:2b-q4',
-    name: 'Gemma 2 2B (Q4_K_M)',
-    family: 'gemma',
-    parameterBillions: 2.6,
-    sizeTier: 'tiny',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'creative'],
-    ramRequiredGB: 2.2,
-    ramRecommendedGB: 3.0,
-    diskSizeGB: 1.6,
-    ollamaTag: 'gemma2:2b',
-    description: 'Google\'s compact Gemma 2 model. Highly optimized for its small size.',
-    highlights: ['Very fast', 'Polished conversational tone', 'Great for mobile and lightweight computers']
-  },
-  {
-    id: 'gemma2:9b-q4',
-    name: 'Gemma 2 9B (Q4_K_M)',
-    family: 'gemma',
-    parameterBillions: 9.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning'],
-    ramRequiredGB: 6.2,
-    ramRecommendedGB: 9.0,
-    diskSizeGB: 5.5,
-    ollamaTag: 'gemma2',
-    description: 'Google\'s 9B parameter model. Outperforms many larger models on reasoning benchmarks.',
-    highlights: ['Excellent general reasoning', 'Clean coding assistant', 'Requires 12GB+ RAM for peak performance']
-  },
-  {
-    id: 'gemma2:27b-q4',
-    name: 'Gemma 2 27B (Q4_K_M)',
-    family: 'gemma',
-    parameterBillions: 27.0,
-    sizeTier: 'large',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning', 'creative'],
-    ramRequiredGB: 18.0,
-    ramRecommendedGB: 24.0,
-    diskSizeGB: 16.0,
-    ollamaTag: 'gemma2:27b',
-    description: 'Google\'s powerful 27B model. Incredible text generation and structural understanding.',
-    highlights: ['Frontier-level language skills', 'Excellent markdown styling', 'Needs 24GB-32GB RAM']
-  },
-
   // Qwen Family
   {
     id: 'qwen2.5:0.5b-q4',
@@ -281,43 +230,13 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     parameterBillions: 0.5,
     sizeTier: 'tiny',
     quantization: 'Q4_K_M',
-    useCases: ['chat', 'embedding'],
+    useCases: ['chat'],
     ramRequiredGB: 0.8,
     ramRecommendedGB: 1.2,
     diskSizeGB: 0.4,
     ollamaTag: 'qwen2.5:0.5b',
     description: 'Super-tiny model by Alibaba, suitable for very low resource microcontrollers and servers.',
     highlights: ['Lightning fast', 'Extremely low memory', 'Excellent multilingual base']
-  },
-  {
-    id: 'qwen2.5:7b-q4',
-    name: 'Qwen 2.5 7B (Q4_K_M)',
-    family: 'qwen',
-    parameterBillions: 7.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'creative'],
-    ramRequiredGB: 5.0,
-    ramRecommendedGB: 8.0,
-    diskSizeGB: 4.7,
-    ollamaTag: 'qwen2.5',
-    description: 'Alibaba\'s standard 7B model. Famous for its excellent coding and multilingual skills.',
-    highlights: ['Great multilingual support', 'Strong tool-calling/JSON', 'Runs beautifully on 8GB/16GB systems']
-  },
-  {
-    id: 'qwen2.5-coder:7b-q4',
-    name: 'Qwen 2.5 Coder 7B (Q4_K_M)',
-    family: 'qwen',
-    parameterBillions: 7.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['code'],
-    ramRequiredGB: 5.0,
-    ramRecommendedGB: 8.0,
-    diskSizeGB: 4.7,
-    ollamaTag: 'qwen2.5-coder',
-    description: 'Specialized code-generation model from Alibaba. Outperforms GPT-4o-mini on coding benchmarks.',
-    highlights: ['Superior code completion', 'Deep syntax understanding', 'Active developer community']
   },
   {
     id: 'qwen2.5-coder:14b-q4',
@@ -349,121 +268,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     description: 'Large-scale Qwen model. Excellent reasoning, instruction following, and multilingual coding.',
     highlights: ['Superb multi-step logic', 'Accurate translations', 'Needs 24GB-32GB system memory']
   },
-
-  // Mistral & Mixtral MoE
-  {
-    id: 'mistral:7b-q4',
-    name: 'Mistral 7B (Q4_K_M)',
-    family: 'mistral',
-    parameterBillions: 7.2,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'creative'],
-    ramRequiredGB: 5.0,
-    ramRecommendedGB: 8.0,
-    diskSizeGB: 4.1,
-    ollamaTag: 'mistral',
-    description: 'The classic 7B model by Mistral AI. Highly customizable and runs well everywhere.',
-    highlights: ['Fast inference', 'Good general knowledge', 'Solid baseline 7B model']
-  },
-  {
-    id: 'mixtral:8x7b-q4',
-    name: 'Mixtral 8x7B MoE (Q4_K_M)',
-    family: 'mistral',
-    parameterBillions: 46.7,
-    sizeTier: 'large',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning'],
-    ramRequiredGB: 28.0,
-    ramRecommendedGB: 32.0,
-    diskSizeGB: 26.0,
-    ollamaTag: 'mixtral',
-    description: 'High-quality Mixture of Experts model. Employs 8 sub-networks, routing tokens dynamically.',
-    highlights: ['Fast execution for its capacity', '32k context', 'Needs 32GB+ RAM/VRAM']
-  },
-
-  // Phi family
-  {
-    id: 'phi3:3.8b-q4',
-    name: 'Phi-3 3.8B (Q4_K_M)',
-    family: 'phi',
-    parameterBillions: 3.8,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'reasoning'],
-    ramRequiredGB: 3.0,
-    ramRecommendedGB: 4.5,
-    diskSizeGB: 2.2,
-    ollamaTag: 'phi3',
-    description: 'Microsoft\'s compact Phi-3 model. Trained on high-quality web data and textbooks.',
-    highlights: ['Excellent logic for small size', 'Microsoft research-backed', 'Very light hardware requirements']
-  },
-  {
-    id: 'phi4:14b-q4',
-    name: 'Phi-4 14B (Q4_K_M)',
-    family: 'phi',
-    parameterBillions: 14.0,
-    sizeTier: 'medium',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning'],
-    ramRequiredGB: 9.5,
-    ramRecommendedGB: 16.0,
-    diskSizeGB: 9.1,
-    ollamaTag: 'phi4',
-    description: 'Microsoft\'s state-of-the-art 14B parameter model. Highly competitive reasoning capabilities.',
-    highlights: ['Frontier-level logical reasoning', 'Great scientific/math ability', 'Requires 16GB+ memory']
-  },
-
-  // Vision capabilities
-  {
-    id: 'llama3.2-vision:11b-q4',
-    name: 'Llama 3.2 Vision 11B (Q4_K_M)',
-    family: 'llama',
-    parameterBillions: 11.0,
-    sizeTier: 'medium',
-    quantization: 'Q4_K_M',
-    useCases: ['vision', 'chat'],
-    ramRequiredGB: 8.5,
-    ramRecommendedGB: 12.0,
-    diskSizeGB: 7.9,
-    ollamaTag: 'llama3.2-vision',
-    description: 'Meta\'s multimodal model. Can understand and describe image contents along with text.',
-    highlights: ['Handles chart/graph reading', 'Image descriptions', 'Requires 16GB RAM for smooth visual processing']
-  },
-
-  // Embedding model
-  {
-    id: 'nomic-embed-text:latest',
-    name: 'Nomic Embed Text (FP16)',
-    family: 'nomic',
-    parameterBillions: 0.137,
-    sizeTier: 'tiny',
-    quantization: 'FP16',
-    useCases: ['embedding'],
-    ramRequiredGB: 0.5,
-    ramRecommendedGB: 1.0,
-    diskSizeGB: 0.274,
-    ollamaTag: 'nomic-embed-text',
-    description: 'High-performance text embedding model with large token context. Crucial for RAG pipelines.',
-    highlights: ['8192 context length', 'Extremely lightweight', 'Used for local document search and vector indexing']
-  },
-
-  // GLM Family (Zhipu AI)
-  {
-    id: 'glm4:9b-q4',
-    name: 'GLM-4 9B (Q4_K_M)',
-    family: 'glm',
-    parameterBillions: 9.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning'],
-    ramRequiredGB: 6.0,
-    ramRecommendedGB: 8.0,
-    diskSizeGB: 5.5,
-    ollamaTag: 'glm4',
-    description: 'Zhipu AI\'s 9B open model. Excellent bilingual reasoning, coding, and context handling.',
-    highlights: ['Strong English/Chinese bilingual', '128k context', 'Great general assistant']
-  },
   {
     id: 'glm-4.7-flash:q4',
     name: 'GLM-4.7 Flash (Q4_K_M)',
@@ -479,22 +283,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     description: 'Agentic reasoning version of GLM-4. Built for step-by-step thinking and tool-calling execution.',
     highlights: ['Native chain-of-thought thinking', 'Optimized tool calling', 'Agentic workflow specialist']
   },
-  {
-    id: 'glm-4.7-flash:q8',
-    name: 'GLM-4.7 Flash (Q8_0)',
-    family: 'glm',
-    parameterBillions: 9.0,
-    sizeTier: 'small',
-    quantization: 'Q8_0',
-    useCases: ['agentic', 'reasoning', 'code'],
-    ramRequiredGB: 9.5,
-    ramRecommendedGB: 12.0,
-    diskSizeGB: 9.2,
-    ollamaTag: 'glm-4.7-flash:q8_0',
-    description: 'High-precision 8-bit quantization of GLM-4.7 Flash for zero-loss agentic reasoning.',
-    highlights: ['Maximum precision agentic output', 'Sharp tool calling logic', 'Requires 12GB+ RAM']
-  },
-
   // Gemma 3 & 4 Family (Google)
   {
     id: 'gemma3:1b-q4',
@@ -542,36 +330,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     highlights: ['Multimodal vision & text', '128k context window', 'Frontier-grade reasoning']
   },
   {
-    id: 'gemma3:12b-q8',
-    name: 'Gemma 3 12B (Q8_0)',
-    family: 'gemma',
-    parameterBillions: 12.0,
-    sizeTier: 'medium',
-    quantization: 'Q8_0',
-    useCases: ['chat', 'code', 'reasoning', 'vision'],
-    ramRequiredGB: 13.0,
-    ramRecommendedGB: 16.0,
-    diskSizeGB: 12.8,
-    ollamaTag: 'gemma3:12b-q8_0',
-    description: 'Uncompromised 8-bit version of Gemma 3 12B for maximum visual and logical fidelity.',
-    highlights: ['Peak vision accuracy', 'Lossless quantization', 'Requires 16GB RAM']
-  },
-  {
-    id: 'gemma4:e4b-q4',
-    name: 'Gemma 4 E4B (Q4_K_M)',
-    family: 'gemma',
-    parameterBillions: 4.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'vision', 'agentic'],
-    ramRequiredGB: 3.5,
-    ramRecommendedGB: 5.0,
-    diskSizeGB: 2.8,
-    ollamaTag: 'gemma4:e4b',
-    description: 'Google\'s 4th generation Gemma model under Apache 2.0 license. MoE + Dense architecture.',
-    highlights: ['Apache 2.0 open license', '256k context window', 'Multi-token prediction speedup']
-  },
-  {
     id: 'gemma4:12b-q4',
     name: 'Gemma 4 12B (Q4_K_M)',
     family: 'gemma',
@@ -601,7 +359,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     description: 'Mixture of Experts Gemma 4 model with 4B active parameters per token.',
     highlights: ['Fast MoE inference', 'Frontier-level code & logic', 'Needs 24GB unified memory']
   },
-
   // Qwen 3 Family (Alibaba)
   {
     id: 'qwen3:1.7b-q4',
@@ -634,21 +391,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     highlights: ['Chain-of-thought thinking', '256k context', 'Excellent 8GB RAM option']
   },
   {
-    id: 'qwen3:8b-q8',
-    name: 'Qwen 3 8B (Q8_0)',
-    family: 'qwen',
-    parameterBillions: 8.0,
-    sizeTier: 'small',
-    quantization: 'Q8_0',
-    useCases: ['chat', 'code', 'reasoning', 'agentic'],
-    ramRequiredGB: 8.8,
-    ramRecommendedGB: 12.0,
-    diskSizeGB: 8.5,
-    ollamaTag: 'qwen3:8b-q8_0',
-    description: 'High-precision 8-bit Qwen 3 8B model for zero-loss code and logic synthesis.',
-    highlights: ['Lossless output quality', 'Strong JSON & tool calling', 'Needs 12GB RAM']
-  },
-  {
     id: 'qwen3:30b-q4',
     name: 'Qwen 3 30B MoE (Q4_K_M)',
     family: 'qwen',
@@ -662,21 +404,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     ollamaTag: 'qwen3:30b',
     description: 'Qwen 3 Mixture of Experts model (3B active parameters). Near-instant response speeds.',
     highlights: ['MoE speedup (3B active)', '256k context', 'Top-tier coding benchmark performance']
-  },
-  {
-    id: 'qwen3:235b-q4',
-    name: 'Qwen 3 235B MoE (Q4_K_M)',
-    family: 'qwen',
-    parameterBillions: 235.0,
-    sizeTier: 'xxl',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning', 'agentic'],
-    ramRequiredGB: 140.0,
-    ramRecommendedGB: 160.0,
-    diskSizeGB: 135.0,
-    ollamaTag: 'qwen3:235b',
-    description: 'Massive flagship Qwen 3 MoE model. Requires workstation multi-GPU or Mac Studio setup.',
-    highlights: ['Frontier intelligence', '22B active parameters', 'Requires 160GB+ RAM/VRAM']
   },
   {
     id: 'qwen3-coder:30b-q4',
@@ -693,86 +420,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     description: 'Specialized agentic coding model from Alibaba. Built for SWE-bench workflows.',
     highlights: ['SWE-Bench open-weight leader', '256k context', 'Deep architectural coding design']
   },
-
-  // Devstral Family (Mistral AI)
-  {
-    id: 'devstral-small-2:24b-q4',
-    name: 'Devstral Small 2 24B (Q4_K_M)',
-    family: 'devstral',
-    parameterBillions: 24.0,
-    sizeTier: 'large',
-    quantization: 'Q4_K_M',
-    useCases: ['code', 'agentic', 'reasoning'],
-    ramRequiredGB: 15.5,
-    ramRecommendedGB: 24.0,
-    diskSizeGB: 14.2,
-    ollamaTag: 'devstral-small-2',
-    description: 'Mistral AI\'s flagship agentic coding model for local environments under Apache 2.0.',
-    highlights: ['#1 SWE-Bench local coding model', 'Edits multiple files', 'Apache 2.0 licensed']
-  },
-  {
-    id: 'devstral-small-2:24b-q8',
-    name: 'Devstral Small 2 24B (Q8_0)',
-    family: 'devstral',
-    parameterBillions: 24.0,
-    sizeTier: 'large',
-    quantization: 'Q8_0',
-    useCases: ['code', 'agentic', 'reasoning'],
-    ramRequiredGB: 25.0,
-    ramRecommendedGB: 32.0,
-    diskSizeGB: 24.5,
-    ollamaTag: 'devstral-small-2:q8_0',
-    description: 'High-precision 8-bit Devstral Small 2 for flawless code refactoring and bug fixing.',
-    highlights: ['Zero precision loss', 'Ideal for complex code bases', 'Requires 32GB RAM']
-  },
-  {
-    id: 'devstral-2:123b-q4',
-    name: 'Devstral 2 123B (Q4_K_M)',
-    family: 'devstral',
-    parameterBillions: 123.0,
-    sizeTier: 'xxl',
-    quantization: 'Q4_K_M',
-    useCases: ['code', 'agentic', 'reasoning'],
-    ramRequiredGB: 75.0,
-    ramRecommendedGB: 96.0,
-    diskSizeGB: 72.0,
-    ollamaTag: 'devstral-2',
-    description: 'Mistral\'s massive 123B agentic coding model. Solves enterprise software engineering tasks.',
-    highlights: ['Enterprise codebase refactoring', 'Full repository understanding', 'Requires 96GB+ RAM']
-  },
-
-  // Llama 4 Family (Meta)
-  {
-    id: 'llama4:scout-q4',
-    name: 'Llama 4 Scout 109B (Q4_K_M)',
-    family: 'llama',
-    parameterBillions: 109.0,
-    sizeTier: 'xxl',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning', 'vision'],
-    ramRequiredGB: 68.0,
-    ramRecommendedGB: 80.0,
-    diskSizeGB: 64.0,
-    ollamaTag: 'llama4:scout',
-    description: 'Meta\'s Llama 4 MoE model (17B active parameters). Native 10M token context window.',
-    highlights: ['10,000,000 token context', '17B active parameters MoE', 'Multimodal vision support']
-  },
-  {
-    id: 'llama4:maverick-q4',
-    name: 'Llama 4 Maverick 400B (Q4_K_M)',
-    family: 'llama',
-    parameterBillions: 400.0,
-    sizeTier: 'xxl',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning', 'agentic'],
-    ramRequiredGB: 240.0,
-    ramRecommendedGB: 256.0,
-    diskSizeGB: 230.0,
-    ollamaTag: 'llama4:maverick',
-    description: 'Meta\'s high-capacity 400B MoE model (17B active per token). Enterprise grade.',
-    highlights: ['400B total MoE parameters', 'Frontier reasoning accuracy', 'Requires 256GB unified RAM']
-  },
-
   // Falcon 3 Family (TII)
   {
     id: 'falcon3:3b-q4',
@@ -803,104 +450,6 @@ export const CURATED_MODEL_CATALOG: CookbookModel[] = [
     ollamaTag: 'falcon3:10b',
     description: 'Mid-size Falcon 3 model. Strong balance of efficiency and reasoning.',
     highlights: ['Solid logical reasoning', 'Efficient memory usage', 'Runs well on 16GB RAM']
-  },
-
-  // SmolLM 3 Family (Hugging Face)
-  {
-    id: 'smollm3:1.7b-q4',
-    name: 'SmolLM 3 1.7B (Q4_K_M)',
-    family: 'smollm',
-    parameterBillions: 1.7,
-    sizeTier: 'tiny',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'creative'],
-    ramRequiredGB: 1.4,
-    ramRecommendedGB: 2.0,
-    diskSizeGB: 1.1,
-    ollamaTag: 'smollm3:1.7b',
-    description: 'Hugging Face\'s ultra-compact model. Specially trained on curated synthetic datasets.',
-    highlights: ['High intelligence per parameter', 'Extremely lightweight', 'Ideal for low-tier hardware']
-  },
-  {
-    id: 'smollm3:3b-q4',
-    name: 'SmolLM 3 3B (Q4_K_M)',
-    family: 'smollm',
-    parameterBillions: 3.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code'],
-    ramRequiredGB: 2.5,
-    ramRecommendedGB: 4.0,
-    diskSizeGB: 2.0,
-    ollamaTag: 'smollm3:3b',
-    description: 'Hugging Face SmolLM 3B model. Outstanding performance for its memory size.',
-    highlights: ['Fast responsive output', 'Clean writing style', 'Runs on sub-4GB RAM systems']
-  },
-
-  // InternLM 3 Family (Shanghai AI Lab)
-  {
-    id: 'internlm3:8b-q4',
-    name: 'InternLM 3 8B (Q4_K_M)',
-    family: 'internlm',
-    parameterBillions: 8.0,
-    sizeTier: 'small',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'code', 'reasoning'],
-    ramRequiredGB: 5.5,
-    ramRecommendedGB: 8.0,
-    diskSizeGB: 4.8,
-    ollamaTag: 'internlm3:8b',
-    description: 'Shanghai AI Lab\'s InternLM 3 model. Features 1M context window and deep math skills.',
-    highlights: ['1,000,000 context window', 'Strong mathematical reasoning', 'High instruction accuracy']
-  },
-
-  // Command-R Family (Cohere)
-  {
-    id: 'command-r:35b-q4',
-    name: 'Command-R 35B (Q4_K_M)',
-    family: 'command-r',
-    parameterBillions: 35.0,
-    sizeTier: 'large',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'agentic', 'reasoning'],
-    ramRequiredGB: 22.0,
-    ramRecommendedGB: 28.0,
-    diskSizeGB: 21.0,
-    ollamaTag: 'command-r',
-    description: 'Cohere\'s enterprise-grade RAG and tool-use model. Built specifically for search & grounded answers.',
-    highlights: ['Enterprise RAG specialist', 'Grounded citation output', 'Complex API tool calling']
-  },
-  {
-    id: 'command-r-plus:104b-q4',
-    name: 'Command-R+ 104B (Q4_K_M)',
-    family: 'command-r',
-    parameterBillions: 104.0,
-    sizeTier: 'xxl',
-    quantization: 'Q4_K_M',
-    useCases: ['chat', 'agentic', 'reasoning'],
-    ramRequiredGB: 65.0,
-    ramRecommendedGB: 80.0,
-    diskSizeGB: 61.0,
-    ollamaTag: 'command-r-plus',
-    description: 'Cohere\'s flagship 104B model for multi-step enterprise tasks and automated workflows.',
-    highlights: ['Multi-step automated workflows', '128k context', 'Requires 80GB+ RAM/VRAM']
-  },
-
-  // Kimi K2 Family (Moonshot AI)
-  {
-    id: 'kimi-k2:1t-q2',
-    name: 'Kimi K2 1T MoE (Dynamic 2-Bit GGUF)',
-    family: 'kimi',
-    parameterBillions: 1000.0,
-    sizeTier: 'datacenter',
-    quantization: 'Q4_0',
-    useCases: ['chat', 'code', 'reasoning', 'agentic'],
-    ramRequiredGB: 350.0,
-    ramRecommendedGB: 384.0,
-    diskSizeGB: 340.0,
-    ollamaTag: 'kimi-k2:1t',
-    description: 'Moonshot AI\'s 1-trillion parameter MoE open-weights model (32B active). Datacenter requirement.',
-    highlights: ['1 Trillion total parameters', '32B active per token', 'Requires 350GB+ unified RAM']
   }
 ]
 
