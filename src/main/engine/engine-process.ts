@@ -148,7 +148,7 @@ export function pickEngineDevice(devices: EngineDevice[], vendor: GpuVendor): En
 /**
  * Decides how many layers to offload to the GPU for `modelPath`, from the
  * detected backend and VRAM. Returns -1 (all), 0 (CPU-only), or a positive
- * partial count. A conservative estimate — the fallback in `startEngine`
+ * partial count. A conservative estimate - the fallback in `startEngine`
  * corrects it downward if the GPU still runs out of memory.
  */
 export async function computeGpuLayers(modelPath?: string, vramGBOverride?: number): Promise<number> {
@@ -173,12 +173,16 @@ export async function computeGpuLayers(modelPath?: string, vramGBOverride?: numb
     modelBytes,
     vramBytes: vramGB * 1024 * 1024 * 1024,
     layerCount: info?.blockCount,
-    kvBytesPerToken: kvBytesPerToken({
-      blockCount: info?.blockCount,
-      embeddingLength: info?.embeddingLength,
-      headCount: info?.headCount,
-      headCountKv: info?.headCountKv
-    })
+    // Any offload runs with the quantized KV cache from buildTuningArgs.
+    kvBytesPerToken: kvBytesPerToken(
+      {
+        blockCount: info?.blockCount,
+        embeddingLength: info?.embeddingLength,
+        headCount: info?.headCount,
+        headCountKv: info?.headCountKv
+      },
+      'q8_0'
+    )
   })
 }
 
@@ -428,7 +432,7 @@ export async function startEngine(
     const isHealthy = await waitForHealthy(actualPort, attempt, loadBudgetMs)
 
     if (!isHealthy && attempt.hasExited() && tuningEnabled && isUnsupportedArgFailure(attempt.getStderr())) {
-      // This engine build rejects one of the performance flags — retry plain.
+      // This engine build rejects one of the performance flags - retry plain.
       console.warn('[GoltiEngine] Engine rejected tuning flags, retrying without them')
       try { currentProcess?.kill('SIGKILL') } catch {}
       currentProcess = null
@@ -439,7 +443,7 @@ export async function startEngine(
     const gpuFailed = !isHealthy && attempt.hasExited() && (await attempt.earlyGpuFailure)
 
     if (gpuFailed && layers !== 0) {
-      // GPU couldn't fit the model — shed layers and retry the same binary.
+      // GPU couldn't fit the model - shed layers and retry the same binary.
       const nextLayers = reduceOffloadLayers(layers, layerCount)
       console.warn(`[GoltiEngine] GPU offload failed at ${layers} layers, retrying with ${nextLayers}`)
       try { currentProcess?.kill('SIGKILL') } catch {}
@@ -488,7 +492,7 @@ export async function startEngine(
       throw new EngineStartError(failure)
     }
 
-    // Committed to this process — attach the long-lived listeners.
+    // Committed to this process - attach the long-lived listeners.
     currentProcess.on('exit', (code, signal) => {
       console.log(`[llama-server] process exited with code ${code}, signal ${signal}`)
       const isUnexpected = code !== 0 && code !== null && signal === null

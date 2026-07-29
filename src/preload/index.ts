@@ -22,7 +22,8 @@ import type {
   SearchRuntimeState,
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
-  CookbookModel
+  CookbookModel,
+  VramReading
 } from '../shared/types'
 import type { HFModelSummary } from '../shared/hf-catalog'
 
@@ -168,6 +169,11 @@ const api = {
     payload: SendMessagePayload & { messageId: string }
   ): Promise<{ assistantMsgId: string; generationId: string }> =>
     ipcRenderer.invoke('ai:chat:continue', payload),
+  generateConversationTitle: (request: {
+    providerId: string
+    model: string
+    prompt: string
+  }): Promise<string | null> => ipcRenderer.invoke('ai:generate-title', request),
   onStreamChunk: (callback: (chunk: StreamChunkPayload) => void) => {
     const listener = (_: unknown, chunk: StreamChunkPayload) => callback(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)
@@ -177,6 +183,7 @@ const api = {
   // System
   getSystemInfo: () => ipcRenderer.invoke('system:info'),
   getSystemInfoFull: () => ipcRenderer.invoke('system:info:full'),
+  getVramReading: (): Promise<VramReading | null> => ipcRenderer.invoke('system:vram'),
   getDetailedInstalledModels: (): Promise<InstalledLocalModelInfo[]> =>
     ipcRenderer.invoke('cookbook:detailed-installed-models'),
   windowControl: (action: 'minimize' | 'maximize' | 'close') => ipcRenderer.send('window:control', action),

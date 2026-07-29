@@ -124,3 +124,48 @@ describe('computeContextBudget', () => {
     expect(result.contextSize).toBeLessThan(MAX_CONTEXT_SIZE)
   })
 })
+
+describe('computeContextBudget partial offload', () => {
+  /** DeepSeek-R1-Distill-Qwen-14B: 48 blocks, 192 KiB of KV per token. */
+  const base = {
+    trainedContextSize: 131072,
+    perTokenBytes: 196608,
+    modelBytes: 8.37 * GB,
+    availableBytes: 16 * GB,
+    freeVramBytes: 5 * GB,
+    layerCount: 48
+  }
+
+  it('gives a partial offload more context than a full one', () => {
+    // Only a third of the weights sits in VRAM, so more of the card is left
+    // for KV. Charging the whole model against VRAM starves the context.
+    const partial = computeContextBudget({ ...base, gpuLayers: 16 })
+    const full = computeContextBudget({ ...base, gpuLayers: -1 })
+    expect(partial.contextSize).toBeGreaterThan(full.contextSize)
+  })
+
+  it('keeps weights plus KV inside what the card actually has', () => {
+    const partial = computeContextBudget({ ...base, gpuLayers: 16 })
+    const gpuFraction = 16 / 48
+    const vramUsed =
+      base.modelBytes * gpuFraction + base.perTokenBytes * gpuFraction * partial.contextSize
+    expect(vramUsed).toBeLessThanOrEqual(base.freeVramBytes - 0.75 * GB)
+  })
+
+  it('matches the explicit fullyOffloaded flag when all layers are on the GPU', () => {
+    const viaFlag = computeContextBudget({ ...base, fullyOffloaded: true })
+    const viaLayers = computeContextBudget({ ...base, gpuLayers: -1 })
+    expect(viaLayers.contextSize).toBe(viaFlag.contextSize)
+  })
+
+  it('charges VRAM for the whole model when the split is unknown', () => {
+    const unknown = computeContextBudget({ ...base })
+    const full = computeContextBudget({ ...base, gpuLayers: -1 })
+    expect(unknown.contextSize).toBe(full.contextSize)
+  })
+
+  it('never returns less than the minimum context', () => {
+    const starved = computeContextBudget({ ...base, gpuLayers: 47, freeVramBytes: 3.83 * GB })
+    expect(starved.contextSize).toBeGreaterThanOrEqual(MIN_CONTEXT_SIZE)
+  })
+})

@@ -525,7 +525,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
               )}
               {tokenBudget?.overflow ? (
                 <span style={{ fontSize: 11, color: 'var(--accent-yellow)' }}>
-                  This message alone exceeds the context window — shorten it, remove attached
+                  This message alone exceeds the context window - shorten it, remove attached
                   context, or raise the context size in Settings.
                 </span>
               ) : tokenBudget && tokenBudget.trimmedMessages > 0 ? (

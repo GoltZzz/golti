@@ -19,6 +19,8 @@ import {
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
+import { ConfirmDialog } from '../common/ConfirmDialog'
+import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
 
 export const Sidebar: React.FC = () => {
   const { isCollapsed, activeTab, toggleCollapsed, setActiveTab } = useSidebarStore()
@@ -41,6 +43,9 @@ export const Sidebar: React.FC = () => {
 
   const [localQuery, setLocalQuery] = useState('')
   const [topTab, setTopTab] = useState<'home' | 'code'>('home')
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const displayedConversations = useMemo(() => {
     if (searchHits.length > 0 && localQuery.trim()) {
@@ -51,7 +56,7 @@ export const Sidebar: React.FC = () => {
       return []
     }
     return conversations.filter(
-      (c) => c.title !== 'New Conversation' || c.id === currentConversationId
+      (c) => c.title !== DEFAULT_CONVERSATION_TITLE || c.id === currentConversationId
     )
   }, [conversations, searchHits, localQuery, currentConversationId])
 
@@ -73,7 +78,22 @@ export const Sidebar: React.FC = () => {
     { id: 'cookbook', label: 'Hardware Cookbook', icon: <BookOpen size={18} /> }
   ]
 
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    setIsDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteConversation(pendingDelete.id)
+      setPendingDelete(null)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete conversation.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   return (
+    <>
     <aside
       style={{
         width: isCollapsed ? 'var(--width-sidebar-collapsed)' : 'var(--width-sidebar-expanded)',
@@ -384,7 +404,10 @@ export const Sidebar: React.FC = () => {
                       <button
                         title="Delete"
                         aria-label="Delete conversation"
-                        onClick={() => deleteConversation(conv.id)}
+                        onClick={() => {
+                          setDeleteError(null)
+                          setPendingDelete({ id: conv.id, title: conv.title })
+                        }}
                         style={{ color: 'var(--accent-primary)' }}
                       >
                         <Trash2 size={12} />
@@ -438,5 +461,28 @@ export const Sidebar: React.FC = () => {
         </button>
       </div>
     </aside>
+
+    <ConfirmDialog
+      open={pendingDelete !== null}
+      icon={<Trash2 size={18} className="delete-model-icon" />}
+      title="Delete conversation"
+      message={
+        <>
+          Delete <strong>{pendingDelete?.title || DEFAULT_CONVERSATION_TITLE}</strong>? Its messages,
+          attached context and artifacts go with it. This cannot be undone.
+        </>
+      }
+      confirmLabel="Delete"
+      busyLabel="Deleting…"
+      isBusy={isDeleting}
+      error={deleteError}
+      onConfirm={confirmDelete}
+      onCancel={() => {
+        if (isDeleting) return
+        setPendingDelete(null)
+        setDeleteError(null)
+      }}
+    />
+    </>
   )
 }

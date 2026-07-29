@@ -4,8 +4,8 @@ Local-only Go service used by Golti for plug-and-play Web Search.
 
 ## Endpoints
 
-- `GET /health` — status / active engine
-- `POST /v1/search` — requires `Authorization: Bearer <token>` or `X-Golti-Token`
+- `GET /health` - status / active engine
+- `POST /v1/search` - requires `Authorization: Bearer <token>` or `X-Golti-Token`
 
 Binds to `127.0.0.1` only.
 

@@ -30,7 +30,7 @@ const persistReasoning = (map: Record<string, true>) => {
     const payload: StoredCapabilities = { reasoning: Object.keys(map) }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   } catch {
-    /* storage unavailable — capability detection stays in-memory for this session */
+    /* storage unavailable - capability detection stays in-memory for this session */
   }
 }
 

@@ -2,6 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import { readGgufModelInfo } from './gguf'
 import { getAvailableMemoryBytes } from '../system/memory'
+import { kvCacheTypeFor } from '../../shared/engine-tuning'
 import {
   computeContextBudget,
   kvBytesPerToken,
@@ -44,16 +45,23 @@ export async function computeContextSize(input: ContextSizeInput): Promise<Conte
 
   const budget = computeContextBudget({
     trainedContextSize: trained,
-    perTokenBytes: kvBytesPerToken({
-      blockCount: info?.blockCount,
-      embeddingLength: info?.embeddingLength,
-      headCount: info?.headCount,
-      headCountKv: info?.headCountKv
-    }),
+    // Sizing must assume the same cache format the engine will launch with.
+    perTokenBytes: kvBytesPerToken(
+      {
+        blockCount: info?.blockCount,
+        embeddingLength: info?.embeddingLength,
+        headCount: info?.headCount,
+        headCountKv: info?.headCountKv
+      },
+      kvCacheTypeFor(input.gpuLayers)
+    ),
     modelBytes,
     availableBytes,
     freeVramBytes: usesDiscreteVram ? (input.freeVramGB as number) * GB : undefined,
-    fullyOffloaded: input.gpuLayers === -1
+    fullyOffloaded: input.gpuLayers === -1,
+    // A partial offload only puts its own layers' weights and KV in VRAM.
+    gpuLayers: input.gpuLayers,
+    layerCount: info?.blockCount
   })
 
   return {

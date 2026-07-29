@@ -102,4 +102,28 @@ describe('resolveLocalMaxOutputTokens', () => {
   it('works with no context window information', () => {
     expect(resolveLocalMaxOutputTokens({ modelName: 'qwq:32b' })).toBe(8192)
   })
+
+  it('honours a lower floor for short utility calls', () => {
+    expect(
+      resolveLocalMaxOutputTokens({ modelName: 'llama3.1:8b', requested: 48, floor: 48 })
+    ).toBe(48)
+  })
+
+  it('still applies the lower floor when the context window is tight', () => {
+    expect(
+      resolveLocalMaxOutputTokens({
+        modelName: 'llama3.1:8b',
+        requested: 48,
+        floor: 48,
+        contextWindow: 2048,
+        promptTokens: 2000
+      })
+    ).toBe(48)
+  })
+
+  it('keeps the default floor when none is given', () => {
+    expect(resolveLocalMaxOutputTokens({ modelName: 'llama3.1:8b', requested: 48 })).toBe(
+      LOCAL_OUTPUT_FLOOR
+    )
+  })
 })

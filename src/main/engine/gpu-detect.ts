@@ -34,7 +34,7 @@ export async function detectGpu(force = false): Promise<GpuInfo> {
     return info
   }
 
-  // NVIDIA — the most common discrete GPU on Windows/Linux.
+  // NVIDIA - the most common discrete GPU on Windows/Linux.
   try {
     const { stdout } = await execAsync(
       'nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits'
