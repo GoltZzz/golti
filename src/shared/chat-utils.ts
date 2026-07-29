@@ -165,7 +165,9 @@ export function extractShells(content: string, minLines = 1): ExtractedShell[] {
     if (!isExplicit && lineCount < minLines) continue
 
     // Interactive question prompts are rendered as a card, not stored as shells.
-    if (/^ask[-_]?user$/.test(language)) continue
+    if (/^ask(?:[-_]?user)?$/.test(language)) continue
+    // Same for a mid-turn web-search request; it is consumed by the runtime.
+    if (language === 'search') continue
     if (language === 'json' && parseAskUserBody(body)) continue
 
     const type = language === 'markdown' || language === 'md' ? 'markdown' : 'code'
@@ -242,18 +244,17 @@ function parseAskUserBody(raw: string): AskUserBody | null {
               return o.trim() ? { label: o.trim() } : null
             }
             if (o && typeof o === 'object') {
-              const raw = o as { label?: unknown; option?: unknown; description?: unknown }
-              const label =
-                typeof raw.label === 'string'
-                  ? raw.label.trim()
-                  : typeof raw.option === 'string'
-                    ? raw.option.trim()
-                    : ''
+              const raw = o as Record<string, unknown>
+              const pick = (...keys: string[]): string => {
+                for (const key of keys) {
+                  const val = raw[key]
+                  if (typeof val === 'string' && val.trim()) return val.trim()
+                }
+                return ''
+              }
+              const label = pick('label', 'option', 'text', 'value', 'title', 'name')
               if (!label) return null
-              const description =
-                typeof raw.description === 'string' && raw.description.trim()
-                  ? raw.description.trim()
-                  : undefined
+              const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
               return { label, description }
             }
             return null
@@ -266,7 +267,7 @@ function parseAskUserBody(raw: string): AskUserBody | null {
   return null
 }
 
-const ASK_USER_FENCE = /```(?:ask[-_]?user|json)?\s*(?:\n|$)([\s\S]*?)```/gi
+const ASK_USER_FENCE = /```(?:ask(?:[-_]?user)?|json)?\s*(?:\n|$)([\s\S]*?)```/gi
 
 /**
  * Find the JSON object starting at `start` by tracking brace depth, ignoring
@@ -410,7 +411,7 @@ export function extractSkillBlocks(content: string): {
   return { skills, cleanContent: cleanContent.trim() }
 }
 
-const ASK_USER_OPENER = /```(?:ask[-_]?user|json)?\s*\n?\s*\{|\{\s*(?:"|')?question(?:"|')?\s*:/i
+const ASK_USER_OPENER = /```search|```(?:ask(?:[-_]?user)?|json)?\s*\n?\s*\{|\{\s*(?:"|')?question(?:"|')?\s*:/i
 
 /**
  * While a reply is still streaming, an ask-user block arrives character by
@@ -423,6 +424,70 @@ export function splitStreamingAskUser(content: string): { visible: string; askin
   const match = ASK_USER_OPENER.exec(content)
   if (!match) return { visible: content, asking: false }
   return { visible: content.slice(0, match.index).trimEnd(), asking: true }
+}
+
+export interface SearchRequest {
+  query: string
+  fenceStart: number
+  fenceEnd: number
+}
+
+const SEARCH_FENCE = /```search\s*(?:\n|$)([\s\S]*?)```/gi
+
+/**
+ * The body is normally `{ "query": "..." }`, but small models often emit the
+ * bare query text instead, so a non-JSON body is taken as the query verbatim.
+ */
+function parseSearchBody(raw: string): string {
+  const body = raw.trim().replace(/^(?:json|search)\s*\n/i, '').trim()
+  if (!body) return ''
+  if (body.startsWith('{')) {
+    for (const candidate of [body, body.replace(/[“”]/g, '"').replace(/,(\s*[}\]])/g, '$1')]) {
+      try {
+        const parsed = JSON.parse(candidate)
+        const query = typeof parsed?.query === 'string' ? parsed.query.trim() : ''
+        if (query) return query
+      } catch {
+        continue
+      }
+    }
+    return ''
+  }
+  return body.split('\n')[0].trim().replace(/^["']|["']$/g, '')
+}
+
+export function extractAllSearchRequests(content: string): SearchRequest[] {
+  if (!content || !content.includes('```search')) return []
+  const found: SearchRequest[] = []
+  const re = new RegExp(SEARCH_FENCE.source, 'gi')
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    const query = parseSearchBody(match[1] || '')
+    if (query) {
+      found.push({ query, fenceStart: match.index, fenceEnd: match.index + match[0].length })
+    }
+  }
+  return found
+}
+
+/**
+ * A model asking for fresh web results mid-turn. Returns the last request, since
+ * only the trailing one can still be unanswered.
+ */
+export function extractSearchRequest(content: string): SearchRequest | null {
+  const all = extractAllSearchRequests(content)
+  return all.length ? all[all.length - 1] : null
+}
+
+/** Remove any ```search``` blocks so they aren't rendered as raw markdown. */
+export function stripSearchRequests(content: string): string {
+  const found = extractAllSearchRequests(content)
+  if (!found.length) return content
+  let out = content
+  for (let i = found.length - 1; i >= 0; i--) {
+    out = out.slice(0, found[i].fenceStart) + out.slice(found[i].fenceEnd)
+  }
+  return out.trim()
 }
 
 /** Remove any ```ask-user``` blocks from text so they aren't rendered as raw markdown. */

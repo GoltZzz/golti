@@ -33,6 +33,7 @@ import {
   parseEngineMemoryError,
   extractAskUser,
   stripAskUser,
+  stripSearchRequests,
   splitStreamingAskUser
 } from '../../../shared/chat-utils'
 import type { AskUserPrompt } from '../../../shared/chat-utils'
@@ -134,7 +135,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
 
   const displayCleanContent = useMemo(() => {
     if (!cleanContent) return ''
-    let text = askUser ? stripAskUser(cleanContent) : streamingAsk.visible
+    let text = stripSearchRequests(askUser ? stripAskUser(cleanContent) : streamingAsk.visible)
     if (memoryErrorDetails?.isMemoryError) {
       text = text
         .replace(/\n*\*\[Error:.*?\]\*/gi, '')
