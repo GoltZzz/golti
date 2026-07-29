@@ -14,7 +14,7 @@ const KV_BYTES_PER_ELEMENT = 2
 /**
  * q8_0 KV cache: 32 int8 values share one f16 scale, so 34 bytes per 32
  * elements. `buildTuningArgs` requests this whenever it offloads to a GPU, which
- * nearly halves KV memory — sizing against f16 in that case reserves roughly
+ * nearly halves KV memory - sizing against f16 in that case reserves roughly
  * twice the VRAM the cache actually needs.
  */
 const KV_Q8_BYTES_PER_ELEMENT = 34 / 32

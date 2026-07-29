@@ -56,7 +56,7 @@ export function getUsableMemoryGB(system: SystemInfoFull, needGB = 0): number {
 }
 
 /**
- * Whether the model fits this machine at all. Static by design — downloading or
+ * Whether the model fits this machine at all. Static by design - downloading or
  * loading a model must not change its own rating.
  */
 export function getCompatibility(system: SystemInfoFull | null, model: CookbookModel): ModelCompatibility {
@@ -74,7 +74,7 @@ export function getCompatibility(system: SystemInfoFull | null, model: CookbookM
 }
 
 /**
- * How busy memory is right now — a separate question from whether a model fits.
+ * How busy memory is right now - a separate question from whether a model fits.
  * `loadedModelGB` is added back so a model the user deliberately started does not
  * make the machine look overloaded to itself.
  */
@@ -120,8 +120,8 @@ export function getRuntimeFit(
   const { availableGB } = getMemoryPressure(system, loadedModelGB)
 
   // On a discrete GPU the card fills long before system RAM does, so a live
-  // reading is the binding constraint. It counts every consumer — the engine,
-  // the compositor, another app — which a static VRAM total cannot see.
+  // reading is the binding constraint. It counts every consumer - the engine,
+  // the compositor, another app - which a static VRAM total cannot see.
   const vramFreeGB = getFreeVramGB(vram)
   if (vramFreeGB !== null && !system.gpu?.isAppleSilicon) {
     if (vramFreeGB >= needGB * 1.15 && availableGB >= needGB * 1.15) return 'comfortable'
@@ -137,7 +137,7 @@ export function getRuntimeFit(
 
 /**
  * Free VRAM in GB from a live driver reading, or null when it is unavailable.
- * Null means "unknown", never "nothing free" — callers must not treat it as 0.
+ * Null means "unknown", never "nothing free" - callers must not treat it as 0.
  */
 export function getFreeVramGB(vram?: VramReading | null): number | null {
   if (!vram || vram.totalMiB <= 0) return null

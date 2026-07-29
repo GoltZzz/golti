@@ -16,7 +16,7 @@ export const LLAMA_VERSION = 'b10099'
  * Compute backend for the engine. `metal` is macOS's built-in GPU backend
  * (shipped in the standard build); `vulkan` is the cross-vendor GPU backend we
  * use for NVIDIA/AMD/Intel on Windows and Linux; `cpu` is the portable
- * fallback. CUDA is intentionally not a Phase-1 default — Vulkan covers every
+ * fallback. CUDA is intentionally not a Phase-1 default - Vulkan covers every
  * vendor in a single self-contained binary.
  */
 export type EngineBackend = 'metal' | 'vulkan' | 'cpu'
@@ -69,7 +69,7 @@ export function getEngineSpawnEnv(
   const suffix = process.platform === 'darwin' ? '.dylib' : '.so'
 
   // The binary's own directory first (matches most layouts), then any other
-  // directory under the version dir that holds shared libraries — the Vulkan
+  // directory under the version dir that holds shared libraries - the Vulkan
   // build ships its backend .so files in a sibling `lib/` in some releases.
   const dirs = new Set<string>([path.dirname(binaryPath)])
   try {
@@ -194,7 +194,7 @@ async function extractArchive(archivePath: string, destDir: string, format: Arch
     zip.extractAllTo(destDir, true)
     return
   }
-  // tar.gz — rely on the system `tar`, present on macOS and Linux. It preserves
+  // tar.gz - rely on the system `tar`, present on macOS and Linux. It preserves
   // the executable bit and symlinks that llama.cpp's shared libraries use.
   await execAsync(`tar -xzf "${archivePath}" -C "${destDir}"`)
 }

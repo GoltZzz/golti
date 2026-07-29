@@ -42,7 +42,7 @@
   padding: 12px 16px;
   box-shadow: var(--shadow-sm);
   position: relative;
-  /* Clip only the top accent via its own radius — never clip the header */
+  /* Clip only the top accent via its own radius - never clip the header */
   overflow: visible;
   box-sizing: border-box;
   width: 100%;
@@ -499,7 +499,7 @@
   color: var(--text-muted);
 }
 
-/* Hardware Skeleton — mirrors status strip */
+/* Hardware Skeleton - mirrors status strip */
 .hardware-card-skeleton {
   pointer-events: none;
 }
@@ -2317,7 +2317,7 @@
   margin-top: 1px;
 }
 
-/* Nothing meaningful fits in VRAM — worth the warmer colour. */
+/* Nothing meaningful fits in VRAM - worth the warmer colour. */
 .offload-note-cpu {
   border-color: rgba(229, 192, 123, 0.35);
   color: #e5c07b;

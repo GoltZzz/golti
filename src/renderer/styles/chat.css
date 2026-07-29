@@ -1,4 +1,4 @@
-/* Chat workspace — Odysseus dark shell extension */
+/* Chat workspace - Odysseus dark shell extension */
 
 :root {
   --width-inspector-expanded: 340px;
@@ -1882,7 +1882,7 @@
   overflow: hidden;
 }
 
-/* Thinking Block — Collapsible AI Reasoning */
+/* Thinking Block - Collapsible AI Reasoning */
 .thinking-block {
   margin-bottom: 12px;
   border-radius: var(--radius-md);

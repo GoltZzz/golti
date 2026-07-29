@@ -56,13 +56,13 @@ interface ActiveGeneration {
 
 const activeGenerations = new Map<string, ActiveGeneration>()
 
-/** Appended when composerMode is 'agent' (tools not wired yet — prompt-only). */
+/** Appended when composerMode is 'agent' (tools not wired yet - prompt-only). */
 const COMPOSER_AGENT_SYSTEM_SUFFIX = [
   'You are operating in Agent mode.',
   'Treat the user message as a task to accomplish: clarify the goal if needed, break work into clear steps, and work toward a concrete outcome.',
   'Be proactive and structured. Prefer actionable plans and specific recommendations over vague advice.',
   'Ask before suggesting destructive or irreversible actions.',
-  'Note: filesystem, shell, and other tool execution are not available yet in this build — do not claim you ran tools or modified files. Reason through the task and provide the best guidance, plans, and code you can without tool access.'
+  'Note: filesystem, shell, and other tool execution are not available yet in this build - do not claim you ran tools or modified files. Reason through the task and provide the best guidance, plans, and code you can without tool access.'
 ].join(' ')
 
 function newId(prefix: string): string {
@@ -95,7 +95,7 @@ export function updateGenerationBuffer(
 /**
  * Re-emit the accumulated content for any generation still streaming in a
  * conversation. Called when the renderer re-selects a conversation whose stream
- * kept running while it was showing a different one — without this, the partial
+ * kept running while it was showing a different one - without this, the partial
  * text streamed while away is lost and the message renders blank until the
  * remaining deltas arrive. Emitting on the same stream channel keeps ordering
  * intact: this corrected snapshot lands after every prior delta and before every
@@ -192,7 +192,7 @@ export async function startChatGeneration(
   let variantIndex = 0
 
   if (continuing) {
-    // Resuming in place — no new user or assistant row.
+    // Resuming in place - no new user or assistant row.
   } else if (regenerateFromId) {
     // Regenerate: create a new assistant variant under the same parent as the original assistant
     const original = dbMessages.get(regenerateFromId)

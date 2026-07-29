@@ -358,7 +358,7 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
         set((state) => ({
           downloadErrors: {
             ...state.downloadErrors,
-            [filename]: 'Could not pause download — try again'
+            [filename]: 'Could not pause download - try again'
           }
         }))
       }
@@ -389,7 +389,7 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
         set((state) => ({
           downloadErrors: {
             ...state.downloadErrors,
-            [filename]: 'Could not cancel download — try again'
+            [filename]: 'Could not cancel download - try again'
           }
         }))
       }

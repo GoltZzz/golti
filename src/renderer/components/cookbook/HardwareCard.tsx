@@ -242,7 +242,7 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                   <span>System Shared Memory</span>
                 )}
               </div>
-              {/* Live occupancy. Absent when no vendor tool could report it —
+              {/* Live occupancy. Absent when no vendor tool could report it -
                   shown as nothing rather than a misleading 0 GB. */}
               {vramUsage && (
                 <>
@@ -265,7 +265,7 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                     </span>
                   </div>
                   {/* Contention is reported here, once, rather than on every
-                      model card — the ratings there stay stable by design. */}
+                      model card - the ratings there stay stable by design. */}
                   {contentionNote && (
                     <div
                       className="sub-specs"

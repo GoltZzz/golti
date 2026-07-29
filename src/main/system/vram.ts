@@ -8,8 +8,8 @@ const execAsync = promisify(exec)
 /**
  * `VramReading` is deliberately the *only* capacity signal the compatibility
  * maths uses. Summing what our own processes report (Ollama's `/api/ps`, the
- * engine's layer estimate) misses every other consumer — the compositor, a
- * browser, or an Ollama someone started outside Golti — and mixes measurements
+ * engine's layer estimate) misses every other consumer - the compositor, a
+ * browser, or an Ollama someone started outside Golti - and mixes measurements
  * with estimates. The driver already knows the true answer, so we ask it.
  */
 export type { VramReading } from '../../shared/types'
@@ -109,7 +109,7 @@ async function probeVram(): Promise<VramReading | null> {
 /**
  * Current VRAM occupancy, or null when it cannot be measured.
  *
- * Null means "unknown", never "nothing in use" — callers must not render it as
+ * Null means "unknown", never "nothing in use" - callers must not render it as
  * a zero. Results are cached briefly and concurrent callers share one probe, so
  * several polling views cost one subprocess rather than one each.
  */

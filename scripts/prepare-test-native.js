@@ -4,7 +4,7 @@
  *
  * `npm run dev` and the `postinstall` hook both rebuild it against Electron's ABI,
  * which makes plain-Node vitest fail with "Module did not self-register". Plain
- * `npm rebuild` won't fix it — it restores the prebuilt binary, which is Electron's.
+ * `npm rebuild` won't fix it - it restores the prebuilt binary, which is Electron's.
  * Only rebuild when the module actually fails to load, since node-gyp is slow.
  */
 const { execSync } = require('child_process')
@@ -14,7 +14,7 @@ const pkgDir = path.join(__dirname, '..', 'node_modules', 'better-sqlite3')
 
 try {
   // better-sqlite3 loads its native binding lazily, so require() alone proves
-  // nothing — actually open a database to force the .node file to load.
+  // nothing - actually open a database to force the .node file to load.
   const Database = require(pkgDir)
   new Database(':memory:').close()
   process.exit(0)

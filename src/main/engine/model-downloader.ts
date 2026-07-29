@@ -328,7 +328,7 @@ export async function downloadModel(
       return { status: 'paused' }
     }
 
-    // Server ignored Range — restart from scratch
+    // Server ignored Range - restart from scratch
     if (existingBytes > 0 && res.status === 200) {
       unlinkQuiet(tempPath)
       existingBytes = 0

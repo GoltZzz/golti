@@ -7,11 +7,11 @@ const GB = 1024 ** 3
 /**
  * How much of a model is expected to run on the GPU.
  *
- * - `full`     — weights and cache fit in VRAM; generation runs at GPU speed
- * - `partial`  — only some layers fit; the rest run on CPU and set the pace
- * - `cpu_only` — nothing meaningful fits, or there is no usable GPU
- * - `unified`  — Apple Silicon, where there is no separate VRAM pool to run out of
- * - `unknown`  — no VRAM figure available, so we decline to guess
+ * - `full`     - weights and cache fit in VRAM; generation runs at GPU speed
+ * - `partial`  - only some layers fit; the rest run on CPU and set the pace
+ * - `cpu_only` - nothing meaningful fits, or there is no usable GPU
+ * - `unified`  - Apple Silicon, where there is no separate VRAM pool to run out of
+ * - `unknown`  - no VRAM figure available, so we decline to guess
  */
 export type OffloadFit = 'full' | 'partial' | 'cpu_only' | 'unified' | 'unknown'
 
@@ -63,7 +63,7 @@ function weightsGB(model: CookbookModel, geometry?: ModelGeometry): number {
  *
  * With real geometry this is exact; otherwise it falls back to the catalog's
  * parameter-count heuristic. Offload runs use the quantized cache, so that is
- * what we size against — assuming f16 would nearly double the estimate.
+ * what we size against - assuming f16 would nearly double the estimate.
  */
 function kvCacheGB(model: CookbookModel, geometry?: ModelGeometry): number {
   const perToken = geometry
@@ -103,7 +103,7 @@ export function estimateOffload(
   if (!system) return { fit: 'unknown', fraction: 0, confidence }
 
   // Unified memory has no separate VRAM pool, so there is no offload cliff to
-  // warn about — whether it fits at all is getCompatibility's question.
+  // warn about - whether it fits at all is getCompatibility's question.
   if (system.gpu?.isAppleSilicon) return { fit: 'unified', fraction: 1, confidence }
 
   const totalVramGB = system.gpu?.vramGB ?? 0
@@ -142,12 +142,12 @@ export function describeOffload(
   const cardNote = vramGB ? ` on your ${vramGB.toFixed(0)} GB GPU` : ''
 
   if (fit === 'cpu_only') {
-    return `Too large for GPU memory${cardNote} — runs on CPU, which is much slower.`
+    return `Too large for GPU memory${cardNote} - runs on CPU, which is much slower.`
   }
 
   const percent = Math.round(fraction * 100)
   const hedge = confidence === 'estimated' ? '~' : ''
-  return `${hedge}${percent}% fits${cardNote} — the rest runs on CPU, so expect slower generation.`
+  return `${hedge}${percent}% fits${cardNote} - the rest runs on CPU, so expect slower generation.`
 }
 
 /**

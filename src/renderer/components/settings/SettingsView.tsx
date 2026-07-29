@@ -103,10 +103,10 @@ export const SettingsView: React.FC = () => {
         : "Downloading Web Search…";
     }
     if (runtimeState.status === "starting") return "Starting Web Search…";
-    if (webSearchReady) return "Ready — Web Search is available";
+    if (webSearchReady) return "Ready - Web Search is available";
     if (runtimeState.status === "error") return runtimeState.error || "Web Search needs attention";
-    if (runtimeState.status === "not-installed") return "Not installed yet — turn on Web Search in chat to set up";
-    return "Installed — waiting to start";
+    if (runtimeState.status === "not-installed") return "Not installed yet - turn on Web Search in chat to set up";
+    return "Installed - waiting to start";
   };
 
   const runWebSearchTest = async () => {
@@ -119,7 +119,7 @@ export const SettingsView: React.FC = () => {
       if (result.ok) {
         const first = result.results[0];
         setWebSearchTestMessage(
-          `Working — ${result.results.length} result${result.results.length === 1 ? "" : "s"}${
+          `Working - ${result.results.length} result${result.results.length === 1 ? "" : "s"}${
             first ? `: ${first.title}` : ""
           }`
         );
@@ -289,7 +289,7 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <div>
                   <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Process PID</span>
-                  <div style={{ fontSize: "13px", fontWeight: 500 }}>{engineState.pid || "—"}</div>
+                  <div style={{ fontSize: "13px", fontWeight: 500 }}>{engineState.pid || "-"}</div>
                 </div>
               </div>
 
@@ -355,7 +355,7 @@ export const SettingsView: React.FC = () => {
                 </div>
                 {gpuDevices.length === 0 && (
                   <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-                    No GPU devices detected — the engine will run on CPU. Install the engine first if you just set it up.
+                    No GPU devices detected - the engine will run on CPU. Install the engine first if you just set it up.
                   </span>
                 )}
                 <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
@@ -693,7 +693,7 @@ export const SettingsView: React.FC = () => {
                   marginBottom: "var(--space-3)",
                 }}
               >
-                Self-hosted on your computer. Turn on Web Search in chat to install and start it —
+                Self-hosted on your computer. Turn on Web Search in chat to install and start it -
                 this page is for repair and advanced options. No API keys required.
               </p>
               <div

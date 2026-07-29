@@ -22,8 +22,8 @@ export interface OffloadInput {
  *
  * A layer costs its share of the weights plus its share of the KV cache, and
  * only the offloaded layers put their KV in VRAM. Reserving KV for the whole
- * model up front — as a flat block, before deciding how many layers go to the
- * GPU — over-charges a partial offload badly: on a 48-layer 14B with 12 layers
+ * model up front - as a flat block, before deciding how many layers go to the
+ * GPU - over-charges a partial offload badly: on a 48-layer 14B with 12 layers
  * resident it reserves four times the KV that actually lands on the card.
  */
 export function computeOffloadLayers(input: OffloadInput): number {

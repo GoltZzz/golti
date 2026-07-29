@@ -41,7 +41,7 @@ ZIP_NAME="golti-search-runtime-${VERSION}-${LABEL}.zip"
 SRC_ZIP="$SRC_DIR/$ZIP_NAME"
 
 if [[ ! -f "$SRC_ZIP" ]]; then
-  echo "Missing $SRC_ZIP — building search runtime for all platforms first..."
+  echo "Missing $SRC_ZIP - building search runtime for all platforms first..."
   bash "$ROOT/scripts/search-runtime/build.sh" "$SRC_DIR"
 fi
 

@@ -201,7 +201,7 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
       gpuName = 'Generic GPU'
     }
 
-    // No NVIDIA card — try AMD, which is common enough on Linux to be worth probing.
+    // No NVIDIA card - try AMD, which is common enough on Linux to be worth probing.
     if (vramGB === null && platform === 'linux') {
       try {
         const { stdout } = await execAsync('rocm-smi --showproductname --showmeminfo vram --csv')
@@ -256,7 +256,7 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
   }
 
   // Free space on the volume that holds downloaded models, not necessarily the
-  // system volume — models live under ~/Golti/models and that can be a separate disk.
+  // system volume - models live under ~/Golti/models and that can be a separate disk.
   let diskFreeGB: number | null = null
   let diskTotalGB: number | null = null
   try {
@@ -376,7 +376,7 @@ function createWindow(): void {
       event.preventDefault()
       return
     }
-    // User confirmed — abort generations so the before-quit handler doesn't
+    // User confirmed - abort generations so the before-quit handler doesn't
     // prompt a second time and cleanup can run.
     cancelAllGenerations()
   })
@@ -390,7 +390,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   const iconPath = resolveAppIcon()
-  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS — set it explicitly.
+  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS - set it explicitly.
   if (iconPath && process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(iconPath)
   }
@@ -445,7 +445,7 @@ app.on('before-quit', (event) => {
       detail: 'If you quit now, the in-progress generation will be stopped.'
     })
     if (choice === 1) {
-      // Keep working — quit stays cancelled.
+      // Keep working - quit stays cancelled.
       return
     }
     cancelAllGenerations()

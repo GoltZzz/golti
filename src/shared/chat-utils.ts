@@ -398,7 +398,7 @@ export function formatConversationMarkdown(
   if (citations.length > 0) {
     lines.push('## Sources', '')
     for (const c of citations) {
-      lines.push(`- [${c.title}](${c.url}) — ${c.snippet}`)
+      lines.push(`- [${c.title}](${c.url}) - ${c.snippet}`)
     }
     lines.push('')
   }
