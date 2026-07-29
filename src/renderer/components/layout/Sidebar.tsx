@@ -14,7 +14,9 @@ import {
   Trash2,
   Pin,
   Archive,
-  Download
+  Download,
+  Home,
+  Code2
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -37,6 +39,7 @@ export const Sidebar: React.FC = () => {
   } = useChatStore()
 
   const [localQuery, setLocalQuery] = useState('')
+  const [topTab, setTopTab] = useState<'home' | 'code'>('home')
 
   const displayedConversations = useMemo(() => {
     if (searchHits.length > 0 && localQuery.trim()) {
@@ -118,6 +121,52 @@ export const Sidebar: React.FC = () => {
           </button>
         )}
       </div>
+
+      {!isCollapsed && (
+        <div
+          style={{
+            display: 'flex',
+            gap: '4px',
+            padding: 'var(--space-2)',
+            borderBottom: '1px solid var(--border-subtle)'
+          }}
+        >
+          {([
+            { id: 'home', label: 'Home', icon: <Home size={16} /> },
+            { id: 'code', label: 'Code', icon: <Code2 size={16} /> }
+          ] as const).map((tab) => {
+            const isActive = topTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setTopTab(tab.id)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '6px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: isActive ? 'var(--bg-card)' : 'transparent',
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontWeight: isActive ? 600 : 400,
+                  fontSize: '13px'
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'
+                }}
+              >
+                {tab.icon}
+                <span>{tab.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-2)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
