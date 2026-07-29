@@ -17,6 +17,7 @@ import { chatMemories } from './db/memory-repos'
 import { embedText, cosineSimilarity } from './engine/embeddings'
 import { prewarmEmbeddingServer, stopEmbeddingServer } from './engine/embedding-server'
 import { prewarmMemoryServer, stopMemoryServer } from './engine/memory-server'
+import { generateConversationTitle, type GenerateTitleRequest } from './ai/title-generator'
 import {
   cancelAllGenerations,
   cancelGeneration,
@@ -38,6 +39,8 @@ import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/type
 import { MODEL_CATALOG } from '../shared/model-catalog'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
+import { readVram } from './system/vram'
+import { readGgufModelInfo } from './engine/gguf'
 import {
   initEngine,
   stopEngine,
@@ -205,7 +208,7 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
       gpuName = 'Generic GPU'
     }
 
-    // No NVIDIA card — try AMD, which is common enough on Linux to be worth probing.
+    // No NVIDIA card - try AMD, which is common enough on Linux to be worth probing.
     if (vramGB === null && platform === 'linux') {
       try {
         const { stdout } = await execAsync('rocm-smi --showproductname --showmeminfo vram --csv')
@@ -260,7 +263,7 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
   }
 
   // Free space on the volume that holds downloaded models, not necessarily the
-  // system volume — models live under ~/Golti/models and that can be a separate disk.
+  // system volume - models live under ~/Golti/models and that can be a separate disk.
   let diskFreeGB: number | null = null
   let diskTotalGB: number | null = null
   try {
@@ -380,7 +383,7 @@ function createWindow(): void {
       event.preventDefault()
       return
     }
-    // User confirmed — abort generations so the before-quit handler doesn't
+    // User confirmed - abort generations so the before-quit handler doesn't
     // prompt a second time and cleanup can run.
     cancelAllGenerations()
   })
@@ -394,7 +397,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   const iconPath = resolveAppIcon()
-  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS — set it explicitly.
+  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS - set it explicitly.
   if (iconPath && process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(iconPath)
   }
@@ -451,7 +454,7 @@ app.on('before-quit', (event) => {
       detail: 'If you quit now, the in-progress generation will be stopped.'
     })
     if (choice === 1) {
-      // Keep working — quit stays cancelled.
+      // Keep working - quit stays cancelled.
       return
     }
     cancelAllGenerations()
@@ -713,6 +716,10 @@ function setupIpcHandlers(): void {
     })
   })
 
+  ipcMain.handle('ai:generate-title', async (_, request: GenerateTitleRequest) => {
+    return generateConversationTitle(request)
+  })
+
   // System Info
   ipcMain.handle('system:info', async () => {
     const totalMem = os.totalmem()
@@ -728,6 +735,12 @@ function setupIpcHandlers(): void {
   })
 
   // Enhanced System Info for Cookbook
+  // Driver-level VRAM: what is actually free on the card right now, counting
+  // every consumer rather than only the processes Golti started.
+  ipcMain.handle('system:vram', async () => {
+    return await readVram()
+  })
+
   ipcMain.handle('system:info:full', async () => {
     return await getFullSystemInfo()
   })
@@ -896,7 +909,25 @@ function setupIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('engine:list-models', () => listLocalModels())
+  ipcMain.handle('engine:list-models', () => {
+    // Attach each file's GGUF geometry so the cookbook can rate GPU offload from
+    // the model's real shape instead of a parameter-count guess.
+    return listLocalModels().map((file) => {
+      const info = readGgufModelInfo(file.filepath)
+      return {
+        ...file,
+        geometry: info
+          ? {
+              blockCount: info.blockCount,
+              embeddingLength: info.embeddingLength,
+              headCount: info.headCount,
+              headCountKv: info.headCountKv,
+              fileSizeBytes: file.sizeBytes
+            }
+          : undefined
+      }
+    })
+  })
 
   ipcMain.handle('hf:search', async (_, query: string, limit?: number) =>
     searchHFModels(typeof query === 'string' ? query : '', limit)

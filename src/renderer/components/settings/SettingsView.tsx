@@ -104,10 +104,10 @@ export const SettingsView: React.FC = () => {
         : "Downloading Web Search…";
     }
     if (runtimeState.status === "starting") return "Starting Web Search…";
-    if (webSearchReady) return "Ready — Web Search is available";
+    if (webSearchReady) return "Ready - Web Search is available";
     if (runtimeState.status === "error") return runtimeState.error || "Web Search needs attention";
-    if (runtimeState.status === "not-installed") return "Not installed yet — turn on Web Search in chat to set up";
-    return "Installed — waiting to start";
+    if (runtimeState.status === "not-installed") return "Not installed yet - turn on Web Search in chat to set up";
+    return "Installed - waiting to start";
   };
 
   const runWebSearchTest = async () => {
@@ -120,7 +120,7 @@ export const SettingsView: React.FC = () => {
       if (result.ok) {
         const first = result.results[0];
         setWebSearchTestMessage(
-          `Working — ${result.results.length} result${result.results.length === 1 ? "" : "s"}${
+          `Working - ${result.results.length} result${result.results.length === 1 ? "" : "s"}${
             first ? `: ${first.title}` : ""
           }`
         );
@@ -222,8 +222,8 @@ export const SettingsView: React.FC = () => {
                   <div className="stat-tile__value">{engineState.port || 8391}</div>
                 </div>
                 <div>
-                  <span className="stat-tile__label">Process PID</span>
-                  <div className="stat-tile__value">{engineState.pid || "—"}</div>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Process PID</span>
+                  <div style={{ fontSize: "13px", fontWeight: 500 }}>{engineState.pid || "-"}</div>
                 </div>
               </div>
 
@@ -270,8 +270,8 @@ export const SettingsView: React.FC = () => {
                   </button>
                 </div>
                 {gpuDevices.length === 0 && (
-                  <span className="settings-hint">
-                    No GPU devices detected — the engine will run on CPU. Install the engine first if you just set it up.
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                    No GPU devices detected - the engine will run on CPU. Install the engine first if you just set it up.
                   </span>
                 )}
                 <span className="settings-hint">

@@ -1,7 +1,7 @@
 {
   "name": "golti",
   "version": "1.0.0",
-  "description": "Golti — Personal AI Workspace",
+  "description": "Golti - Personal AI Workspace",
   "main": "./out/main/index.js",
   "author": "golti",
   "homepage": "https://github.com/golti/golti",

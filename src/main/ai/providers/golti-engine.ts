@@ -99,7 +99,8 @@ export async function* streamGoltiEngineChat(
     modelName: model,
     requested: options?.generationSettings?.maxTokens,
     contextWindow,
-    promptTokens: estimateTokens(formattedMessages.map((m) => m.content).join('\n'))
+    promptTokens: estimateTokens(formattedMessages.map((m) => m.content).join('\n')),
+    floor: options?.outputTokenFloor
   })
 
   let response: Response

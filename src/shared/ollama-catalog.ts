@@ -169,7 +169,7 @@ const CAPABILITY_HIGHLIGHTS: Record<string, string> = {
   tools: 'Tool calling',
   thinking: 'Reasoning / thinking mode',
   vision: 'Accepts images',
-  embedding: 'Embeddings only — not for chat',
+  embedding: 'Embeddings only - not for chat',
   completion: 'Text completion'
 }
 
@@ -236,7 +236,7 @@ export function deriveCatalogEntry(
 
 /**
  * A curated entry with no download link borrows one from the generated entry
- * sharing its tag — but only at the same quantization, since the registry blob
+ * sharing its tag - but only at the same quantization, since the registry blob
  * is a specific file. The blob's byte count is authoritative, so the size and
  * RAM estimates are recomputed from it rather than kept.
  */

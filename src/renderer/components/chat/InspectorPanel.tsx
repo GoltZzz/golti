@@ -208,7 +208,7 @@ export const InspectorPanel: React.FC = () => {
                         {i + 1}. {m.role}
                       </span>
                       <span className="inspector-item-meta">
-                        {m.tokensOut || m.tokensIn || '—'}
+                        {m.tokensOut || m.tokensIn || '-'}
                       </span>
                     </div>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>

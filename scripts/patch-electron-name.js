@@ -3,7 +3,7 @@
  * Brand the local Electron macOS bundle as Golti for development.
  *
  * Dock tooltips follow the .app folder name + Launch Services registration.
- * CFBundleName alone is not enough — rename the bundle, main executable,
+ * CFBundleName alone is not enough - rename the bundle, main executable,
  * helpers, update path.txt, bake the icon, ad-hoc sign, and lsregister.
  */
 const { execFileSync, spawnSync } = require('child_process')
@@ -42,7 +42,7 @@ function renameIfExists(from, to) {
 }
 
 if (!fs.existsSync(pathFile)) {
-  console.warn('[patch-electron-name] path.txt missing — skip')
+  console.warn('[patch-electron-name] path.txt missing - skip')
   process.exit(0)
 }
 
@@ -50,7 +50,7 @@ if (!fs.existsSync(pathFile)) {
 if (!fs.existsSync(targetAppDir)) {
   const electronApp = path.join(distDir, 'Electron.app')
   if (!fs.existsSync(electronApp)) {
-    console.warn('[patch-electron-name] Electron.app / Golti.app not found — skip')
+    console.warn('[patch-electron-name] Electron.app / Golti.app not found - skip')
     process.exit(0)
   }
   fs.renameSync(electronApp, targetAppDir)
@@ -68,7 +68,7 @@ if (renameIfExists(mainExecOld, mainExecNew)) {
   console.log(`[patch-electron-name] Renamed MacOS/Electron → MacOS/${NAME}`)
 }
 if (!fs.existsSync(mainExecNew)) {
-  console.warn('[patch-electron-name] Main executable missing — skip')
+  console.warn('[patch-electron-name] Main executable missing - skip')
   process.exit(0)
 }
 

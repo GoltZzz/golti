@@ -1,6 +1,6 @@
 # Golti
 
-Golti — Personal AI Workspace.
+Golti - Personal AI Workspace.
 
 ## Contributing
 

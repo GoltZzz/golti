@@ -4,10 +4,10 @@ import path from 'path'
 
 /**
  * Stream that waits on `releaseFirst` before the first chunk, then
- * waits on `releaseRest` before subsequent chunks — so tests can
+ * waits on `releaseRest` before subsequent chunks - so tests can
  * pause/cancel after partial progress.
  *
- * When `throwOnAbort` is false, abort never rejects `read()` — the
+ * When `throwOnAbort` is false, abort never rejects `read()` - the
  * downloader must exit via its own paused/cancelled loop checks.
  */
 function createTwoPhaseBody(
@@ -206,7 +206,7 @@ describe('model-downloader pause/resume/cancel', () => {
     let completed = 0
 
     fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
-      // Reader never throws AbortError — downloader must break on active.paused
+      // Reader never throws AbortError - downloader must break on active.paused
       phase = createTwoPhaseBody([chunk, chunk, chunk, chunk], init?.signal, {
         throwOnAbort: false
       })

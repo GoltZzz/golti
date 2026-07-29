@@ -73,7 +73,7 @@ export const HuggingFaceBrowser: React.FC<HuggingFaceBrowserProps> = ({ systemIn
             <AlertTriangle size={14} />
             <span>
               Community-published models, not verified by Golti. Memory estimates are calculated
-              from file size and may be approximate — check the compatibility badge before
+              from file size and may be approximate - check the compatibility badge before
               downloading.
             </span>
           </div>
@@ -81,7 +81,7 @@ export const HuggingFaceBrowser: React.FC<HuggingFaceBrowserProps> = ({ systemIn
           {stale && (
             <div className="hf-disclaimer hf-disclaimer-warn">
               <AlertTriangle size={14} />
-              <span>Showing cached results — could not reach Hugging Face.</span>
+              <span>Showing cached results - could not reach Hugging Face.</span>
             </div>
           )}
 
