@@ -15,27 +15,46 @@ export interface OffloadInput {
   kvBytesPerToken?: number
 }
 
+/**
+ * Layers to offload, sized so that weights *and* KV cache fit.
+ *
+ * A layer costs its share of the weights plus its share of the KV cache, and
+ * only the offloaded layers put their KV in VRAM. Reserving KV for the whole
+ * model up front — as a flat block, before deciding how many layers go to the
+ * GPU — over-charges a partial offload badly: on a 48-layer 14B with 12 layers
+ * resident it reserves four times the KV that actually lands on the card.
+ */
 export function computeOffloadLayers(input: OffloadInput): number {
   const { modelBytes, vramBytes } = input
   if (!vramBytes || vramBytes <= 0 || modelBytes <= 0) return -1
 
   const layerCount = input.layerCount && input.layerCount > 0 ? input.layerCount : DEFAULT_LAYER_COUNT
-  const kvReserve = (input.kvBytesPerToken ?? 0) * KV_RESERVE_CONTEXT
 
-  const usable = vramBytes - VRAM_RESERVE_BYTES - kvReserve
+  const usable = vramBytes - VRAM_RESERVE_BYTES
   if (usable <= MIN_USEFUL_VRAM_BYTES) return 0
-  if (usable >= modelBytes * 1.05) return -1
 
-  const perLayer = modelBytes / layerCount
+  // Per-layer cost: weights plus the KV this layer will hold at the reserve
+  // context. `kvBytesPerToken` covers every layer, so divide it down to one.
+  const weightsPerLayer = modelBytes / layerCount
+  const kvPerLayer = ((input.kvBytesPerToken ?? 0) / layerCount) * KV_RESERVE_CONTEXT
+  const perLayer = weightsPerLayer + kvPerLayer
+  if (perLayer <= 0) return -1
+
+  // Full offload only when the KV of every layer fits alongside the weights.
+  if (usable >= perLayer * layerCount) return -1
+
   const layers = Math.floor(usable / perLayer)
-  return Math.max(1, Math.min(layerCount - 1, layers))
+  return Math.max(1, Math.min(layerCount, layers))
 }
 
 export function reduceOffloadLayers(current: number, layerCount?: number): number {
   const total = layerCount && layerCount > 0 ? layerCount : DEFAULT_LAYER_COUNT
   if (current < 0) return Math.floor(total / 2)
   if (current <= 1) return 0
-  return Math.floor(current / 2)
+  // Step down by a quarter rather than halving. Sizing now lands close to the
+  // true limit, so an overshoot is usually small and halving would surrender
+  // far more offload than the failure warrants.
+  return Math.max(1, Math.floor(current * 0.75))
 }
 
 export interface CpuCounts {

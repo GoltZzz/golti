@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { SystemInfoFull } from '../../../shared/types'
 import { getUsableMemoryGB } from '../../../shared/compatibility'
 import { useCookbookStore } from '../../stores/cookbookStore'
@@ -48,7 +48,24 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
   scanError,
   onRescan
 }) => {
-  const { isHardwareCardCollapsed, toggleHardwareCardCollapsed } = useCookbookStore()
+  const { isHardwareCardCollapsed, toggleHardwareCardCollapsed, vramReading, fetchVram } =
+    useCookbookStore()
+
+  // VRAM moves while the card is open: models load, another app grabs the GPU.
+  useEffect(() => {
+    fetchVram()
+    const timer = setInterval(fetchVram, 5000)
+    return () => clearInterval(timer)
+  }, [fetchVram])
+
+  const vramUsage = React.useMemo(() => {
+    if (!vramReading || vramReading.totalMiB <= 0) return null
+    return {
+      usedGB: vramReading.usedMiB / 1024,
+      freeGB: vramReading.freeMiB / 1024,
+      usedPercent: Math.min(100, Math.round((vramReading.usedMiB / vramReading.totalMiB) * 100))
+    }
+  }, [vramReading])
   const [isRamModalOpen, setIsRamModalOpen] = useState(false)
 
   const showSkeleton = !systemInfo && loading
@@ -222,6 +239,30 @@ export const HardwareCard: React.FC<HardwareCardProps> = ({
                   <span>System Shared Memory</span>
                 )}
               </div>
+              {/* Live occupancy. Absent when no vendor tool could report it —
+                  shown as nothing rather than a misleading 0 GB. */}
+              {vramUsage && (
+                <>
+                  <div className="progress-bar-bg ram-bar" style={{ marginTop: '8px' }}>
+                    <div
+                      className="progress-bar-fill"
+                      style={{
+                        width: `${vramUsage.usedPercent}%`,
+                        backgroundColor: getRamBarColor(vramUsage.usedPercent)
+                      }}
+                    />
+                  </div>
+                  <div className="sub-specs" style={{ marginTop: '6px', fontSize: '11px' }}>
+                    <span>
+                      In use: <span className="spec-num">{vramUsage.usedGB.toFixed(1)} GB</span>
+                    </span>
+                    <span className="spec-dot">•</span>
+                    <span>
+                      Free: <span className="spec-num">{vramUsage.freeGB.toFixed(1)} GB</span>
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

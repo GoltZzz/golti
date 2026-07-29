@@ -33,6 +33,7 @@ import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/type
 import { MODEL_CATALOG } from '../shared/model-catalog'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
+import { readVram } from './system/vram'
 import {
   initEngine,
   stopEngine,
@@ -659,6 +660,12 @@ function setupIpcHandlers(): void {
   })
 
   // Enhanced System Info for Cookbook
+  // Driver-level VRAM: what is actually free on the card right now, counting
+  // every consumer rather than only the processes Golti started.
+  ipcMain.handle('system:vram', async () => {
+    return await readVram()
+  })
+
   ipcMain.handle('system:info:full', async () => {
     return await getFullSystemInfo()
   })

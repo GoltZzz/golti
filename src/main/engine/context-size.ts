@@ -53,7 +53,10 @@ export async function computeContextSize(input: ContextSizeInput): Promise<Conte
     modelBytes,
     availableBytes,
     freeVramBytes: usesDiscreteVram ? (input.freeVramGB as number) * GB : undefined,
-    fullyOffloaded: input.gpuLayers === -1
+    fullyOffloaded: input.gpuLayers === -1,
+    // A partial offload only puts its own layers' weights and KV in VRAM.
+    gpuLayers: input.gpuLayers,
+    layerCount: info?.blockCount
   })
 
   return {

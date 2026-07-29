@@ -19,7 +19,8 @@ import type {
   SearchRuntimeState,
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
-  CookbookModel
+  CookbookModel,
+  VramReading
 } from '../shared/types'
 import type { HFModelSummary } from '../shared/hf-catalog'
 
@@ -148,6 +149,7 @@ const api = {
   // System
   getSystemInfo: () => ipcRenderer.invoke('system:info'),
   getSystemInfoFull: () => ipcRenderer.invoke('system:info:full'),
+  getVramReading: (): Promise<VramReading | null> => ipcRenderer.invoke('system:vram'),
   getDetailedInstalledModels: (): Promise<InstalledLocalModelInfo[]> =>
     ipcRenderer.invoke('cookbook:detailed-installed-models'),
   windowControl: (action: 'minimize' | 'maximize' | 'close') => ipcRenderer.send('window:control', action),
