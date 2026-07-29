@@ -71,7 +71,7 @@ describe('getLocalBundlePath', () => {
 
   it('returns null when no local or packaged bundle exists', async () => {
     const { getLocalBundlePath } = await import('./binary-manager')
-    // May still find a real dist/search-runtime zip in the workspace — skip assertion if so
+    // May still find a real dist/search-runtime zip in the workspace - skip assertion if so
     const found = getLocalBundlePath()
     if (found && found.includes('dist/search-runtime')) {
       expect(found).toContain('golti-search-runtime-')

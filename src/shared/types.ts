@@ -308,6 +308,11 @@ export interface StreamChunkPayload {
 export interface ChatRequestOptions {
   signal?: AbortSignal
   generationSettings?: GenerationSettings
+  /**
+   * Lower bound for the local engine's output budget. Only set it for short
+   * utility completions; chat replies want the default floor.
+   */
+  outputTokenFloor?: number
 }
 
 export type ProviderStreamEvent =
@@ -325,6 +330,20 @@ export interface SystemInfo {
   freeRamGB: number
   gpuName?: string
   gpuVramGB?: number
+}
+
+/**
+ * Driver-level VRAM reading for one GPU. Counts every consumer on the card, not
+ * just the processes Golti started, which is what makes it usable as a live
+ * capacity signal rather than an estimate.
+ */
+export interface VramReading {
+  /** Vendor device index, matching the ids used for device selection. */
+  index: string
+  name: string
+  totalMiB: number
+  usedMiB: number
+  freeMiB: number
 }
 
 export interface SystemInfoFull {

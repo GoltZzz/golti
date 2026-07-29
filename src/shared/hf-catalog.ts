@@ -335,7 +335,7 @@ export function buildCookbookModels(
       ggufUrl: variant.url,
       ggufFilename: variant.filename,
       ggufFileSize: variant.fileSizeBytes,
-      description: `${summary.repoId} on Hugging Face — community-published GGUF build, not verified by Golti.`,
+      description: `${summary.repoId} on Hugging Face - community-published GGUF build, not verified by Golti.`,
       highlights: highlights.slice(0, 4)
     }
   })

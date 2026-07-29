@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 120" fill="none">
-  <!-- Top shell — wobbly dome + uneven downward teeth -->
+  <!-- Top shell - wobbly dome + uneven downward teeth -->
   <path
     d="M18.5 52.5 C17.5 40 22 27 31 18.5 C39.5 11 47.5 8.5 50.5 9 C56 9.8 64 13.5 71.5 21 C79.5 30 83.5 41 82 52 L76 50.5 L72.5 58 L67 48 L61.5 57.5 L55 46.5 L49.5 56 L43 47.5 L37.5 58.5 L31 48 L25.5 56.5 L20.5 50.5 Z"
     stroke="#1a1d27"
@@ -7,7 +7,7 @@
     stroke-linejoin="round"
     stroke-linecap="round"
   />
-  <!-- Bottom shell — wonky bowl + uneven upward teeth -->
+  <!-- Bottom shell - wonky bowl + uneven upward teeth -->
   <path
     d="M18 71.5 L23 73 L28.5 64 L34 74.5 L40.5 63.5 L46 75 L52.5 64 L58 74 L64.5 63 L70 73.5 L76.5 65 L82.5 72 C84 86 78 100 66.5 108 C58 113.5 43 114.5 33 109 C22.5 102.5 16.5 88 18 71.5 Z"
     stroke="#1a1d27"

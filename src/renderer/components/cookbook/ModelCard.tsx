@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
 import { describeDiskFit, getCompatibility, getDiskFit } from '../../../shared/compatibility'
+import { describeOffload, estimateOffload } from '../../../shared/gpu-offload'
 import { useChatStore } from '../../stores/chatStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { useEngineStore } from '../../stores/engineStore'
@@ -23,7 +24,8 @@ import {
   Pause,
   Play,
   X,
-  Search
+  Search,
+  Gauge
 } from 'lucide-react'
 
 interface ModelCardProps {
@@ -94,6 +96,15 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const comp = getCompatibility(systemInfo, model)
   const diskFit = getDiskFit(systemInfo, model)
   const diskNote = describeDiskFit(systemInfo, model)
+  // How much of this model the GPU can hold. Rated against total VRAM, not the
+  // live reading, so the badge does not change while the user is looking at it.
+  // Downloaded models carry their real GGUF geometry, which upgrades the
+  // estimate to a measurement and drops the hedging language.
+  const localGeometry = ggufFilename
+    ? localModels.find((lm) => lm.filename === ggufFilename)?.geometry
+    : undefined
+  const offloadNote = describeOffload(systemInfo, model, localGeometry)
+  const offloadFit = estimateOffload(systemInfo, model, localGeometry).fit
   const diskBlocked = diskFit === 'insufficient'
 
   const isEngineActive = useMemo(() => {
@@ -374,6 +385,13 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         <div className={`disk-note ${diskBlocked ? 'disk-note-blocked' : ''}`}>
           <AlertTriangle size={13} />
           <span>{diskNote}</span>
+        </div>
+      )}
+
+      {offloadNote && (
+        <div className={`offload-note ${offloadFit === 'cpu_only' ? 'offload-note-cpu' : ''}`}>
+          <Gauge size={13} />
+          <span>{offloadNote}</span>
         </div>
       )}
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Layers, X, RefreshCw, AlertCircle, Info, ZapOff, Cpu } from 'lucide-react'
 import { SystemInfoFull, EngineState } from '../../../shared/types'
 
@@ -93,7 +94,10 @@ export const RamBreakdownModal: React.FC<RamBreakdownModalProps> = ({
     return 'pressure-badge-high'
   }
 
-  return (
+  // Rendered into document.body: .hardware-card sets backdrop-filter and
+  // container-type, either of which would make it the containing block for
+  // this fixed overlay and clip the dialog inside the card.
+  return createPortal(
     <div
       className="ram-breakdown-overlay"
       role="presentation"
@@ -271,6 +275,7 @@ export const RamBreakdownModal: React.FC<RamBreakdownModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

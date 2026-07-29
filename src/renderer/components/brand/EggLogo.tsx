@@ -28,7 +28,7 @@ export const EggLogo: React.FC<EggLogoProps> = ({
       style={{ display: 'block', flexShrink: 0 }}
     >
       {title ? <title>{title}</title> : null}
-      {/* Top shell — wobbly dome + uneven downward teeth */}
+      {/* Top shell - wobbly dome + uneven downward teeth */}
       <path
         d="M18.5 52.5 C17.5 40 22 27 31 18.5 C39.5 11 47.5 8.5 50.5 9 C56 9.8 64 13.5 71.5 21 C79.5 30 83.5 41 82 52 L76 50.5 L72.5 58 L67 48 L61.5 57.5 L55 46.5 L49.5 56 L43 47.5 L37.5 58.5 L31 48 L25.5 56.5 L20.5 50.5 Z"
         stroke="currentColor"
@@ -37,7 +37,7 @@ export const EggLogo: React.FC<EggLogoProps> = ({
         strokeLinecap="round"
         fill="none"
       />
-      {/* Bottom shell — wonky bowl + uneven upward teeth */}
+      {/* Bottom shell - wonky bowl + uneven upward teeth */}
       <path
         d="M18 71.5 L23 73 L28.5 64 L34 74.5 L40.5 63.5 L46 75 L52.5 64 L58 74 L64.5 63 L70 73.5 L76.5 65 L82.5 72 C84 86 78 100 66.5 108 C58 113.5 43 114.5 33 109 C22.5 102.5 16.5 88 18 71.5 Z"
         stroke="currentColor"
@@ -46,7 +46,7 @@ export const EggLogo: React.FC<EggLogoProps> = ({
         strokeLinecap="round"
         fill="none"
       />
-      {/* Left eye — hand-drawn angry oval */}
+      {/* Left eye - hand-drawn angry oval */}
       <path
         d="M29 55 Q34.5 51.5 40 55.5 Q44.5 58.5 46 62 Q40.5 65.5 34 62.5 Q28.5 59.5 29 55 Z"
         stroke="currentColor"
@@ -55,7 +55,7 @@ export const EggLogo: React.FC<EggLogoProps> = ({
         strokeLinecap="round"
         fill="none"
       />
-      {/* Right eye — deliberately not a perfect mirror */}
+      {/* Right eye - deliberately not a perfect mirror */}
       <path
         d="M71.5 54.5 Q66 51 60.5 55 Q55.5 58.5 54 62.5 Q59.5 66 66 62 Q72 58.5 71.5 54.5 Z"
         stroke="currentColor"

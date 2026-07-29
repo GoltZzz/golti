@@ -1,11 +1,14 @@
 import { create } from 'zustand'
-import { SystemInfoFull, InstalledLocalModelInfo } from '../../shared/types'
+import { SystemInfoFull, InstalledLocalModelInfo, VramReading } from '../../shared/types'
 import { ModelFilters, ModelFilterListKey, EMPTY_MODEL_FILTERS } from '../../shared/model-filter'
 import { useChatStore } from './chatStore'
 import { useEngineStore } from './engineStore'
 
 interface CookbookState {
   systemInfo: SystemInfoFull | null
+  /** Live driver VRAM reading; null when no vendor tool could report one. */
+  vramReading: VramReading | null
+  fetchVram: () => Promise<void>
   loadingInfo: boolean
   scanError: string | null
   installedModels: string[]
@@ -33,6 +36,7 @@ interface CookbookState {
 export const useCookbookStore = create<CookbookState>((set, get) => {
   return {
     systemInfo: null,
+    vramReading: null,
     loadingInfo: false,
     scanError: null,
     installedModels: [],
@@ -45,11 +49,20 @@ export const useCookbookStore = create<CookbookState>((set, get) => {
     deletingModel: null,
     deleteError: null,
 
+    fetchVram: async () => {
+      try {
+        set({ vramReading: await window.goltiAPI.getVramReading() })
+      } catch {
+        // Keep the previous reading: dropping it would imply the card emptied.
+      }
+    },
+
     scanHardware: async () => {
       set({ loadingInfo: true, scanError: null })
       try {
         const info = await window.goltiAPI.getSystemInfoFull()
         set({ systemInfo: info, loadingInfo: false, scanError: null })
+        get().fetchVram()
       } catch (err) {
         console.error('Failed to scan hardware:', err)
         const message =

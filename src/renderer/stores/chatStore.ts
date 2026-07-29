@@ -25,6 +25,7 @@ import {
   type ResearchProgress
 } from '../../shared/research-progress'
 import { useInspectorStore } from './inspectorStore'
+import { DEFAULT_CONVERSATION_TITLE, fallbackTitle } from '../../shared/conversation-title'
 
 declare global {
   interface Window {
@@ -83,6 +84,12 @@ interface ChatState {
   archiveConversation: (id: string) => Promise<void>
   exportConversation: (format: 'markdown' | 'json') => Promise<void>
   searchConversations: (query: string) => Promise<void>
+  autoTitleConversation: (
+    id: string,
+    prompt: string,
+    providerId: string,
+    model: string
+  ) => Promise<void>
   sendMessage: (content?: string, options?: { forceWebSearch?: boolean }) => Promise<void>
   stopGeneration: () => Promise<void>
   regenerate: (assistantMessageId: string) => Promise<void>
@@ -431,6 +438,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ searchHits: hits })
   },
 
+  autoTitleConversation: async (id, prompt, providerId, model) => {
+    const placeholder = fallbackTitle(prompt)
+    try {
+      const title = await window.goltiAPI.generateConversationTitle({ providerId, model, prompt })
+      if (!title || title === placeholder) return
+
+      // Bail out if the conversation is gone or was renamed while we waited.
+      const current = get().conversations.find((c) => c.id === id)
+      if (!current || current.title !== placeholder) return
+
+      await window.goltiAPI.updateConversation(id, { title })
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, title } : c))
+      }))
+    } catch (err) {
+      // A missing title is cosmetic, the truncated fallback already stands in.
+      console.warn('Auto-title failed:', err)
+    }
+  },
+
   sendMessage: async (content, options) => {
     const text = (content ?? get().draft).trim()
     if (!text || get().isGenerating) return
@@ -447,10 +474,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const settings = await window.goltiAPI.getSettings()
     const forceWebSearch = Boolean(options?.forceWebSearch || get().forceWebSearchNext)
 
-    if (conv && conv.title === 'New Conversation') {
-      const truncatedTitle = text.slice(0, 30) + (text.length > 30 ? '...' : '')
+    const shouldAutoTitle = Boolean(conv && conv.title === DEFAULT_CONVERSATION_TITLE)
+    if (shouldAutoTitle) {
+      // Prompt-derived title straight away so the sidebar is never blank, then
+      // the model refines it below.
       await window.goltiAPI.updateConversation(convId, {
-        title: truncatedTitle,
+        title: fallbackTitle(text),
         model: modelName,
         providerId
       })
@@ -501,6 +530,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         researchProgressByMessageId
       }
     })
+
+    // Title before the reply, not alongside it: the local engine serves one
+    // request at a time, so a title asked for mid-stream just queues behind a
+    // long generation and times out. The user message is already on screen by
+    // now, so this only delays the first token of the very first reply.
+    if (shouldAutoTitle) {
+      await get().autoTitleConversation(convId, text, providerId, modelName)
+    }
 
     const result = await window.goltiAPI.sendMessage({
       conversationId: convId,

@@ -41,7 +41,7 @@ export const FilterBar: React.FC = () => {
     if (loadingInfo) {
       compatHint = 'Checking your hardware…'
     } else if (scanError) {
-      compatHint = 'Hardware scan failed — rescan to filter by fit.'
+      compatHint = 'Hardware scan failed - rescan to filter by fit.'
     } else {
       compatHint = 'Scan your hardware to filter by fit.'
     }

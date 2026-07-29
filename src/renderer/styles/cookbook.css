@@ -42,7 +42,7 @@
   padding: 12px 16px;
   box-shadow: var(--shadow-sm);
   position: relative;
-  /* Clip only the top accent via its own radius — never clip the header */
+  /* Clip only the top accent via its own radius - never clip the header */
   overflow: visible;
   box-sizing: border-box;
   width: 100%;
@@ -499,7 +499,7 @@
   color: var(--text-muted);
 }
 
-/* Hardware Skeleton — mirrors status strip */
+/* Hardware Skeleton - mirrors status strip */
 .hardware-card-skeleton {
   pointer-events: none;
 }
@@ -1762,10 +1762,11 @@
   border-radius: var(--radius-lg, 12px);
   width: 100%;
   max-width: 580px;
-  margin-top: 20px;
+  max-height: 100%;
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   animation: slideUp 0.2s ease-out;
 }
@@ -1787,6 +1788,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .ram-breakdown-title-row {
@@ -1829,7 +1831,8 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-  max-height: 75vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -2081,6 +2084,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .ram-action-btn {
@@ -2291,4 +2295,30 @@
 .disk-note-blocked {
   border-color: rgba(224, 108, 117, 0.4);
   color: #e06c75;
+}
+
+/* GPU offload note. Informational rather than alarming: a partial offload still
+   runs, just slower, so it is styled below .disk-note in visual weight. */
+.offload-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 var(--space-4) var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid rgba(97, 175, 239, 0.3);
+  border-radius: 6px;
+  color: #61afef;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.offload-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Nothing meaningful fits in VRAM - worth the warmer colour. */
+.offload-note-cpu {
+  border-color: rgba(229, 192, 123, 0.35);
+  color: #e5c07b;
 }

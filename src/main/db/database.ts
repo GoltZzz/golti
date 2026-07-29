@@ -197,7 +197,7 @@ export function initDatabase(): void {
   migrateChatToSqlite()
 }
 
-// Conversation DB Helper Methods — SQLite-backed
+// Conversation DB Helper Methods - SQLite-backed
 export const dbConversations = {
   list: (): Conversation[] => chatConversations.list(false),
   listAll: (): Conversation[] => chatConversations.list(true),
@@ -208,7 +208,7 @@ export const dbConversations = {
   search: (query: string) => chatConversations.search(query)
 }
 
-// Message DB Helper Methods — SQLite-backed
+// Message DB Helper Methods - SQLite-backed
 export const dbMessages = {
   listForConversation: (conversationId: string): Message[] =>
     chatMessages.listForConversation(conversationId),
@@ -226,7 +226,7 @@ export const dbArtifacts = chatArtifacts
 export const dbShells = chatShells
 export const dbCitations = chatCitations
 
-// Provider DB Helper Methods — JSON
+// Provider DB Helper Methods - JSON
 export const dbProviders = {
   list: (): AIProviderConfig[] => {
     const db = loadDb()
@@ -251,7 +251,7 @@ export const dbProviders = {
   }
 }
 
-// Settings DB Helper Methods — JSON
+// Settings DB Helper Methods - JSON
 export const dbSettings = {
   get: (): Settings => {
     const db = loadDb()
