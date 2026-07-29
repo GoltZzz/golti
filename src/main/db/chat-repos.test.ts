@@ -212,7 +212,7 @@ describe('sqlite chat repos', () => {
     migrate(db)
     migrate(db)
     const row = db.prepare('SELECT MAX(version) as v FROM schema_migrations').get() as { v: number }
-    expect(row.v).toBe(3)
+    expect(row.v).toBe(7)
     db.close()
   })
 })
