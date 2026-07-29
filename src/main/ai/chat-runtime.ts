@@ -20,8 +20,10 @@ import {
   extractThinkingTags,
   createThinkStreamParser,
   getBranchPath,
-  trimHistoryToBudget
+  trimHistoryToBudget,
+  extractSkillBlocks
 } from '../../shared/chat-utils'
+import { normalizeSkillName, deriveSkillName } from '../../shared/types'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
 import {
   buildContextBlock,
@@ -37,12 +39,15 @@ import {
   dbContext,
   dbConversations,
   dbMessages,
-  dbSettings
+  dbSettings,
+  dbSkills
 } from '../db/database'
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 import { startDeepResearch } from './deep-research'
 import { presentableErrorMessage } from '../../shared/error-display'
+import { extractAndStoreMemories } from './memory-extractor'
+import { buildMemoryRecallBlock } from './memory-recall'
 
 interface ActiveGeneration {
   generationId: string
@@ -57,6 +62,25 @@ interface ActiveGeneration {
 const activeGenerations = new Map<string, ActiveGeneration>()
 
 /** Appended when composerMode is 'agent' (tools not wired yet — prompt-only). */
+const ASK_USER_SYSTEM_SUFFIX = [
+  'Clarifying questions: when the user request is ambiguous or missing a detail you need to give a good answer, ask the user instead of guessing.',
+  'To ask, emit a fenced block exactly like this (JSON body, nothing else inside):',
+  '```ask-user',
+  '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means" }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true }',
+  '```',
+  'Rules: use it only when it genuinely changes your answer; ask one question at a time; emit exactly one block per message, at the very end, and write nothing after it, since you will pause for the user to answer.',
+  'Always include "options": 2-5 concrete, mutually-exclusive answers the user can click, each with a short "label" and a one-line "description" of what choosing it means. Guess plausible answers from context rather than leaving the list empty — only omit "options" when the answer is genuinely free-form (a name, a number, a file path). Keep "allowFreeText": true so the user can still type something else.'
+].join('\n')
+
+/** Lets the model define a reusable /slash-command when the user asks for one. */
+const SKILL_AUTHOR_SYSTEM_SUFFIX = [
+  'Creating skills: when the user asks you to make, create, or save a "skill" (a reusable /command), define it by emitting a fenced block exactly like this at the end of your reply:',
+  '```skill',
+  '{ "name": "short-name", "description": "one line shown in the / menu", "instructions": "What to do when this skill runs. Use {{input}} where the rest of the user\'s message should be inserted." }',
+  '```',
+  'Rules: "name" becomes /name (lowercase, hyphens only). Only emit this block when the user actually asks to create a skill. After the block, briefly tell the user the skill is saved and how to run it. The block is captured automatically and hidden from the final message.'
+].join('\n')
+
 const COMPOSER_AGENT_SYSTEM_SUFFIX = [
   'You are operating in Agent mode.',
   'Treat the user message as a task to accomplish: clarify the goal if needed, break work into clear steps, and work toward a concrete outcome.',
@@ -160,6 +184,7 @@ export async function startChatGeneration(
   const {
     conversationId,
     content,
+    displayContent,
     model,
     providerId,
     systemPrompt,
@@ -174,7 +199,8 @@ export async function startChatGeneration(
     composerMode,
     contextItemIds,
     generationSettings,
-    continueMessageId
+    continueMessageId,
+    skillRequest
   } = payload
 
   const settings = dbSettings.get()
@@ -234,6 +260,7 @@ export async function startChatGeneration(
       conversationId,
       role: 'user',
       content,
+      displayContent: displayContent && displayContent !== content ? displayContent : undefined,
       model,
       createdAt: Date.now(),
       parentId: leaf
@@ -282,9 +309,20 @@ export async function startChatGeneration(
       ]
     : branchPath.filter((m) => m.id !== assistantMsgId)
 
+  const recallQuery =
+    content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
+  const memoryBlock = continuing ? '' : await buildMemoryRecallBlock(recallQuery)
+
   const effectiveSystem = buildSystemPrompt({
     basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
-    modeSuffix: composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+    modeSuffix: [
+      composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+      ASK_USER_SYSTEM_SUFFIX,
+      SKILL_AUTHOR_SYSTEM_SUFFIX
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+    memoryBlock,
     contextBlock: buildConversationContextBlock(conversationId, contextItemIds)
   })
 
@@ -620,8 +658,62 @@ export async function startChatGeneration(
 
       const shellIds = [...(continuing?.shellIds ?? []), ...createdShells.map((s) => s.id)]
 
+      const emitSkillSaved = (saved: ReturnType<typeof dbSkills.upsert>) => {
+        if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+          win.webContents.send('skill:saved', saved)
+        }
+      }
+
+      const { skills: authoredSkills, cleanContent: contentWithoutSkills } =
+        extractSkillBlocks(accumulated)
+      let storedContent = authoredSkills.length ? contentWithoutSkills : accumulated
+      let skillWasSaved = false
+
+      for (const authored of authoredSkills) {
+        const name = normalizeSkillName(authored.name)
+        if (!name) continue
+        try {
+          emitSkillSaved(
+            dbSkills.upsert({
+              id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              name,
+              description: authored.description,
+              instructions: authored.instructions,
+              createdBy: 'model'
+            })
+          )
+          skillWasSaved = true
+        } catch {
+          // best-effort: a bad skill definition shouldn't fail the message
+        }
+      }
+
+      // Deterministic fallback for /skill: small models can't reliably emit the
+      // block, so when the user explicitly asked to create a skill and none was
+      // parsed, capture the model's prose reply as the skill's instructions.
+      if (skillRequest && !skillWasSaved) {
+        const instructions = contentWithoutSkills.trim()
+        if (instructions) {
+          const name = deriveSkillName(skillRequest.description)
+          try {
+            const saved = dbSkills.upsert({
+              id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              name,
+              description: skillRequest.description.slice(0, 120),
+              instructions,
+              createdBy: 'model'
+            })
+            emitSkillSaved(saved)
+            storedContent = `✅ Saved skill **/${saved.name}** — run it any time by typing \`/${saved.name}\`.\n\nIt will follow these instructions:\n\n> ${instructions.replace(/\n/g, '\n> ')}`
+          } catch {
+            // ignore — keep the original reply if saving fails
+          }
+        }
+      }
+
+
       dbMessages.update(assistantMsgId, {
-        content: accumulated,
+        content: storedContent,
         reasoningContent: reasoningAccumulated || undefined,
         thinkingDurationMs: totalThinkingDurationMs,
         shellIds,
@@ -637,12 +729,30 @@ export async function startChatGeneration(
         messageId: assistantMsgId,
         generationId,
         contentDelta: '',
+        correctedContent: storedContent !== accumulated ? storedContent : undefined,
         thinkingDurationMs: totalThinkingDurationMs,
         done: true,
         usage,
         finishReason,
         eventType: 'done'
       })
+
+      try {
+        const path = getBranchPath(dbMessages.listForConversation(conversationId), assistantMsgId)
+        const lastUser = [...path].reverse().find((m) => m.role === 'user')
+        void extractAndStoreMemories({
+          conversationId,
+          messageId: assistantMsgId,
+          userText: content?.trim() || lastUser?.content || '',
+          assistantText: accumulated
+        }).then((saved) => {
+          if (saved.length && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('memory:saved', saved)
+          }
+        })
+      } catch {
+        // memory extraction is best-effort
+      }
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const totalThinkingDurationMs =

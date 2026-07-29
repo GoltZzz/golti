@@ -197,6 +197,65 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     sql: `
       ALTER TABLE messages ADD COLUMN finish_reason TEXT;
     `
+  },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'fact',
+        content TEXT NOT NULL,
+        source_conversation_id TEXT,
+        source_message_id TEXT,
+        embedding BLOB,
+        embedding_model TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (source_conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+        memory_id UNINDEXED,
+        content,
+        content=''
+      );
+    `
+  },
+  {
+    version: 5,
+    sql: `
+      ALTER TABLE memories ADD COLUMN category TEXT NOT NULL DEFAULT 'General';
+      ALTER TABLE memories ADD COLUMN title TEXT NOT NULL DEFAULT '';
+      ALTER TABLE memories ADD COLUMN summary TEXT NOT NULL DEFAULT '';
+      ALTER TABLE memories ADD COLUMN details TEXT NOT NULL DEFAULT '[]';
+
+      UPDATE memories SET summary = content WHERE summary = '';
+      UPDATE memories SET title = kind WHERE title = '';
+    `
+  },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL,
+        created_by TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
+    `
+  },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE messages ADD COLUMN display_content TEXT;
+    `
   }
 ]
 

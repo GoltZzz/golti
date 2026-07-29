@@ -11,6 +11,7 @@ import {
   chatConversations,
   chatMessages
 } from './chat-repos'
+import { chatSkills, seedDefaultSkills } from './skill-repos'
 
 interface DBData {
   settings: Settings
@@ -45,9 +46,11 @@ const defaultSettings: Settings = {
   systemPrompt:
     'You are Golti, an intelligent, helpful AI personal assistant. Note: Golti is your name; do not confuse general terms or technologies (such as the Go/Golang programming language) with the app.',
   engineEnabled: true,
+  memoryEnabled: true,
   enginePort: 8391,
   engineGpuLayers: -1,
   engineDevice: 'auto',
+  memoryModel: undefined,
   webSearch: {
     provider: 'local',
     maxResults: 5,
@@ -195,6 +198,7 @@ export function migrateChatToSqlite(): void {
 
 export function initDatabase(): void {
   migrateChatToSqlite()
+  seedDefaultSkills()
 }
 
 // Conversation DB Helper Methods — SQLite-backed
@@ -225,6 +229,7 @@ export const dbContext = chatContext
 export const dbArtifacts = chatArtifacts
 export const dbShells = chatShells
 export const dbCitations = chatCitations
+export const dbSkills = chatSkills
 
 // Provider DB Helper Methods — JSON
 export const dbProviders = {

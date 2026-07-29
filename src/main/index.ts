@@ -9,9 +9,14 @@ import {
   dbMessages,
   dbProviders,
   dbSettings,
+  dbSkills,
   initDatabase
 } from './db/database'
 import { getAllModels } from './ai/provider-manager'
+import { chatMemories } from './db/memory-repos'
+import { embedText, cosineSimilarity } from './engine/embeddings'
+import { prewarmEmbeddingServer, stopEmbeddingServer } from './engine/embedding-server'
+import { prewarmMemoryServer, stopMemoryServer } from './engine/memory-server'
 import {
   cancelAllGenerations,
   cancelGeneration,
@@ -69,6 +74,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
+import { normalizeSkillName } from '../shared/types'
 
 const execAsync = promisify(exec)
 
@@ -409,6 +415,8 @@ app.whenReady().then(() => {
   // Auto-init engine if enabled
   initEngine().catch((err) => console.warn('[Engine Init Warning]', err))
   initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
+  prewarmEmbeddingServer().catch((err) => console.warn('[EmbeddingServer Init Warning]', err))
+  prewarmMemoryServer().catch((err) => console.warn('[MemoryServer Init Warning]', err))
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -449,7 +457,8 @@ app.on('before-quit', (event) => {
     cancelAllGenerations()
   }
 
-  Promise.all([stopEngine(), stopSearchRuntime()])
+  stopMemoryServer()
+  Promise.all([stopEngine(), stopSearchRuntime(), stopEmbeddingServer()])
     .catch((err) => console.warn('[Quit cleanup]', err))
     .finally(() => {
       cleanupComplete = true
@@ -517,6 +526,56 @@ function setupIpcHandlers(): void {
     dbContext.delete(id)
     return true
   })
+
+  // Memories (Brain & Memory)
+  ipcMain.handle('memory:list', () => chatMemories.list())
+  ipcMain.handle('memory:delete', (_, id: string) => chatMemories.delete(id))
+  ipcMain.handle('memory:search', async (_, query: string) => {
+    const q = String(query || '').trim()
+    if (!q) return []
+    const embedResult = await embedText(q)
+    if (embedResult) {
+      const rows = chatMemories.listWithEmbeddings()
+      const scored = rows
+        .filter((r) => r.embedding && r.embedding.length)
+        .map((r) => {
+          const { embedding, ...mem } = r
+          return { ...mem, score: cosineSimilarity(embedResult.vector, embedding as number[]) }
+        })
+        .filter((r) => r.score > 0.2)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20)
+      if (scored.length > 0) return scored
+    }
+    return chatMemories.searchText(q).map((m) => ({ ...m, score: 0 }))
+  })
+
+  // Skills
+  ipcMain.handle('skills:list', () => dbSkills.list())
+  ipcMain.handle(
+    'skills:create',
+    (_, input: { name: string; description?: string; instructions: string }) => {
+      const name = normalizeSkillName(input.name)
+      if (!name) throw new Error('Skill name is required')
+      if (!input.instructions?.trim()) throw new Error('Skill instructions are required')
+      return dbSkills.upsert({
+        id: `skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        description: input.description?.trim() || '',
+        instructions: input.instructions.trim(),
+        createdBy: 'user'
+      })
+    }
+  )
+  ipcMain.handle(
+    'skills:update',
+    (_, id: string, input: { name?: string; description?: string; instructions?: string }) => {
+      const patch = { ...input }
+      if (patch.name !== undefined) patch.name = normalizeSkillName(patch.name)
+      return dbSkills.update(id, patch)
+    }
+  )
+  ipcMain.handle('skills:delete', (_, id: string) => dbSkills.delete(id))
 
   // Artifacts
   ipcMain.handle('artifacts:list', (_, conversationId: string) =>

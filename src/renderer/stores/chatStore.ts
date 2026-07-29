@@ -16,7 +16,8 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_RESERVED_OUTPUT,
   getActiveLeaf,
-  getBranchPath
+  getBranchPath,
+  expandSlashCommand
 } from '../../shared/chat-utils'
 import { useModelCapabilityStore } from './modelCapabilityStore'
 import {
@@ -25,6 +26,7 @@ import {
   type ResearchProgress
 } from '../../shared/research-progress'
 import { useInspectorStore } from './inspectorStore'
+import { useSkillStore } from './skillStore'
 
 declare global {
   interface Window {
@@ -48,6 +50,7 @@ interface ChatState {
   selectedModel: ModelInfo | null
   isLoadingModels: boolean
   isLoadingConversation: boolean
+  isBlankConversation: boolean
   conversationError: string | null
   isGenerating: boolean
   activeGenerationId: string | null
@@ -67,6 +70,7 @@ interface ChatState {
   researchProgressByMessageId: Record<string, ResearchProgress>
   generationSettings: GenerationSettings
   draft: string
+  draftsByConversationId: Record<string, string>
   draftUndoStack: string[]
   draftRedoStack: string[]
   actionUndoStack: UndoEntry[]
@@ -184,6 +188,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectedModel: null,
   isLoadingModels: false,
   isLoadingConversation: false,
+  isBlankConversation: false,
   conversationError: null,
   isGenerating: false,
   activeGenerationId: null,
@@ -201,6 +206,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   researchProgressByMessageId: {},
   generationSettings: { temperature: 0.7, topP: 0.9 },
   draft: '',
+  draftsByConversationId: {},
   draftUndoStack: [],
   draftRedoStack: [],
   actionUndoStack: [],
@@ -234,6 +240,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const convs = await window.goltiAPI.getConversations()
       const currentId = get().currentConversationId
       set({ conversations: convs })
+      if (get().isBlankConversation && !currentId) {
+        return
+      }
       if (convs.length > 0 && !currentId) {
         await get().selectConversation(convs[0].id)
       } else if (currentId && !convs.some((c: Conversation) => c.id === currentId)) {
@@ -251,7 +260,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       ...conversationScopedReset(),
       currentConversationId: id,
+      draft: get().draftsByConversationId[id] ?? '',
       isLoadingConversation: true,
+      isBlankConversation: false,
       // keep generation settings until we load conversation-specific ones
       generationSettings: get().generationSettings
     })
@@ -336,6 +347,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: [newConv, ...state.conversations.filter((c) => c.id !== newConv.id)],
       currentConversationId: newConv.id,
       isLoadingConversation: false,
+      isBlankConversation: false,
       generationSettings: { temperature: 0.7, topP: 0.9 }
     }))
     selectSeq += 1
@@ -365,6 +377,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...conversationScopedReset(),
       currentConversationId: null,
       isLoadingConversation: false,
+      isBlankConversation: true,
       generationSettings: { temperature: 0.7, topP: 0.9 }
     })
     selectSeq += 1
@@ -432,8 +445,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content, options) => {
-    const text = (content ?? get().draft).trim()
+    const rawInput = (content ?? get().draft).trim()
+    const text = expandSlashCommand(rawInput, useSkillStore.getState().skills)
     if (!text || get().isGenerating) return
+
+    const skillMatch = /^\/skill\b\s*([\s\S]*)$/i.exec(rawInput)
+    const skillRequest = skillMatch
+      ? { description: skillMatch[1].trim() || 'a skill based on what we have been discussing' }
+      : undefined
 
     let convId = get().currentConversationId
     if (!convId) {
@@ -463,6 +482,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: convId,
       role: 'user',
       content: text,
+      displayContent: text !== rawInput ? rawInput : undefined,
       createdAt: now,
       parentId: conv?.activeLeafId ?? null
     }
@@ -494,6 +514,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? state.generatingConversationIds
           : [...state.generatingConversationIds, convId!],
         draft: '',
+        draftsByConversationId: (() => {
+          const { [convId!]: _, ...rest } = state.draftsByConversationId
+          return rest
+        })(),
         draftUndoStack: [],
         draftRedoStack: [],
         forceWebSearchNext: false,
@@ -505,6 +529,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const result = await window.goltiAPI.sendMessage({
       conversationId: convId,
       content: text,
+      displayContent: text !== rawInput ? rawInput : undefined,
       model: modelName,
       providerId,
       systemPrompt: conv?.systemPrompt || settings?.systemPrompt,
@@ -516,7 +541,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       contextItemIds: get()
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
-      generationSettings: get().generationSettings
+      generationSettings: get().generationSettings,
+      skillRequest
     })
 
     set((state) => {
@@ -1167,19 +1193,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setDraft: (text, pushHistory = true) => {
+    const convId = get().currentConversationId
+    const persist = (s: ChatState) =>
+      convId
+        ? { draftsByConversationId: { ...s.draftsByConversationId, [convId]: text } }
+        : {}
     if (pushHistory) {
       const prev = get().draft
       if (prev !== text) {
         set((s) => ({
           draft: text,
           draftUndoStack: [...s.draftUndoStack.slice(-49), prev],
-          draftRedoStack: []
+          draftRedoStack: [],
+          ...persist(s)
         }))
         get().refreshBudget(text)
         return
       }
     }
-    set({ draft: text })
+    set((s) => ({ draft: text, ...persist(s) }))
     get().refreshBudget(text)
   },
 
@@ -1190,7 +1222,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({
       draft: prev,
       draftUndoStack: s.draftUndoStack.slice(0, -1),
-      draftRedoStack: [...s.draftRedoStack, s.draft]
+      draftRedoStack: [...s.draftRedoStack, s.draft],
+      ...(s.currentConversationId
+        ? { draftsByConversationId: { ...s.draftsByConversationId, [s.currentConversationId]: prev } }
+        : {})
     }))
     get().refreshBudget(prev)
   },
@@ -1202,7 +1237,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({
       draft: next,
       draftRedoStack: s.draftRedoStack.slice(0, -1),
-      draftUndoStack: [...s.draftUndoStack, s.draft]
+      draftUndoStack: [...s.draftUndoStack, s.draft],
+      ...(s.currentConversationId
+        ? { draftsByConversationId: { ...s.draftsByConversationId, [s.currentConversationId]: next } }
+        : {})
     }))
     get().refreshBudget(next)
   },

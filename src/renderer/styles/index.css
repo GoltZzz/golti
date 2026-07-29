@@ -2,6 +2,7 @@
 @import './animations.css';
 @import './cookbook.css';
 @import './chat.css';
+@import './settings.css';
 
 /* Global Reset */
 *, *::before, *::after {
@@ -83,3 +84,176 @@ input:focus-visible, textarea:focus-visible {
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Interactive clarifying-question card (ask-user skill) */
+.ask-user-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.ask-user-card {
+  margin-top: 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: 12px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.ask-user-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 12px 10px 14px;
+}
+
+.ask-user-question {
+  flex: 1;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.ask-user-head-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.ask-user-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ask-user-icon-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-user-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.ask-user-option:hover:not(:disabled),
+.ask-user-option[data-selected='true'] {
+  background: var(--bg-card-hover);
+}
+
+.ask-user-option:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ask-user-option-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ask-user-option-label {
+  font-weight: 500;
+}
+
+.ask-user-option-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ask-user-option-key {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ask-user-freeform {
+  padding: 0 14px 12px;
+}
+
+.ask-user-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.ask-user-input:focus {
+  outline: none;
+  border-color: var(--border-accent);
+}
+
+.ask-user-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ask-user-skip,
+.ask-user-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ask-user-skip {
+  border: 1px solid var(--border-medium);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ask-user-skip:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.ask-user-submit {
+  border: 1px solid var(--border-accent);
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.ask-user-skip:disabled,
+.ask-user-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+

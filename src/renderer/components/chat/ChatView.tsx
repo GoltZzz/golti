@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Zap, PanelRight, Undo2, Redo2, MessageSquarePlus, Code2, Sparkles, Layers } from 'lucide-react'
+import { Zap, PanelRight, Undo2, Redo2, Code2, Sparkles, Layers } from 'lucide-react'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { InspectorPanel } from './InspectorPanel'
@@ -13,7 +13,6 @@ export const ChatView: React.FC = () => {
     sendMessage,
     isGenerating,
     fetchConversations,
-    newConversation,
     setupStreamListener,
     undoAction,
     redoAction,
@@ -90,12 +89,7 @@ export const ChatView: React.FC = () => {
     <div className="chat-workspace">
       <div className={`chat-main ${isLanding ? 'is-landing-mode' : ''}`}>
         <div className={`chat-header ${isHeaderScrolled ? 'is-scrolled' : ''}`}>
-          <div className="chat-header-left">
-            <button className="chat-ghost-btn" onClick={() => newConversation()} aria-label="New thread">
-              <MessageSquarePlus size={14} />
-              <span>New Thread</span>
-            </button>
-          </div>
+          <div className="chat-header-left" />
           <div className="chat-header-actions">
             <button
               className="chat-icon-btn"

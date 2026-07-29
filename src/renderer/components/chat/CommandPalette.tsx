@@ -22,6 +22,7 @@ export interface CommandItem {
 
 interface CommandPaletteProps {
   filter: string
+  trigger?: '@' | '/'
   onClose: () => void
   onSelect: (command: CommandItem) => void
   commands: CommandItem[]
@@ -30,10 +31,12 @@ interface CommandPaletteProps {
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
   filter,
+  trigger = '@',
   onClose,
   onSelect,
   commands
 }) => {
+  const isSkills = trigger === '/'
   const containerRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = React.useState(0)
 
@@ -89,14 +92,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   return (
     <div ref={containerRef} className="command-palette animate-fade-in" role="menu">
       <div className="command-palette-header">
-        <span>Tools & Context</span>
-        {filter && <span className="command-palette-filter">@{filter}</span>}
+        <span>{isSkills ? 'Skills' : 'Tools & Context'}</span>
+        {filter && <span className="command-palette-filter">{trigger}{filter}</span>}
       </div>
       <div className="command-palette-list">
         {filteredCommands.map((cmd, idx) => (
           <button
             key={cmd.id}
-            className={`command-item ${idx === selectedIndex ? 'is-selected' : ''} ${cmd.isActive ? 'is-active' : ''}`}
+            className={`command-item ${idx === selectedIndex ? 'is-selected' : ''} ${cmd.isActive ? 'is-active' : ''} ${isSkills ? 'is-skill' : ''}`}
             onClick={() => onSelect(cmd)}
             onMouseEnter={() => setSelectedIndex(idx)}
             role="menuitem"
@@ -104,7 +107,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             <div className="command-item-icon">{cmd.icon}</div>
             <div className="command-item-content">
               <div className="command-item-label">
-                <span>{cmd.label}</span>
+                <span>{isSkills && cmd.id !== '__new-skill' ? `/${cmd.label}` : cmd.label}</span>
                 {cmd.isActive && <Check size={12} className="command-active-check" />}
               </div>
               {cmd.description && <div className="command-item-desc">{cmd.description}</div>}

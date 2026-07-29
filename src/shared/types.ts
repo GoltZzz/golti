@@ -113,6 +113,64 @@ export interface Citation {
   rank?: number
 }
 
+export interface Memory {
+  id: string
+  category: string
+  title: string
+  summary: string
+  details: string[]
+  sourceConversationId?: string
+  sourceMessageId?: string
+  embeddingModel?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export function memorySearchText(m: Pick<Memory, 'title' | 'summary' | 'details'>): string {
+  return [m.title, m.summary, ...m.details].filter(Boolean).join('\n')
+}
+
+export interface MemorySearchHit extends Memory {
+  score: number
+}
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  instructions: string
+  createdBy: 'user' | 'model'
+  createdAt: number
+  updatedAt: number
+}
+
+/** Normalize a skill name into a slug usable as a /slash-command. */
+export function normalizeSkillName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+}
+
+const SKILL_NAME_STOPWORDS = new Set([
+  'a', 'an', 'the', 'for', 'to', 'of', 'that', 'this', 'me', 'my', 'i', 'you',
+  'and', 'or', 'with', 'skill', 'create', 'make', 'about', 'like', 'when', 'asking',
+  'ask', 'please', 'can', 'help'
+])
+
+/** Derive a short hyphenated skill name from a free-text description. */
+export function deriveSkillName(description: string): string {
+  const words = description
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !SKILL_NAME_STOPWORDS.has(w))
+  const picked = (words.length ? words : description.split(/\s+/)).slice(0, 4).join('-')
+  return normalizeSkillName(picked) || `skill-${Date.now().toString(36).slice(-4)}`
+}
+
 export interface MessagePart {
   type: 'text' | 'context_ref' | 'citation_ref' | 'shell_ref' | 'artifact_ref'
   text?: string
@@ -142,6 +200,7 @@ export interface Message {
   conversationId: string
   role: MessageRole
   content: string
+  displayContent?: string
   model?: string
   tokensIn?: number
   tokensOut?: number
@@ -245,6 +304,8 @@ export interface WebSearchStatus {
 export interface SendMessagePayload {
   conversationId: string
   content: string
+  /** What to show in the user bubble when `content` was expanded from a /skill. */
+  displayContent?: string
   model: string
   providerId: string
   systemPrompt?: string
@@ -266,6 +327,8 @@ export interface SendMessagePayload {
   contextItemIds?: string[]
   generationSettings?: GenerationSettings
   continueMessageId?: string
+  /** Set when the user ran /skill: capture this reply as a new skill's instructions. */
+  skillRequest?: { description: string }
 }
 
 export type StreamEventType =
@@ -474,12 +537,15 @@ export interface Settings {
   systemPrompt: string
   osPlatformOverride?: 'auto' | 'darwin' | 'win32' | 'linux'
   engineEnabled: boolean
+  memoryEnabled: boolean
   engineModelDir?: string
   enginePort: number
   /** GPU layers to offload. Negative = Auto (size from VRAM), 0 = CPU-only, N = exact. */
   engineGpuLayers: number
   /** GPU offload target: 'auto' (pick discrete GPU), 'cpu' (no offload), or a device id like 'Vulkan1'. */
   engineDevice?: string
+  /** GGUF filename of the model used for memory extraction. Empty/undefined = reuse the loaded chat model. */
+  memoryModel?: string
   webSearch?: WebSearchSettings
   /** When true, composer Web Search toggle is on (Auto intent). */
   webSearchEnabled?: boolean
