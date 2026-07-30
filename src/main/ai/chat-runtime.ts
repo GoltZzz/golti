@@ -79,11 +79,11 @@ const ASK_USER_SYSTEM_SUFFIX = [
   'When the request is missing a detail you need, ask the user instead of guessing. Emit ONE ask-user block and nothing else — no text before or after it.',
   'The block is valid JSON inside these fences:',
   '```ask-user',
-  '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means", "recommended": true }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true, "multiSelect": false }',
+  '{ "reasoning": "Why this matters", "aspect": "Goal|Constraint|Trade-off|Priority|Scope|Edge case|Clarification", "question": "Short, specific question?", "confidence": 1, "assumptions": ["stated assumptions"], "options": [{ "label": "Option A", "description": "What picking this means", "recommended": true, "recommendedRationale": "Why recommended" }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true, "multiSelect": false }',
   '```',
-  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first with "recommended": true on it. Each option needs a short "label" plus a one-line "description". Set "multiSelect": true if multiple options can be chosen at once. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form (a name, a number, a path).',
-  'An optional "confidence" key (integer 1-5) is also recognized: it reports how well you understand the request so far, and renders as a progress indicator. Include it only when you are running a multi-question interview; otherwise leave it out.',
-  'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up like "what are you trying to build?"; never ask what you can already work out yourself — decide it and state the assumption; keep options concrete and genuinely different, not reworded versions of each other.'
+  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first with "recommended": true and "recommendedRationale" on it. Include "reasoning", "aspect", and "assumptions" when applicable. Set "multiSelect": true if multiple options can be chosen at once. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form.',
+  'An optional "confidence" key (integer 1-5) reports how well you understand the request so far. When confidence reaches 5, emit a final summary block with type: "summary" and summary: { decisions: [...], assumptions: [...], tradeoffs: [...] }.',
+  'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up; state assumptions explicitly; keep options concrete and genuinely different.'
 ].join('\n')
 
 const ASK_USER_RETRY_NOTE = [

@@ -54,4 +54,64 @@ describe('extractAskUser', () => {
     const tLow = '```ask-user\n{ "question": "Start", "confidence": -2 }\n```'
     expect(extractAskUser(tLow)!.confidence).toBe(1)
   })
+
+  it('parses new grill-me revamp fields: reasoning, aspect, assumptions, recommendedRationale, summary', () => {
+    const t = `\`\`\`ask-user
+{
+  "reasoning": "Need to clarify target audience to choose architecture",
+  "aspect": "Goal",
+  "question": "Who is the primary user?",
+  "confidence": 2,
+  "assumptions": ["Assuming high concurrency is needed", "Assuming mobile first"],
+  "options": [
+    {
+      "label": "Consumers",
+      "description": "B2C mobile users",
+      "recommended": true,
+      "recommendedRationale": "Most common for task apps"
+    },
+    {
+      "label": "Enterprise",
+      "description": "B2B desktop users"
+    }
+  ]
+}
+\`\`\``
+    const r = extractAskUser(t)!
+    expect(r.reasoning).toBe('Need to clarify target audience to choose architecture')
+    expect(r.aspect).toBe('Goal')
+    expect(r.assumptions).toEqual(['Assuming high concurrency is needed', 'Assuming mobile first'])
+    expect(r.options[0].recommendedRationale).toBe('Most common for task apps')
+
+    const tSummary = `\`\`\`ask-user
+{
+  "type": "summary",
+  "confidence": 5,
+  "question": "Here's my understanding:",
+  "summary": {
+    "decisions": [{ "label": "Goal", "value": "Build task app" }],
+    "assumptions": [{ "label": "Tech", "value": "React + Vite" }],
+    "tradeoffs": [{ "chosen": "Speed", "over": "Features", "reason": "Fast launch" }]
+  }
+}
+\`\`\``
+    const s = extractAskUser(tSummary)!
+    expect(s.type).toBe('summary')
+    expect(s.confidence).toBe(5)
+    expect(s.summary).toBeDefined()
+    expect(s.summary?.decisions).toEqual([{ label: 'Goal', value: 'Build task app' }])
+    expect(s.summary?.assumptions).toEqual([{ label: 'Tech', value: 'React + Vite' }])
+    expect(s.summary?.tradeoffs).toEqual([{ chosen: 'Speed', over: 'Features', reason: 'Fast launch' }])
+  })
+
+  it('recovers from truncated JSON when response hits output token limit', () => {
+    const truncated = `{ "question": "Which language?", "confidence": 4, "options": [ { "label": "Go", "description": "Fast" }, { "label": "Rust", "description": "Safe" } ], "allow`
+    const r = extractAskUser(truncated)!
+    expect(r).not.toBeNull()
+    expect(r.question).toBe('Which language?')
+    expect(r.options).toEqual([
+      { label: 'Go', description: 'Fast' },
+      { label: 'Rust', description: 'Safe' }
+    ])
+  })
 })

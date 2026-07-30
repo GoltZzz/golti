@@ -21,7 +21,11 @@ import {
   CornerDownLeft,
   ChevronDown,
   X,
-  Cpu
+  Cpu,
+  HelpCircle,
+  RotateCcw,
+  Sparkles,
+  Undo2
 } from 'lucide-react'
 import { EggLogo } from '../brand/EggLogo'
 import type { Message } from '../../../shared/types'
@@ -30,6 +34,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useInspectorStore } from '../../stores/inspectorStore'
 import {
   getSiblings,
+  getBranchPath,
   parseEngineMemoryError,
   extractAskUser,
   stripAskUser,
@@ -120,10 +125,43 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
     return parseEngineMemoryError(message.content || message.error, message.model)
   }, [isUser, message.content, message.error, message.model])
 
+  const allMessages = useChatStore((s) => s.messages)
+
   const askUser = useMemo(
     () => (isUser || message.isStreaming ? null : extractAskUser(cleanContent)),
     [isUser, message.isStreaming, cleanContent]
   )
+
+  const askUserHistory = useMemo(() => {
+    if (isUser || !allMessages.length || !message) return { questionNumber: 1, history: [] }
+    const branch = getBranchPath(allMessages, message.id)
+    const askUserList: Array<{ assistantMsgId: string; userMsgId?: string; prompt: AskUserPrompt; userResponse?: string }> = []
+
+    for (let i = 0; i < branch.length; i++) {
+      const m = branch[i]
+      if (m.role === 'assistant') {
+        const parsed = extractAskUser(m.content || '')
+        if (parsed) {
+          const nextUser = branch[i + 1]?.role === 'user' ? branch[i + 1] : undefined
+          askUserList.push({
+            assistantMsgId: m.id,
+            userMsgId: nextUser?.id,
+            prompt: parsed,
+            userResponse: nextUser?.displayContent || nextUser?.content
+          })
+        }
+      }
+    }
+
+    const currentIndex = askUserList.findIndex((item) => item.assistantMsgId === message.id)
+    const questionNumber = currentIndex >= 0 ? currentIndex + 1 : Math.max(1, askUserList.length)
+    const pastHistory = currentIndex >= 0 ? askUserList.slice(0, currentIndex) : askUserList
+
+    return {
+      questionNumber,
+      history: pastHistory.filter((item): item is { assistantMsgId: string; userMsgId: string; prompt: AskUserPrompt; userResponse: string } => Boolean(item.userMsgId && item.userResponse))
+    }
+  }, [allMessages, message.id, isUser, message.content])
 
   const streamingAsk = useMemo(
     () =>
@@ -367,7 +405,24 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                 </div>
               )}
 
-              {askUser && <AskUserCard prompt={askUser} disabled={isGenerating} onAnswer={answerAskUser} />}
+              {askUser && (
+                <AskUserCard
+                  prompt={askUser}
+                  questionNumber={askUserHistory.questionNumber}
+                  history={askUserHistory.history}
+                  disabled={isGenerating}
+                  onAnswer={answerAskUser}
+                  onRevise={(userMsgId) => {
+                    const target = allMessages.find((m) => m.id === userMsgId)
+                    if (target) {
+                      const newAns = window.prompt(`Revise your previous answer:`, target.displayContent || target.content)
+                      if (newAns !== null && newAns.trim() && newAns.trim() !== (target.displayContent || target.content)) {
+                        editAndResend(userMsgId, newAns.trim())
+                      }
+                    }
+                  }}
+                />
+              )}
 
               {memoryErrorDetails?.isMemoryError && (
                 <EngineMemoryErrorCard
@@ -569,21 +624,128 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
 
 MessageBubble.displayName = 'MessageBubble'
 
-interface AskUserCardProps {
-  prompt: AskUserPrompt
-  disabled: boolean
-  onAnswer: (answer: string) => void
+interface GmConfidenceProps {
+  confidence?: number
+  isConclusion?: boolean
 }
 
-const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer }) => {
+const GmConfidence: React.FC<GmConfidenceProps> = ({ confidence, isConclusion }) => {
+  if (confidence === undefined) return null
+  const level = Math.min(5, Math.max(1, confidence))
+  const label = isConclusion ? 'Understood' : `Understanding ${level}/5`
+
+  return (
+    <div className="gm-confidence" title={`Understanding level: ${level} of 5`}>
+      <span className="gm-confidence-label">{label}</span>
+      <span className="gm-confidence-dots" aria-hidden="true">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <span
+            key={n}
+            className="gm-confidence-dot"
+            data-filled={n <= level}
+            data-level={level}
+          />
+        ))}
+      </span>
+    </div>
+  )
+}
+
+interface GmSummaryCardProps {
+  summary: AskUserPrompt['summary']
+}
+
+const GmSummaryCard: React.FC<GmSummaryCardProps> = ({ summary }) => {
+  if (!summary) return null
+  const { decisions, assumptions, tradeoffs } = summary
+
+  return (
+    <div className="gm-summary">
+      {decisions && decisions.length > 0 && (
+        <div className="gm-summary-section">
+          <div className="gm-summary-section-title">
+            <Check size={12} className="gm-summary-icon gm-summary-icon--decision" />
+            <span>Decisions & Requirements</span>
+          </div>
+          <div className="gm-summary-grid">
+            {decisions.map((d, i) => (
+              <div key={i} className="gm-summary-item">
+                <span className="gm-summary-key">{d.label}</span>
+                <span className="gm-summary-val">{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {assumptions && assumptions.length > 0 && (
+        <div className="gm-summary-section">
+          <div className="gm-summary-section-title">
+            <HelpCircle size={12} className="gm-summary-icon gm-summary-icon--assumption" />
+            <span>Stated Assumptions</span>
+          </div>
+          <div className="gm-summary-grid">
+            {assumptions.map((a, i) => (
+              <div key={i} className="gm-summary-item">
+                <span className="gm-summary-key">{a.label}</span>
+                <span className="gm-summary-val">{a.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tradeoffs && tradeoffs.length > 0 && (
+        <div className="gm-summary-section">
+          <div className="gm-summary-section-title">
+            <RotateCcw size={12} className="gm-summary-icon gm-summary-icon--tradeoff" />
+            <span>Trade-offs & Balance</span>
+          </div>
+          <div className="gm-summary-tradeoffs">
+            {tradeoffs.map((t, i) => (
+              <div key={i} className="gm-tradeoff-card">
+                <div className="gm-tradeoff-row">
+                  <span className="gm-tradeoff-chosen">{t.chosen}</span>
+                  <span className="gm-tradeoff-vs">over</span>
+                  <span className="gm-tradeoff-over">{t.over}</span>
+                </div>
+                {t.reason && <div className="gm-tradeoff-reason">{t.reason}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface AskUserCardProps {
+  prompt: AskUserPrompt
+  questionNumber: number
+  history: Array<{ assistantMsgId: string; userMsgId: string; prompt: AskUserPrompt; userResponse: string }>
+  disabled: boolean
+  onAnswer: (answer: string) => void
+  onRevise: (userMsgId: string) => void
+}
+
+const AskUserCard: React.FC<AskUserCardProps> = ({
+  prompt,
+  questionNumber,
+  history,
+  disabled,
+  onAnswer,
+  onRevise
+}) => {
   const [freeText, setFreeText] = useState('')
   const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set())
-  const [otherOpen, setOtherOpen] = useState(prompt.options.length === 0)
+  const [otherOpen, setOtherOpen] = useState((prompt.options || []).length === 0)
   const [answered, setAnswered] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [dismissed, setDismissed] = useState(false)
-  const otherIndex = prompt.options.length + 1
+  const [showRevise, setShowRevise] = useState(false)
 
+  const options = prompt.options || []
+  const otherIndex = options.length + 1
   const isMulti = Boolean(prompt.multiSelect)
 
   const submit = (value: string) => {
@@ -622,7 +784,7 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
     if (otherOpen) {
       submit(freeText)
     } else {
-      const selectedList = prompt.options
+      const selectedList = options
         .map((o) => o.label)
         .filter((l) => selectedSet.has(l))
       if (selectedList.length > 0) {
@@ -641,9 +803,9 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
       if (n === otherIndex) {
         e.preventDefault()
         chooseOther()
-      } else if (n >= 1 && n <= prompt.options.length) {
+      } else if (n >= 1 && n <= options.length) {
         e.preventDefault()
-        toggleOption(prompt.options[n - 1].label)
+        toggleOption(options[n - 1].label)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -654,55 +816,42 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
 
   const canSubmit = otherOpen ? Boolean(freeText.trim()) : selectedSet.size > 0
   const confidence = prompt.confidence
-  const isConclusion = confidence === 5
+  const isConclusion = prompt.type === 'summary' || confidence === 5
+  const aspectClass = prompt.aspect
+    ? `gm-aspect--${prompt.aspect.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+    : ''
 
   return (
     <div
-      className="ask-user-card"
+      className={`gm-card ${isConclusion ? 'gm-card--summary' : ''} ask-user-card`}
       data-answered={answered}
       data-multi-select={isMulti}
       data-conclusion={isConclusion || undefined}
     >
-      <div className="ask-user-head">
-        <div className="ask-user-question">
-          {confidence !== undefined && (
-            <div
-              className="ask-user-confidence"
-              role="img"
-              aria-label={`Understanding: ${confidence} of 5`}
-            >
-              <span className="ask-user-confidence-label">
-                {isConclusion ? 'Understood' : 'Understanding'}
-              </span>
-              <span className="ask-user-confidence-dots" aria-hidden="true">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <span
-                    key={n}
-                    className="ask-user-confidence-dot"
-                    data-filled={n <= confidence}
-                  />
-                ))}
-              </span>
-            </div>
+      <div className="gm-header ask-user-head">
+        <div className="gm-header-left ask-user-question">
+          {prompt.aspect && (
+            <span className={`gm-aspect-pill ${aspectClass}`}>
+              {prompt.aspect}
+            </span>
           )}
-          <span className="ask-user-question-text">{prompt.question}</span>
-          {isMulti && (
-            <span className="ask-user-multi-badge">Select all that apply</span>
-          )}
+          <GmConfidence confidence={confidence} isConclusion={isConclusion} />
+          <span className="gm-question-badge">Q{questionNumber}</span>
         </div>
-        <div className="ask-user-head-actions">
+
+        <div className="gm-header-actions ask-user-head-actions">
           <button
-            className="ask-user-icon-btn"
+            className="gm-icon-btn ask-user-icon-btn"
             type="button"
-            aria-label={collapsed ? 'Expand question' : 'Collapse question'}
+            aria-label={collapsed ? 'Expand card' : 'Collapse card'}
             onClick={() => setCollapsed((c) => !c)}
           >
             <ChevronDown size={14} style={{ transform: collapsed ? 'rotate(-90deg)' : undefined }} />
           </button>
           <button
-            className="ask-user-icon-btn"
+            className="gm-icon-btn ask-user-icon-btn"
             type="button"
-            aria-label="Dismiss question"
+            aria-label="Dismiss card"
             onClick={() => setDismissed(true)}
           >
             <X size={14} />
@@ -712,108 +861,205 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
 
       {!collapsed && (
         <>
-          <div className="ask-user-options">
-            {prompt.options.map((opt, i) => {
-              const isSelected = selectedSet.has(opt.label)
-              return (
-                <button
-                  key={opt.label}
-                  className="ask-user-option"
-                  type="button"
-                  disabled={disabled || answered}
-                  aria-pressed={isSelected}
-                  data-selected={isSelected}
-                  data-recommended={opt.recommended}
-                  onClick={() => toggleOption(opt.label)}
-                >
-                  <span className="ask-user-option-indicator">
-                    {isMulti ? (
-                      <span className={`ask-user-checkbox ${isSelected ? 'is-checked' : ''}`}>
-                        {isSelected && <Check size={10} />}
-                      </span>
-                    ) : (
-                      <span className={`ask-user-radio ${isSelected ? 'is-checked' : ''}`} />
-                    )}
-                  </span>
-                  <span className="ask-user-option-text">
-                    <span className="ask-user-option-label-row">
-                      <span className="ask-user-option-label">{opt.label}</span>
-                      {opt.recommended && (
-                        <span className="ask-user-recommended-badge">Recommended</span>
-                      )}
-                    </span>
-                    {opt.description && (
-                      <span className="ask-user-option-desc">{opt.description}</span>
-                    )}
-                  </span>
-                  <span className="ask-user-option-key">{i + 1}</span>
-                </button>
-              )
-            })}
+          {prompt.reasoning && (
+            <details className="gm-reasoning">
+              <summary className="gm-reasoning-summary">
+                <HelpCircle size={12} />
+                <span>Why I'm asking this</span>
+              </summary>
+              <p className="gm-reasoning-text">{prompt.reasoning}</p>
+            </details>
+          )}
 
-            {prompt.allowFreeText && (
-              <button
-                className="ask-user-option is-other"
-                type="button"
-                disabled={disabled || answered}
-                data-selected={otherOpen}
-                onClick={chooseOther}
-              >
-                <span className="ask-user-option-indicator">
-                  {isMulti ? (
-                    <span className={`ask-user-checkbox ${otherOpen ? 'is-checked' : ''}`}>
-                      {otherOpen && <Check size={10} />}
-                    </span>
-                  ) : (
-                    <span className={`ask-user-radio ${otherOpen ? 'is-checked' : ''}`} />
-                  )}
-                </span>
-                <span className="ask-user-option-text">
-                  <span className="ask-user-option-label">Other</span>
-                </span>
-                {prompt.options.length > 0 && (
-                  <span className="ask-user-option-key">{otherIndex}</span>
-                )}
-              </button>
-            )}
+          {prompt.assumptions && prompt.assumptions.length > 0 && (
+            <div className="gm-assumptions-banner">
+              <div className="gm-assumptions-header">
+                <Sparkles size={12} />
+                <span>Assumptions I'm making:</span>
+              </div>
+              <ul className="gm-assumptions-list">
+                {prompt.assumptions.map((item, idx) => (
+                  <li key={idx}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="gm-question-row">
+            <span className="gm-question-text ask-user-question-text">{prompt.question}</span>
+            {isMulti && <span className="gm-multi-badge ask-user-multi-badge">Select all that apply</span>}
           </div>
 
-          {prompt.allowFreeText && otherOpen && (
+          {prompt.type === 'summary' && prompt.summary && (
+            <GmSummaryCard summary={prompt.summary} />
+          )}
+
+          {options.length > 0 && (
+            <div className="gm-options-container ask-user-options">
+              {options.map((opt, i) => {
+                const isSelected = selectedSet.has(opt.label)
+                return (
+                  <button
+                    key={opt.label}
+                    className="gm-option-card ask-user-option"
+                    type="button"
+                    disabled={disabled || answered}
+                    aria-pressed={isSelected}
+                    data-selected={isSelected}
+                    data-recommended={opt.recommended}
+                    onClick={() => toggleOption(opt.label)}
+                  >
+                    <span className="gm-option-indicator ask-user-option-indicator">
+                      {isMulti ? (
+                        <span className={`gm-checkbox ask-user-checkbox ${isSelected ? 'is-checked' : ''}`}>
+                          {isSelected && <Check size={10} />}
+                        </span>
+                      ) : (
+                        <span className={`gm-radio ask-user-radio ${isSelected ? 'is-checked' : ''}`} />
+                      )}
+                    </span>
+
+                    <span className="gm-option-content ask-user-option-text">
+                      <span className="gm-option-label-row ask-user-option-label-row">
+                        <span className="gm-option-label ask-user-option-label">{opt.label}</span>
+                        {opt.recommended && (
+                          <span className="gm-recommended-badge ask-user-recommended-badge">Recommended</span>
+                        )}
+                      </span>
+
+                      {opt.recommendedRationale && (
+                        <span className="gm-recommended-rationale">
+                          {opt.recommendedRationale}
+                        </span>
+                      )}
+
+                      {opt.description && (
+                        <span className="gm-option-desc ask-user-option-desc">{opt.description}</span>
+                      )}
+                    </span>
+
+                    <span className="gm-option-key ask-user-option-key">{i + 1}</span>
+                  </button>
+                )
+              })}
+
+              {prompt.allowFreeText && (
+                <button
+                  className="gm-option-card ask-user-option is-other"
+                  type="button"
+                  disabled={disabled || answered}
+                  data-selected={otherOpen}
+                  onClick={chooseOther}
+                >
+                  <span className="gm-option-indicator ask-user-option-indicator">
+                    {isMulti ? (
+                      <span className={`gm-checkbox ask-user-checkbox ${otherOpen ? 'is-checked' : ''}`}>
+                        {otherOpen && <Check size={10} />}
+                      </span>
+                    ) : (
+                      <span className={`gm-radio ask-user-radio ${otherOpen ? 'is-checked' : ''}`} />
+                    )}
+                  </span>
+                  <span className="gm-option-content ask-user-option-text">
+                    <span className="gm-option-label ask-user-option-label">Other / custom answer</span>
+                  </span>
+                  {options.length > 0 && <span className="gm-option-key ask-user-option-key">{otherIndex}</span>}
+                </button>
+              )}
+            </div>
+          )}
+
+          {prompt.allowFreeText && (otherOpen || options.length === 0) && (
             <form
-              className="ask-user-freeform"
+              className="gm-freeform-form ask-user-freeform"
               onSubmit={(e) => {
                 e.preventDefault()
                 submit(freeText)
               }}
             >
               <input
-                className="ask-user-input"
+                className="gm-freeform-input ask-user-input"
                 value={freeText}
                 autoFocus
                 disabled={disabled || answered}
-                placeholder="Type your own answer here"
+                placeholder="Type your custom response…"
                 onChange={(e) => setFreeText(e.target.value)}
               />
             </form>
           )}
 
-          <div className="ask-user-foot">
-            <button
-              className="ask-user-skip"
-              type="button"
-              disabled={disabled || answered}
-              onClick={() => setDismissed(true)}
-            >
-              Skip
-            </button>
-            <button
-              className="ask-user-submit"
-              type="button"
-              disabled={disabled || answered || !canSubmit}
-              onClick={submitMulti}
-            >
-              Submit <CornerDownLeft size={12} />
-            </button>
+          <div className="gm-footer ask-user-foot">
+            <div className="gm-footer-left">
+              {history.length > 0 && (
+                <div className="gm-revise-wrapper">
+                  <button
+                    className="gm-btn gm-btn--ghost"
+                    type="button"
+                    disabled={disabled || answered}
+                    onClick={() => setShowRevise((v) => !v)}
+                  >
+                    <Undo2 size={12} />
+                    <span>Revise Previous</span>
+                  </button>
+
+                  {showRevise && (
+                    <div className="gm-revise-popover">
+                      <div className="gm-revise-popover-header">
+                        <span>Select a question to revise:</span>
+                        <button
+                          type="button"
+                          className="gm-icon-btn"
+                          onClick={() => setShowRevise(false)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                      <div className="gm-revise-popover-list">
+                        {history.map((hItem, idx) => (
+                          <button
+                            key={hItem.assistantMsgId}
+                            className="gm-revise-item"
+                            type="button"
+                            onClick={() => {
+                              setShowRevise(false)
+                              if (hItem.userMsgId && onRevise) {
+                                onRevise(hItem.userMsgId)
+                              }
+                            }}
+                          >
+                            <span className="gm-revise-q-badge">Q{idx + 1}</span>
+                            <div className="gm-revise-details">
+                              <span className="gm-revise-q-text">{hItem.prompt.question}</span>
+                              <span className="gm-revise-a-text">Answered: "{hItem.userResponse}"</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="gm-footer-right">
+              <button
+                className="gm-btn gm-btn--ghost ask-user-skip"
+                type="button"
+                disabled={disabled || answered}
+                onClick={() => setDismissed(true)}
+              >
+                Skip
+              </button>
+              <button
+                className="gm-btn gm-btn--primary ask-user-submit"
+                type="button"
+                disabled={disabled || answered || !canSubmit}
+                onClick={submitMulti}
+              >
+                <span>Submit</span>
+                <CornerDownLeft size={12} />
+              </button>
+            </div>
           </div>
         </>
       )}
