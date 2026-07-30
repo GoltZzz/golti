@@ -205,6 +205,8 @@ export interface AskUserPrompt {
   options: AskUserOption[]
   allowFreeText: boolean
   multiSelect?: boolean
+  /** 1-5 self-rated understanding, emitted by the interview skill. */
+  confidence?: number
   fenceStart: number
   fenceEnd: number
 }
@@ -216,6 +218,39 @@ type AskUserBody = Omit<AskUserPrompt, 'fenceStart' | 'fenceEnd'>
  * models commonly make: single quotes, trailing commas, smart quotes, and a
  * stray language tag on the first line.
  */
+function normalizeAskUserOptions(raw: unknown): AskUserOption[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((o): AskUserOption | null => {
+      if (typeof o === 'string') {
+        return o.trim() ? { label: o.trim() } : null
+      }
+      if (o && typeof o === 'object') {
+        const entry = o as Record<string, unknown>
+        const pick = (...keys: string[]): string => {
+          for (const key of keys) {
+            const val = entry[key]
+            if (typeof val === 'string' && val.trim()) return val.trim()
+          }
+          return ''
+        }
+        const label = pick('label', 'option', 'text', 'value', 'title', 'name')
+        if (!label) return null
+        const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
+        const recommended = Boolean(entry.recommended || entry.isRecommended || entry.is_recommended) || undefined
+        return { label, description, recommended }
+      }
+      return null
+    })
+    .filter((o): o is AskUserOption => o !== null)
+}
+
+function clampConfidence(raw: unknown): number | undefined {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) ? Math.min(5, Math.max(1, Math.round(value))) : undefined
+}
+
 function parseAskUserBody(raw: string): AskUserBody | null {
   const body = raw.trim().replace(/^(?:json|ask[-_]?user)\s*\n/i, '').trim()
   if (!body.startsWith('{')) return null
@@ -230,7 +265,14 @@ function parseAskUserBody(raw: string): AskUserBody | null {
   ]
 
   for (const candidate of candidates) {
-    let parsed: { question?: unknown; options?: unknown; allowFreeText?: unknown; multiSelect?: unknown; multi_select?: unknown }
+    let parsed: {
+      question?: unknown
+      options?: unknown
+      allowFreeText?: unknown
+      multiSelect?: unknown
+      multi_select?: unknown
+      confidence?: unknown
+    }
     try {
       parsed = JSON.parse(candidate)
     } catch {
@@ -239,33 +281,10 @@ function parseAskUserBody(raw: string): AskUserBody | null {
     if (!parsed || typeof parsed !== 'object') continue
     const question = typeof parsed.question === 'string' ? parsed.question.trim() : ''
     if (!question) continue
-    const options = Array.isArray(parsed.options)
-      ? parsed.options
-          .map((o): AskUserOption | null => {
-            if (typeof o === 'string') {
-              return o.trim() ? { label: o.trim() } : null
-            }
-            if (o && typeof o === 'object') {
-              const raw = o as Record<string, unknown>
-              const pick = (...keys: string[]): string => {
-                for (const key of keys) {
-                  const val = raw[key]
-                  if (typeof val === 'string' && val.trim()) return val.trim()
-                }
-                return ''
-              }
-              const label = pick('label', 'option', 'text', 'value', 'title', 'name')
-              if (!label) return null
-              const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
-              const recommended = Boolean(raw.recommended || raw.isRecommended || raw.is_recommended) || undefined
-              return { label, description, recommended }
-            }
-            return null
-          })
-          .filter((o): o is AskUserOption => o !== null)
-      : []
+    const options = normalizeAskUserOptions(parsed.options)
     const multiSelect = Boolean(parsed.multiSelect || parsed.multi_select) || undefined
-    return { question, options, allowFreeText: parsed.allowFreeText !== false, multiSelect }
+    const confidence = clampConfidence(parsed.confidence)
+    return { question, options, allowFreeText: parsed.allowFreeText !== false, multiSelect, confidence }
   }
 
   return null

@@ -410,6 +410,11 @@ export interface ChatRequestOptions {
    * utility completions; chat replies want the default floor.
    */
   outputTokenFloor?: number
+  /**
+   * JSON Schema the reply must conform to. Honoured by the local engine via
+   * llama.cpp grammar constraints; providers that cannot enforce it ignore it.
+   */
+  responseSchema?: Record<string, unknown>
 }
 
 export type ProviderStreamEvent =

@@ -653,16 +653,39 @@ const AskUserCard: React.FC<AskUserCardProps> = ({ prompt, disabled, onAnswer })
   if (dismissed) return null
 
   const canSubmit = otherOpen ? Boolean(freeText.trim()) : selectedSet.size > 0
+  const confidence = prompt.confidence
+  const isConclusion = confidence === 5
 
   return (
     <div
       className="ask-user-card"
       data-answered={answered}
       data-multi-select={isMulti}
+      data-conclusion={isConclusion || undefined}
     >
       <div className="ask-user-head">
         <div className="ask-user-question">
-          {prompt.question}
+          {confidence !== undefined && (
+            <div
+              className="ask-user-confidence"
+              role="img"
+              aria-label={`Understanding: ${confidence} of 5`}
+            >
+              <span className="ask-user-confidence-label">
+                {isConclusion ? 'Understood' : 'Understanding'}
+              </span>
+              <span className="ask-user-confidence-dots" aria-hidden="true">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <span
+                    key={n}
+                    className="ask-user-confidence-dot"
+                    data-filled={n <= confidence}
+                  />
+                ))}
+              </span>
+            </div>
+          )}
+          <span className="ask-user-question-text">{prompt.question}</span>
           {isMulti && (
             <span className="ask-user-multi-badge">Select all that apply</span>
           )}

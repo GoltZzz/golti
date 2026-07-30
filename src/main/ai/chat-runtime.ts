@@ -23,6 +23,7 @@ import {
   trimHistoryToBudget,
   extractSkillBlocks,
   extractSearchRequest,
+  extractAskUser,
   stripSearchRequests
 } from '../../shared/chat-utils'
 import {
@@ -33,6 +34,7 @@ import {
   BUILTIN_SKILL_NAMES
 } from '../../shared/types'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
+import { ASK_USER_JSON_SCHEMA } from '../../shared/ask-user-schema'
 import {
   buildContextBlock,
   buildSystemPrompt,
@@ -80,8 +82,15 @@ const ASK_USER_SYSTEM_SUFFIX = [
   '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means", "recommended": true }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true, "multiSelect": false }',
   '```',
   'Always fill "options" with 2-5 realistic answers the user might pick, most likely first with "recommended": true on it. Each option needs a short "label" plus a one-line "description". Set "multiSelect": true if multiple options can be chosen at once. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form (a name, a number, a path).',
+  'An optional "confidence" key (integer 1-5) is also recognized: it reports how well you understand the request so far, and renders as a progress indicator. Include it only when you are running a multi-question interview; otherwise leave it out.',
   'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up like "what are you trying to build?"; never ask what you can already work out yourself — decide it and state the assumption; keep options concrete and genuinely different, not reworded versions of each other.'
 ].join('\n')
+
+const ASK_USER_RETRY_NOTE = [
+  'That reply was rejected: this turn must be a question, not an answer.',
+  'Reply with the ask-user JSON object only — question, confidence (1-5), and 2-5 options each with a label and description.',
+  'No prose, no fences, no text around it. If you already have everything you need, set confidence to 5 and make the question a summary for the user to confirm.'
+].join(' ')
 
 /** Lets the model pull fresh web results mid-turn instead of guessing from stale knowledge. */
 const SEARCH_TOOL_SYSTEM_SUFFIX = [
@@ -120,6 +129,25 @@ function sendChunk(win: BrowserWindow | null, chunk: StreamChunkPayload): void {
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send('ai:stream-chunk', chunk)
   }
+}
+
+type BranchMessage = { role: string; content: string; displayContent?: string }
+
+/** The expanded body of the most recent /slash-command turn on this branch.
+ *  A slash expansion is the only thing that sets displayContent to a /command. */
+function findSkillInvocation(branch: BranchMessage[]): string {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const m = branch[i]
+    if (m.role === 'user' && m.displayContent?.trim().startsWith('/')) return m.content || ''
+  }
+  return ''
+}
+
+function lastAssistantAsk(branch: BranchMessage[]) {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    if (branch[i].role === 'assistant') return extractAskUser(branch[i].content || '')
+  }
+  return null
 }
 
 function buildConversationContextBlock(conversationId: string, contextItemIds?: string[]): string {
@@ -343,16 +371,31 @@ export async function startChatGeneration(
     legacyBoolean: webSearch
   })
 
+  // A skill's instructions only ever arrive in the turn that invoked it, and that
+  // message is the first thing history trimming drops. Re-hoist them into the
+  // system prompt so a multi-turn interview keeps its rules on every turn.
+  const skillInstructions = findSkillInvocation(branch)
+  const interviewSkill = /ask-user/i.test(skillInstructions)
+  const priorAsk = continuing ? null : lastAssistantAsk(branch)
+  const askUserActive = !!askUserEnabled || (interviewSkill && !!priorAsk)
+
+  // A confidence of 5 is the skill's own sign-off: the next turn is the real
+  // answer, so it must stay free-form. Anything else means another question is due.
+  const expectAskUser = !!askUserEnabled || (askUserActive && priorAsk?.confidence !== 5)
+
   // Mid-turn search is only offered alongside a question flow: the model's own
   // short answers give the intent heuristic nothing to work with, so it has to
   // ask for results itself.
-  const searchToolEnabled = mode !== 'off' && !continuing && !!askUserEnabled
+  const searchToolEnabled = mode !== 'off' && !continuing && askUserActive
 
   const effectiveSystem = buildSystemPrompt({
     basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
     modeSuffix: [
       composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
-      askUserEnabled ? ASK_USER_SYSTEM_SUFFIX : '',
+      askUserActive && interviewSkill
+        ? `Active skill — follow these instructions for every turn of this conversation:\n\n${skillInstructions}`
+        : '',
+      askUserActive ? ASK_USER_SYSTEM_SUFFIX : '',
       searchToolEnabled ? SEARCH_TOOL_SYSTEM_SUFFIX : '',
       skillRequest ? SKILL_AUTHOR_SYSTEM_SUFFIX : ''
     ]
@@ -564,15 +607,14 @@ export async function startChatGeneration(
       console.log(`[perf] ttft=${ms}ms prompt=~${promptTokens}tok model=${providerId}:${model}`)
     }
 
-    try {
-      let searchRounds = 0
-
-      // Each pass streams until the model either finishes or asks for a web
-      // search; on a search it resumes with the results appended to its history.
-      for (;;) {
-        for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
+    const streamOnce = async (
+      history: Message[],
+      extra?: { responseSchema?: Record<string, unknown> }
+    ): Promise<void> => {
+      for await (const event of streamChatResponse(providerId, model, history, effectiveSystem, {
           signal: controller.signal,
-          generationSettings: mergedSettings
+          generationSettings: mergedSettings,
+          responseSchema: extra?.responseSchema
         })) {
           if (event.type === 'thinking' || event.type === 'text') markFirstToken()
 
@@ -637,6 +679,15 @@ export async function startChatGeneration(
             throw new Error(event.error)
           }
         }
+    }
+
+    try {
+      let searchRounds = 0
+
+      // Each pass streams until the model either finishes or asks for a web
+      // search; on a search it resumes with the results appended to its history.
+      for (;;) {
+        await streamOnce(historyForModel)
 
         const searchRequest = searchToolEnabled ? extractSearchRequest(generated) : null
         if (!searchRequest || controller.signal.aborted) {
@@ -684,6 +735,34 @@ export async function startChatGeneration(
             content: `${roundNote}\n\nContinue your reply from where you stopped. Do not repeat what you already wrote, and do not restate the search query.`,
             createdAt: Date.now()
           }
+        )
+      }
+
+      // A dropped ask-user block silently ends the interview, so when one was due
+      // and none arrived, discard the prose and take one schema-constrained pass.
+      if (expectAskUser && !controller.signal.aborted && !extractAskUser(generated)) {
+        generated = ''
+        activeGen.content = priorContent
+        sendChunk(win, {
+          conversationId,
+          messageId: assistantMsgId,
+          generationId,
+          correctedContent: priorContent,
+          done: false,
+          eventType: 'correction'
+        })
+        await streamOnce(
+          [
+            ...historyForModel,
+            {
+              id: 'ask_user_retry',
+              conversationId,
+              role: 'system',
+              content: ASK_USER_RETRY_NOTE,
+              createdAt: Date.now()
+            }
+          ],
+          { responseSchema: ASK_USER_JSON_SCHEMA as unknown as Record<string, unknown> }
         )
       }
 

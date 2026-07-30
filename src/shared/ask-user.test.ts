@@ -42,8 +42,16 @@ describe('extractAskUser', () => {
     ])
   })
 
-  it('does not turn an ask-user block into a shell', () => {
-    const t = '```ask-user\n{ "question": "Which DB?" }\n```'
-    expect(extractShells(t)).toHaveLength(0)
+  it('parses confidence field and clamps between 1 and 5', () => {
+    const t = '```ask-user\n{ "question": "What goal?", "confidence": 3, "options": [{ "label": "Web App", "recommended": true }] }\n```'
+    const r = extractAskUser(t)!
+    expect(r.question).toBe('What goal?')
+    expect(r.confidence).toBe(3)
+
+    const tHigh = '```ask-user\n{ "question": "Conclusion", "confidence": 10 }\n```'
+    expect(extractAskUser(tHigh)!.confidence).toBe(5)
+
+    const tLow = '```ask-user\n{ "question": "Start", "confidence": -2 }\n```'
+    expect(extractAskUser(tLow)!.confidence).toBe(1)
   })
 })

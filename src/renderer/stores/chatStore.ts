@@ -473,6 +473,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   sendMessage: async (content, options) => {
     const rawInput = (content ?? get().draft).trim()
+    // Skills load asynchronously; without this a /command fired early passes
+    // through unexpanded and the model just sees the literal slash text.
+    if (/^\/[a-z0-9-]+/i.test(rawInput) && useSkillStore.getState().skills.length === 0) {
+      await useSkillStore.getState().fetchSkills()
+    }
     const text = expandSlashCommand(rawInput, useSkillStore.getState().skills)
     if (!text || get().isGenerating) return
 

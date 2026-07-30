@@ -120,6 +120,53 @@ input:focus-visible, textarea:focus-visible {
   color: var(--text-primary);
 }
 
+.ask-user-question-text {
+  white-space: pre-wrap;
+}
+
+.ask-user-confidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.ask-user-confidence-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ask-user-confidence-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--border-medium);
+  background: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ask-user-confidence-dot[data-filled='true'] {
+  border-color: var(--accent-purple);
+  background: var(--accent-purple);
+}
+
+.ask-user-card[data-conclusion='true'] {
+  border-color: var(--accent-cyan);
+}
+
+.ask-user-card[data-conclusion='true'] .ask-user-confidence-label {
+  color: var(--accent-cyan);
+}
+
+.ask-user-card[data-conclusion='true'] .ask-user-confidence-dot[data-filled='true'] {
+  border-color: var(--accent-cyan);
+  background: var(--accent-cyan);
+}
+
 .ask-user-multi-badge {
   display: inline-self-start;
   font-size: 11px;

@@ -116,7 +116,15 @@ export async function* streamGoltiEngineChat(
         top_p: gen.topP,
         max_tokens: maxOutputTokens,
         stop: gen.stopSequences,
-        cache_prompt: true
+        cache_prompt: true,
+        ...(options?.responseSchema
+          ? {
+              response_format: {
+                type: 'json_schema',
+                json_schema: { name: 'response', strict: true, schema: options.responseSchema }
+              }
+            }
+          : {})
       }),
       signal: options?.signal
     })
