@@ -1081,6 +1081,14 @@
   gap: 6px;
 }
 
+.projector-progress {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .pull-status-row {
   display: flex;
   justify-content: space-between;
@@ -1618,6 +1626,50 @@
   border: 1px solid var(--border-subtle);
   padding: 3px 7px;
   border-radius: 4px;
+}
+
+.installed-card-vision {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.vision-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.btn-vision {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-vision:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.btn-vision:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .installed-card-actions {

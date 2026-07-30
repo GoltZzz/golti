@@ -5,6 +5,7 @@ import { AIProviderConfig, Conversation, Message, Settings } from '../../shared/
 import { backupJsonStore, getSqlite } from './sqlite'
 import {
   chatArtifacts,
+  chatAttachments,
   chatShells,
   chatCitations,
   chatContext,
@@ -222,10 +223,12 @@ export const dbMessages = {
   updateContent: (id: string, content: string): void => chatMessages.updateContent(id, content),
   delete: (id: string): void => chatMessages.delete(id),
   createVersion: chatMessages.createVersion,
-  listVersions: chatMessages.listVersions
+  listVersions: chatMessages.listVersions,
+  searchMessages: chatMessages.searchMessages
 }
 
 export const dbContext = chatContext
+export const dbAttachments = chatAttachments
 export const dbArtifacts = chatArtifacts
 export const dbShells = chatShells
 export const dbCitations = chatCitations

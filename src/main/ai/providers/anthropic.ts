@@ -8,7 +8,9 @@ import {
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
-import { cacheBreakpointIndex, foldSystemMessages } from '../../../shared/prompt-assembly'
+import { cacheBreakpointIndex, foldSystemMessagesWithSource } from '../../../shared/prompt-assembly'
+import { toAnthropicContent, type ProviderContent } from '../../../shared/message-blocks'
+import { collectFor } from '../attachment-loader'
 
 export async function fetchAnthropicModels(_provider: AIProviderConfig): Promise<string[]> {
   return ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest']
@@ -23,16 +25,19 @@ export async function* streamAnthropicChat(
 ): AsyncGenerator<ProviderStreamEvent, void, unknown> {
   const gen = applyGenerationDefaults(options?.generationSettings)
 
-  const folded = foldSystemMessages(messages)
+  const folded = foldSystemMessagesWithSource(messages)
   const breakpoint = cacheBreakpointIndex(folded)
 
-  const formattedMessages = folded.map((m, i) => ({
-    role: m.role,
-    content:
-      i === breakpoint
-        ? [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }]
-        : m.content
-  }))
+  const formattedMessages: Array<{ role: string; content: ProviderContent }> = folded.map(
+    (m, i) => ({
+      role: m.role,
+      content: toAnthropicContent(
+        m.content,
+        options?.attachments ? collectFor(options.attachments, m.sourceIds) : [],
+        i === breakpoint
+      )
+    })
+  )
 
   const body: Record<string, unknown> = {
     model,

@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { CookbookModel } from '../../shared/types'
+import { MODEL_CATALOG } from '../../shared/model-catalog'
 import {
   HFModelSummary,
   HFModelSummaryRaw,
@@ -11,7 +12,9 @@ import {
   deriveSummary,
   deriveParameterBillions,
   selectQuantVariants,
-  buildCookbookModels
+  selectProjectorFiles,
+  buildCookbookModels,
+  type HFProjectorFile
 } from '../../shared/hf-catalog'
 
 const API_ROOT = 'https://huggingface.co/api'
@@ -32,6 +35,8 @@ export interface HFSearchResult {
 export interface HFDetailResult {
   repoId: string
   models: CookbookModel[]
+  /** Vision projectors in the repo, if any — enables local image input. */
+  projectors?: HFProjectorFile[]
   error?: string
 }
 
@@ -41,7 +46,10 @@ interface CacheEntry<T> {
 }
 
 const listCache = new Map<string, CacheEntry<HFModelSummary[]>>()
-const detailCache = new Map<string, CacheEntry<CookbookModel[]>>()
+const detailCache = new Map<
+  string,
+  CacheEntry<{ models: CookbookModel[]; projectors: HFProjectorFile[] }>
+>()
 
 let diskCacheLoaded = false
 
@@ -194,7 +202,7 @@ export async function fetchHFModelDetail(repoId: string): Promise<HFDetailResult
 
   const cached = detailCache.get(repoId)
   if (cached && Date.now() - cached.fetchedAt < DETAIL_TTL_MS) {
-    return { repoId, models: cached.value }
+    return { repoId, models: cached.value.models, projectors: cached.value.projectors }
   }
 
   const encoded = repoId.split('/').map(encodeURIComponent).join('/')
@@ -221,14 +229,129 @@ export async function fetchHFModelDetail(repoId: string): Promise<HFDetailResult
       variants
     })
 
-    detailCache.set(repoId, { value: models, fetchedAt: Date.now() })
+    const projectors = selectProjectorFiles(repoId, tree)
+
+    detailCache.set(repoId, { value: { models, projectors }, fetchedAt: Date.now() })
     trimDetailCache()
-    return { repoId, models }
+    return { repoId, models, projectors }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to reach Hugging Face'
-    if (cached) return { repoId, models: cached.value, error: message }
+    if (cached) {
+      return {
+        repoId,
+        models: cached.value.models,
+        projectors: cached.value.projectors,
+        error: message
+      }
+    }
     return { repoId, models: [], error: message }
   }
+}
+
+export interface ProjectorLookupResult {
+  repoId?: string
+  projectors: HFProjectorFile[]
+  error?: string
+}
+
+const MAX_PROJECTOR_CANDIDATES = 8
+const OLLAMA_REGISTRY = 'https://registry.ollama.ai/v2/library'
+const OLLAMA_PROJECTOR_MEDIA_TYPE = 'application/vnd.ollama.image.projector'
+
+interface OllamaManifest {
+  layers?: { mediaType: string; digest: string; size?: number }[]
+}
+
+/**
+ * Catalog models come from the Ollama registry, where the vision tower is a
+ * `projector` layer of the same manifest — no Hugging Face lookup can find it.
+ */
+async function findOllamaProjector(modelFilename: string): Promise<ProjectorLookupResult | null> {
+  const entry = MODEL_CATALOG.find(
+    (m) => m.ggufFilename?.toLowerCase() === modelFilename.toLowerCase()
+  )
+  if (!entry?.ollamaTag) return null
+
+  const [name, tag = 'latest'] = entry.ollamaTag.split(':')
+  const url = `${OLLAMA_REGISTRY}/${encodeURIComponent(name)}/manifests/${encodeURIComponent(tag)}`
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    })
+    if (!res.ok) throw new Error(`Ollama registry returned ${res.status}`)
+    const manifest = (await res.json()) as OllamaManifest
+    const layer = manifest.layers?.find((l) => l.mediaType === OLLAMA_PROJECTOR_MEDIA_TYPE)
+    if (!layer?.digest) {
+      return { repoId: entry.ollamaTag, projectors: [], error: `${entry.name} has no vision tower.` }
+    }
+
+    return {
+      repoId: entry.ollamaTag,
+      projectors: [
+        {
+          filename: `mmproj-${modelFilename.replace(/\.gguf$/i, '')}.gguf`,
+          url: `${OLLAMA_REGISTRY}/${name}/blobs/${layer.digest}`,
+          fileSizeBytes: layer.size ?? 0
+        }
+      ]
+    }
+  } catch (error) {
+    return {
+      repoId: entry.ollamaTag,
+      projectors: [],
+      error: error instanceof Error ? error.message : 'Failed to reach the Ollama registry'
+    }
+  }
+}
+
+function projectorSearchQuery(modelFilename: string): string {
+  return modelFilename
+    .replace(/\.gguf$/i, '')
+    .replace(/[-_.](i?q\d+(?:[-_][a-z0-9]+)*|f16|f32|bf16|mxfp4)$/i, '')
+    .replace(/[-_.]+/g, ' ')
+    .trim()
+}
+
+/**
+ * A model installed from the browser keeps no record of its source repo, so the
+ * repo is recovered by matching the exact GGUF filename in candidate trees.
+ */
+export async function findProjectorsForLocalModel(
+  modelFilename: string
+): Promise<ProjectorLookupResult> {
+  const fromOllama = await findOllamaProjector(modelFilename)
+  if (fromOllama && (fromOllama.projectors.length > 0 || fromOllama.error)) return fromOllama
+
+  const wanted = modelFilename.toLowerCase()
+  const search = await searchHFModels(projectorSearchQuery(modelFilename), 20)
+  if (search.models.length === 0) {
+    return { projectors: [], error: search.error ?? 'No matching repository on Hugging Face.' }
+  }
+
+  let lastError: string | undefined
+  for (const candidate of search.models.slice(0, MAX_PROJECTOR_CANDIDATES)) {
+    const encoded = candidate.repoId.split('/').map(encodeURIComponent).join('/')
+    try {
+      const tree = await fetchJson<HFTreeEntryRaw[]>(`${API_ROOT}/models/${encoded}/tree/main`)
+      if (!tree.some((e) => e.type !== 'directory' && e.path.toLowerCase() === wanted)) continue
+
+      const projectors = selectProjectorFiles(candidate.repoId, tree)
+      if (projectors.length === 0) {
+        return {
+          repoId: candidate.repoId,
+          projectors: [],
+          error: `${candidate.repoId} ships no vision projector.`
+        }
+      }
+      return { repoId: candidate.repoId, projectors }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Failed to reach Hugging Face'
+    }
+  }
+
+  return { projectors: [], error: lastError ?? 'Could not find this model on Hugging Face.' }
 }
 
 export function _resetHFCachesForTests(): void {

@@ -5,6 +5,7 @@ import {
   buildSystemPrompt,
   cacheBreakpointIndex,
   foldSystemMessages,
+  foldSystemMessagesWithSource,
   orderContextItems,
   orderPromptMessages,
   selectContextItems
@@ -138,5 +139,64 @@ describe('cacheBreakpointIndex', () => {
 
   it('returns -1 for a first turn with nothing stable yet', () => {
     expect(cacheBreakpointIndex([{ role: 'user', content: 'q1' }])).toBe(-1)
+  })
+})
+
+describe('foldSystemMessagesWithSource', () => {
+  const strip = (folded: ReturnType<typeof foldSystemMessagesWithSource>) =>
+    folded.map(({ role, content }) => ({ role, content }))
+
+  it('folds exactly like foldSystemMessages', () => {
+    const messages = [
+      { id: 'u1', role: 'user', content: 'q1' },
+      { id: 'a1', role: 'assistant', content: 'a1' },
+      { id: 's1', role: 'system', content: 'search results' },
+      { id: 'u2', role: 'user', content: 'q2' }
+    ]
+    expect(strip(foldSystemMessagesWithSource(messages))).toEqual(foldSystemMessages(messages))
+  })
+
+  it('maps each folded turn back to its source message id', () => {
+    const folded = foldSystemMessagesWithSource([
+      { id: 'u1', role: 'user', content: 'q1' },
+      { id: 'a1', role: 'assistant', content: 'a1' },
+      { id: 'u2', role: 'user', content: 'q2' }
+    ])
+    expect(folded.map((f) => f.sourceIds)).toEqual([['u1'], ['a1'], ['u2']])
+  })
+
+  it('keeps the absorbing user turn as the source when a system turn is folded in', () => {
+    const folded = foldSystemMessagesWithSource([
+      { id: 's1', role: 'system', content: 'context' },
+      { id: 'u1', role: 'user', content: 'q1' }
+    ])
+    expect(folded).toEqual([
+      { role: 'user', content: 'context\n\nq1', sourceIds: ['u1'] }
+    ])
+  })
+
+  it('gives a trailing synthetic user turn no source ids', () => {
+    const folded = foldSystemMessagesWithSource([
+      { id: 'a1', role: 'assistant', content: 'a1' },
+      { id: 's1', role: 'system', content: 'trailing note' }
+    ])
+    expect(folded[folded.length - 1]).toEqual({
+      role: 'user',
+      content: 'trailing note',
+      sourceIds: []
+    })
+  })
+
+  it('appends trailing system text to a preceding user turn without losing its id', () => {
+    const folded = foldSystemMessagesWithSource([
+      { id: 'u1', role: 'user', content: 'q1' },
+      { id: 's1', role: 'system', content: 'note' }
+    ])
+    expect(folded).toEqual([{ role: 'user', content: 'q1\n\nnote', sourceIds: ['u1'] }])
+  })
+
+  it('tolerates messages with no id', () => {
+    const folded = foldSystemMessagesWithSource([{ role: 'user', content: 'q1' }])
+    expect(folded).toEqual([{ role: 'user', content: 'q1', sourceIds: [] }])
   })
 })

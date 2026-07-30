@@ -14,6 +14,12 @@ function isActivelyDownloading(progress?: EngineDownloadProgress): boolean {
   return !progress.status || progress.status === 'downloading'
 }
 
+export interface ProjectorTarget {
+  filename: string
+  url: string
+  sizeBytes: number
+}
+
 export interface ResolvedModelRef {
   ggufUrl: string
   ggufFilename: string
@@ -54,6 +60,15 @@ interface EngineStore {
   fetchLocalModels: () => Promise<void>
   deleteLocalModel: (filename: string) => Promise<{ success: boolean; error?: string }>
   loadModel: (ggufPath: string) => Promise<void>
+  projectors: Record<string, string | null>
+  projectorBusy: Record<string, boolean>
+  projectorErrors: Record<string, string>
+  /** Projector file being fetched for a model, so its progress row can be found. */
+  projectorTargets: Record<string, ProjectorTarget>
+  fetchProjectorFor: (modelFilename: string) => Promise<void>
+  installProjector: (modelFilename: string) => Promise<void>
+  removeProjector: (modelFilename: string) => Promise<void>
+  clearProjectorDownload: (modelFilename: string) => Promise<void>
   setupListeners: () => () => void
 }
 
@@ -114,7 +129,110 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
   resolving: {},
   resolvedModels: loadResolvedModels(),
   resolveErrors: {},
+  projectors: {},
+  projectorBusy: {},
+  projectorErrors: {},
+  projectorTargets: {},
   error: null,
+
+  fetchProjectorFor: async (modelFilename: string) => {
+    try {
+      const path = await window.goltiAPI.getProjectorFor(modelFilename)
+      set((state) => ({ projectors: { ...state.projectors, [modelFilename]: path ?? null } }))
+    } catch {
+      set((state) => ({ projectors: { ...state.projectors, [modelFilename]: null } }))
+    }
+  },
+
+  installProjector: async (modelFilename: string) => {
+    if (get().projectorBusy[modelFilename]) return
+
+    set((state) => ({
+      projectorBusy: { ...state.projectorBusy, [modelFilename]: true },
+      projectorErrors: removeDownloadError(state.projectorErrors, modelFilename)
+    }))
+
+    const settle = (message?: string) => {
+      set((state) => ({
+        projectorBusy: { ...state.projectorBusy, [modelFilename]: false },
+        projectorErrors: message
+          ? { ...state.projectorErrors, [modelFilename]: message }
+          : removeDownloadError(state.projectorErrors, modelFilename)
+      }))
+    }
+
+    try {
+      // A resume reuses the known target rather than repeating the lookup.
+      let target = get().projectorTargets[modelFilename]
+      if (!target) {
+        const lookup = await window.goltiAPI.findProjectorForModel(modelFilename)
+        const best = lookup?.projectors?.[0]
+        if (!best) {
+          settle(lookup?.error || 'No vision projector found for this model.')
+          return
+        }
+        target = { filename: best.filename, url: best.url, sizeBytes: best.fileSizeBytes }
+        set((state) => ({
+          projectorTargets: { ...state.projectorTargets, [modelFilename]: target! }
+        }))
+      }
+
+      const res = await window.goltiAPI.downloadProjector(target.url, target.filename, modelFilename)
+
+      if (res?.status === 'paused') {
+        settle()
+        return
+      }
+
+      if (res?.status === 'cancelled') {
+        set((state) => {
+          const targets = { ...state.projectorTargets }
+          delete targets[modelFilename]
+          return { projectorTargets: targets }
+        })
+        settle()
+        return
+      }
+
+      if (res?.status !== 'complete') {
+        settle(res?.error || 'Projector download did not finish.')
+        return
+      }
+
+      set((state) => {
+        const targets = { ...state.projectorTargets }
+        delete targets[modelFilename]
+        return { projectorTargets: targets }
+      })
+      settle()
+      await get().fetchProjectorFor(modelFilename)
+      void useChatStore.getState().refreshModelCapabilities()
+    } catch (err: any) {
+      settle(err?.message || String(err))
+    }
+  },
+
+  clearProjectorDownload: async (modelFilename: string) => {
+    const target = get().projectorTargets[modelFilename]
+    if (target) await get().clearDownload(target.filename)
+    set((state) => {
+      const targets = { ...state.projectorTargets }
+      delete targets[modelFilename]
+      return {
+        projectorTargets: targets,
+        projectorErrors: removeDownloadError(state.projectorErrors, modelFilename)
+      }
+    })
+  },
+
+  removeProjector: async (modelFilename: string) => {
+    try {
+      await window.goltiAPI.unpairProjector(modelFilename)
+    } finally {
+      await get().fetchProjectorFor(modelFilename)
+      void useChatStore.getState().refreshModelCapabilities()
+    }
+  },
 
   fetchStatus: async () => {
     try {
@@ -219,6 +337,7 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
         }))
         await get().fetchLocalModels()
         useChatStore.getState().fetchModels()
+        void useChatStore.getState().refreshModelCapabilities()
         return
       }
 
@@ -440,10 +559,12 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
         }))
         await get().fetchLocalModels()
         useChatStore.getState().fetchModels()
+        void useChatStore.getState().refreshModelCapabilities()
         return { success: true }
       }
       await get().fetchLocalModels()
       useChatStore.getState().fetchModels()
+      void useChatStore.getState().refreshModelCapabilities()
       return { success: !!result }
     } catch (err: any) {
       const error = err.message || String(err)

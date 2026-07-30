@@ -73,6 +73,46 @@ export function foldSystemMessages<T extends RoledMessage>(
   return out
 }
 
+export interface FoldedMessage {
+  role: 'user' | 'assistant'
+  content: string
+  /** Ids of the non-system messages absorbed into this turn; empty for synthetic turns. */
+  sourceIds: string[]
+}
+
+/**
+ * Same folding as `foldSystemMessages`, but keeps a link back to the source
+ * message ids so per-message payloads (attachments) survive the collapse.
+ */
+export function foldSystemMessagesWithSource<T extends RoledMessage & { id?: string }>(
+  messages: T[]
+): FoldedMessage[] {
+  const out: FoldedMessage[] = []
+  let pending: string[] = []
+
+  for (const message of messages) {
+    if (message.role === 'system') {
+      if (message.content.trim()) pending.push(message.content)
+      continue
+    }
+    const role = message.role === 'assistant' ? 'assistant' : 'user'
+    const content = pending.length > 0 ? [...pending, message.content].join('\n\n') : message.content
+    pending = []
+    out.push({ role, content, sourceIds: message.id ? [message.id] : [] })
+  }
+
+  if (pending.length > 0) {
+    const last = out[out.length - 1]
+    if (last && last.role === 'user') {
+      last.content = [last.content, ...pending].join('\n\n')
+    } else {
+      out.push({ role: 'user', content: pending.join('\n\n'), sourceIds: [] })
+    }
+  }
+
+  return out
+}
+
 export function cacheBreakpointIndex(messages: RoledMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role !== 'user') return i

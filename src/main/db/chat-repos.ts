@@ -7,6 +7,8 @@ import type {
   ConversationSearchHit,
   GenerationSettings,
   Message,
+  MessageAttachment,
+  MessageSearchHit,
   MessageVersion
 } from '../../shared/types'
 import { getSqlite } from './sqlite'
@@ -55,6 +57,8 @@ function mapMessage(row: any): Message {
     generationId: row.generation_id ?? undefined,
     reasoningContent: row.reasoning_content ?? undefined,
     thinkingDurationMs: row.thinking_duration_ms ?? undefined,
+    ttftMs: row.ttft_ms ?? undefined,
+    tokensPerSec: row.tokens_per_sec ?? undefined,
     finishReason: row.finish_reason ?? undefined
   }
 }
@@ -71,6 +75,26 @@ function mapContext(row: any): ContextItem {
     tokenEstimate: row.token_estimate,
     createdAt: row.created_at,
     enabled: Boolean(row.enabled),
+    error: row.error ?? undefined
+  }
+}
+
+function mapAttachment(row: any): MessageAttachment {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    messageId: row.message_id ?? null,
+    kind: row.kind,
+    mimeType: row.mime_type,
+    name: row.name,
+    storagePath: row.storage_path,
+    thumbPath: row.thumb_path ?? undefined,
+    byteSize: row.byte_size,
+    width: row.width ?? undefined,
+    height: row.height ?? undefined,
+    extractedText: row.extracted_text ?? undefined,
+    tokenEstimate: row.token_estimate,
+    createdAt: row.created_at,
     error: row.error ?? undefined
   }
 }
@@ -307,7 +331,13 @@ export const chatMessages = {
     const rows = db
       .prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC')
       .all(conversationId)
-    return rows.map(mapMessage)
+    const messages = rows.map(mapMessage)
+    const byMessage = chatAttachments.listForConversationBound(conversationId)
+    for (const msg of messages) {
+      const atts = byMessage.get(msg.id)
+      if (atts) msg.attachments = atts
+    }
+    return messages
   },
 
   get: (id: string): Message | undefined => {
@@ -322,8 +352,8 @@ export const chatMessages = {
       `INSERT INTO messages
         (id, conversation_id, role, content, model, tokens_in, tokens_out, created_at, updated_at,
          parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms,
-         finish_reason, display_content)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         finish_reason, display_content, ttft_ms, tokens_per_sec)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       msg.id,
       msg.conversationId,
@@ -342,7 +372,9 @@ export const chatMessages = {
       msg.reasoningContent ?? null,
       msg.thinkingDurationMs ?? null,
       msg.finishReason ?? null,
-      msg.displayContent ?? null
+      msg.displayContent ?? null,
+      msg.ttftMs ?? null,
+      msg.tokensPerSec ?? null
     )
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversationId)
     syncMessageFts(msg.id, msg.conversationId, msg.content)
@@ -359,7 +391,8 @@ export const chatMessages = {
       `UPDATE messages SET
         content = ?, model = ?, tokens_in = ?, tokens_out = ?, updated_at = ?,
         parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?,
-        reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?, display_content = ?
+        reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?, display_content = ?,
+        ttft_ms = ?, tokens_per_sec = ?
        WHERE id = ?`
     ).run(
       next.content,
@@ -376,6 +409,8 @@ export const chatMessages = {
       next.thinkingDurationMs ?? null,
       next.finishReason ?? null,
       next.displayContent ?? null,
+      next.ttftMs ?? null,
+      next.tokensPerSec ?? null,
       id
     )
     syncMessageFts(id, next.conversationId, next.content)
@@ -410,6 +445,72 @@ export const chatMessages = {
       content: r.content,
       editedAt: r.edited_at,
       editSource: r.edit_source
+    }))
+  },
+
+  searchMessages: (query: string, limit = 50): MessageSearchHit[] => {
+    const q = query.trim()
+    if (!q) return []
+    const db = getSqlite()
+    const tokens = q
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((t) => t.replace(/[^a-zA-Z0-9_-]/g, ''))
+      .filter((t) => t.length > 0)
+
+    const ftsQuery = tokens.map((t) => `${t}*`).join(' AND ')
+
+    if (ftsQuery) {
+      try {
+        const rows = db
+          .prepare(
+            `SELECT m.id as message_id, m.conversation_id, c.title as conversation_title, m.role, m.created_at,
+                    snippet(messages_fts, 2, '', '', '…', 32) as content_snippet
+             FROM messages_fts f
+             JOIN messages m ON m.id = f.message_id
+             JOIN conversations c ON c.id = m.conversation_id
+             WHERE messages_fts MATCH ?
+               AND c.archived = 0
+             ORDER BY m.created_at DESC
+             LIMIT ?`
+          )
+          .all(ftsQuery, limit) as any[]
+
+        if (rows.length > 0) {
+          return rows.map((r) => ({
+            messageId: r.message_id,
+            conversationId: r.conversation_id,
+            conversationTitle: r.conversation_title || 'Untitled',
+            role: r.role,
+            contentSnippet: r.content_snippet || '',
+            createdAt: r.created_at
+          }))
+        }
+      } catch {
+        // Fall back to LIKE search
+      }
+    }
+
+    const like = `%${q}%`
+    const rows = db
+      .prepare(
+        `SELECT m.id as message_id, m.conversation_id, c.title as conversation_title, m.role, m.created_at,
+                substr(m.content, 1, 100) as content_snippet
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.archived = 0 AND m.content LIKE ?
+         ORDER BY m.created_at DESC
+         LIMIT ?`
+      )
+      .all(like, limit) as any[]
+
+    return rows.map((r) => ({
+      messageId: r.message_id,
+      conversationId: r.conversation_id,
+      conversationTitle: r.conversation_title || 'Untitled',
+      role: r.role,
+      contentSnippet: r.content_snippet || '',
+      createdAt: r.created_at
     }))
   }
 }
@@ -468,6 +569,131 @@ export const chatContext = {
 
   delete: (id: string): void => {
     getSqlite().prepare('DELETE FROM context_items WHERE id = ?').run(id)
+  }
+}
+
+export const chatAttachments = {
+  stage: (att: MessageAttachment): void => {
+    getSqlite()
+      .prepare(
+        `INSERT INTO message_attachments
+          (id, conversation_id, message_id, kind, mime_type, name, storage_path, thumb_path,
+           byte_size, width, height, extracted_text, token_estimate, created_at, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        att.id,
+        att.conversationId,
+        att.messageId ?? null,
+        att.kind,
+        att.mimeType,
+        att.name,
+        att.storagePath,
+        att.thumbPath ?? null,
+        att.byteSize,
+        att.width ?? null,
+        att.height ?? null,
+        att.extractedText ?? null,
+        att.tokenEstimate,
+        att.createdAt,
+        att.error ?? null
+      )
+  },
+
+  get: (id: string): MessageAttachment | undefined => {
+    const row = getSqlite().prepare('SELECT * FROM message_attachments WHERE id = ?').get(id)
+    return row ? mapAttachment(row) : undefined
+  },
+
+  listStaged: (conversationId: string): MessageAttachment[] => {
+    return getSqlite()
+      .prepare(
+        `SELECT * FROM message_attachments
+         WHERE conversation_id = ? AND message_id IS NULL ORDER BY created_at ASC`
+      )
+      .all(conversationId)
+      .map(mapAttachment)
+  },
+
+  bindToMessage: (ids: string[], messageId: string): void => {
+    if (ids.length === 0) return
+    const db = getSqlite()
+    const placeholders = ids.map(() => '?').join(', ')
+    db.prepare(
+      `UPDATE message_attachments SET message_id = ?
+       WHERE id IN (${placeholders}) AND message_id IS NULL`
+    ).run(messageId, ...ids)
+  },
+
+  listForMessages: (messageIds: string[]): Map<string, MessageAttachment[]> => {
+    const out = new Map<string, MessageAttachment[]>()
+    if (messageIds.length === 0) return out
+    const placeholders = messageIds.map(() => '?').join(', ')
+    const rows = getSqlite()
+      .prepare(
+        `SELECT * FROM message_attachments
+         WHERE message_id IN (${placeholders}) ORDER BY created_at ASC`
+      )
+      .all(...messageIds)
+    for (const row of rows) {
+      const att = mapAttachment(row)
+      const key = att.messageId as string
+      const list = out.get(key)
+      if (list) list.push(att)
+      else out.set(key, [att])
+    }
+    return out
+  },
+
+  listForConversationBound: (conversationId: string): Map<string, MessageAttachment[]> => {
+    const out = new Map<string, MessageAttachment[]>()
+    const rows = getSqlite()
+      .prepare(
+        `SELECT * FROM message_attachments
+         WHERE conversation_id = ? AND message_id IS NOT NULL ORDER BY created_at ASC`
+      )
+      .all(conversationId)
+    for (const row of rows) {
+      const att = mapAttachment(row)
+      const key = att.messageId as string
+      const list = out.get(key)
+      if (list) list.push(att)
+      else out.set(key, [att])
+    }
+    return out
+  },
+
+  /** Number of rows still pointing at a stored file, used to refcount deletes. */
+  countByStoragePath: (storagePath: string): number => {
+    const row = getSqlite()
+      .prepare('SELECT COUNT(*) AS n FROM message_attachments WHERE storage_path = ?')
+      .get(storagePath) as { n: number }
+    return row?.n ?? 0
+  },
+
+  delete: (id: string): void => {
+    getSqlite().prepare('DELETE FROM message_attachments WHERE id = ?').run(id)
+  },
+
+  listAllStoragePaths: (): string[] => {
+    const rows = getSqlite()
+      .prepare('SELECT storage_path, thumb_path FROM message_attachments')
+      .all() as Array<{ storage_path: string; thumb_path: string | null }>
+    const out: string[] = []
+    for (const r of rows) {
+      out.push(r.storage_path)
+      if (r.thumb_path) out.push(r.thumb_path)
+    }
+    return out
+  },
+
+  listStaleStaged: (olderThan: number): MessageAttachment[] => {
+    return getSqlite()
+      .prepare(
+        'SELECT * FROM message_attachments WHERE message_id IS NULL AND created_at < ?'
+      )
+      .all(olderThan)
+      .map(mapAttachment)
   }
 }
 

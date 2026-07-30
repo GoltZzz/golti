@@ -11,6 +11,8 @@ interface MemoryState {
   unseenCount: number
 
   fetchMemories: () => Promise<void>
+  createMemory: (input: { category: string; title: string; summary: string; details: string[] }) => Promise<void>
+  updateMemory: (id: string, input: { category?: string; title?: string; summary?: string; details?: string[] }) => Promise<void>
   deleteMemory: (id: string) => Promise<void>
   setSearchQuery: (query: string) => void
   runSearch: () => Promise<void>
@@ -36,6 +38,34 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load memories'
       set({ loading: false, error: message })
+    }
+  },
+
+  createMemory: async (input) => {
+    try {
+      const created = await window.goltiAPI.createMemory(input)
+      if (created) {
+        set((state) => ({
+          memories: [created, ...state.memories]
+        }))
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create memory'
+      set({ error: message })
+    }
+  },
+
+  updateMemory: async (id, input) => {
+    try {
+      const updated = await window.goltiAPI.updateMemory(id, input)
+      if (updated) {
+        set((state) => ({
+          memories: state.memories.map((m) => (m.id === id ? updated : m))
+        }))
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update memory'
+      set({ error: message })
     }
   },
 

@@ -184,6 +184,47 @@ export function estimateRamGB(
   return { required, recommended }
 }
 
+export interface HFProjectorFile {
+  filename: string
+  url: string
+  fileSizeBytes: number
+}
+
+const PROJECTOR_PATTERN = /(^|[-_/])(mmproj|clip|vision[-_]?(model|encoder)|projector)/i
+
+/**
+ * Vision towers ship beside the model as a separate GGUF that must not be
+ * offered as a chat model. `selectQuantVariants` filters these out; this
+ * surfaces them so a matching projector can be downloaded alongside.
+ */
+export function selectProjectorFiles(
+  repoId: string,
+  entries: HFTreeEntryRaw[],
+  branch = 'main'
+): HFProjectorFile[] {
+  const found: HFProjectorFile[] = []
+
+  for (const entry of entries) {
+    if (entry.type === 'directory') continue
+    const path = entry.path
+    if (!/\.gguf$/i.test(path)) continue
+    if (path.includes('/')) continue
+    if (!PROJECTOR_PATTERN.test(path)) continue
+
+    const size = entry.lfs?.size ?? entry.size
+    if (typeof size !== 'number' || size <= 0) continue
+
+    found.push({
+      filename: path,
+      url: `https://huggingface.co/${repoId}/resolve/${branch}/${encodeURIComponent(path)}`,
+      fileSizeBytes: size
+    })
+  }
+
+  // Prefer higher precision (F32 > F16 > quantized), which is the larger file.
+  return found.sort((a, b) => b.fileSizeBytes - a.fileSizeBytes)
+}
+
 export function selectQuantVariants(
   repoId: string,
   entries: HFTreeEntryRaw[],

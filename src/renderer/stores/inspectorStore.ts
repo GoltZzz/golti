@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type InspectorTab = 'context' | 'thread' | 'shells' | 'artifacts' | 'usage'
+export type InspectorTab = 'context' | 'thread' | 'shells' | 'artifacts'
 
 export const INSPECTOR_MIN_WIDTH = 260
 export const INSPECTOR_MAX_WIDTH = 720

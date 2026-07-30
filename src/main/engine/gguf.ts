@@ -156,6 +156,158 @@ class GgufReader {
         throw new TruncatedError(`Unknown GGUF value type ${type}`)
     }
   }
+
+  /** Like `value`, but also yields BOOL and STRING, which `value` deliberately skips. */
+  anyValue(type: number): number | string | boolean | undefined {
+    if (type === GgufType.BOOL) {
+      this.ensure(1)
+      const v = this.buf.readUInt8(this.pos) !== 0
+      this.pos += 1
+      return v
+    }
+    if (type === GgufType.STRING) return this.string()
+    if (type === GgufType.FLOAT32) {
+      this.ensure(4)
+      const v = this.buf.readFloatLE(this.pos)
+      this.pos += 4
+      return v
+    }
+    if (type === GgufType.FLOAT64) {
+      this.ensure(8)
+      const v = this.buf.readDoubleLE(this.pos)
+      this.pos += 8
+      return v
+    }
+    return this.value(type)
+  }
+}
+
+export interface GgufVisionInfo {
+  architecture: string
+  isProjector: boolean
+  hasVisionEncoder: boolean
+  hasAudioEncoder: boolean
+  projectorType?: string
+  imageSize?: number
+  patchSize?: number
+}
+
+const VISION_KEYS = new Set([
+  'clip.has_vision_encoder',
+  'clip.has_audio_encoder',
+  'clip.projector_type',
+  'clip.vision.image_size',
+  'clip.vision.patch_size'
+])
+
+/**
+ * Identify a multimodal projector ("mmproj") file. Kept separate from
+ * `readGgufModelInfo` because it must read BOOL/STRING values and scan past
+ * `tokenizer.*` keys, both of which that reader intentionally skips.
+ */
+export function readGgufVisionInfo(modelPath: string): GgufVisionInfo | null {
+  let fd: number
+  try {
+    fd = fs.openSync(modelPath, 'r')
+  } catch {
+    return null
+  }
+
+  try {
+    const reader = new GgufReader(fd)
+    if (reader.u32() !== GGUF_MAGIC) return null
+    const version = reader.u32()
+    if (version < 2) return null
+
+    reader.u64()
+    const kvCount = reader.u64()
+
+    let architecture: string | undefined
+    const found = new Map<string, number | string | boolean>()
+
+    try {
+      for (let i = 0; i < kvCount; i++) {
+        const key = reader.string()
+        const type = reader.u32()
+
+        if (key === 'general.architecture' && type === GgufType.STRING) {
+          architecture = reader.string()
+          continue
+        }
+
+        if (VISION_KEYS.has(key)) {
+          const value = reader.anyValue(type)
+          if (value !== undefined) found.set(key, value)
+        } else {
+          reader.value(type)
+        }
+
+        if (architecture && found.size === VISION_KEYS.size) break
+      }
+    } catch {
+      if (!architecture) return null
+    }
+
+    if (!architecture) return null
+
+    const num = (key: string): number | undefined => {
+      const v = found.get(key)
+      return typeof v === 'number' && v > 0 ? v : undefined
+    }
+    const str = (key: string): string | undefined => {
+      const v = found.get(key)
+      return typeof v === 'string' && v ? v : undefined
+    }
+
+    const hasVisionEncoder = found.get('clip.has_vision_encoder') === true
+    const hasAudioEncoder = found.get('clip.has_audio_encoder') === true
+
+    return {
+      architecture,
+      isProjector: architecture === 'clip',
+      hasVisionEncoder,
+      hasAudioEncoder,
+      projectorType: str('clip.projector_type'),
+      imageSize: num('clip.vision.image_size'),
+      patchSize: num('clip.vision.patch_size')
+    }
+  } catch {
+    return null
+  } finally {
+    try { fs.closeSync(fd) } catch {}
+  }
+}
+
+interface VisionCacheEntry {
+  mtimeMs: number
+  info: GgufVisionInfo | null
+}
+
+const visionCache = new Map<string, VisionCacheEntry>()
+
+export function clearGgufVisionCache(): void {
+  visionCache.clear()
+}
+
+/** mtime-keyed cache so repeated capability checks do not re-read GGUF headers. */
+export function visionInfoFor(filepath: string): GgufVisionInfo | null {
+  let mtimeMs: number
+  try {
+    mtimeMs = fs.statSync(filepath).mtimeMs
+  } catch {
+    return null
+  }
+
+  const hit = visionCache.get(filepath)
+  if (hit && hit.mtimeMs === mtimeMs) return hit.info
+
+  const info = readGgufVisionInfo(filepath)
+  visionCache.set(filepath, { mtimeMs, info })
+  return info
+}
+
+export function isProjectorFile(filepath: string): boolean {
+  return visionInfoFor(filepath)?.isProjector === true
 }
 
 export function readGgufModelInfo(modelPath: string): GgufModelInfo | null {

@@ -14,6 +14,9 @@ import {
 
 export { MIN_CONTEXT_SIZE, MAX_CONTEXT_SIZE, CONTEXT_GRANULARITY }
 
+/** Floor when a vision projector is loaded: one image alone costs 1-2k tokens. */
+export const VISION_MIN_CONTEXT_SIZE = 8192
+
 const STABLE_RAM_FRACTION = 0.5
 const GB = 1024 * 1024 * 1024
 

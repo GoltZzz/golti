@@ -8,6 +8,7 @@ import {
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
+import { toOpenAIContent, type ProviderContent } from '../../../shared/message-blocks'
 
 export async function fetchOpenAIModels(provider: AIProviderConfig): Promise<string[]> {
   if (!provider.apiKey) return ['gpt-4o', 'gpt-4o-mini', 'o3-mini']
@@ -40,9 +41,9 @@ export async function* streamOpenAIChat(
   const endpoint = (provider.endpoint || 'https://api.openai.com/v1').replace(/\/+$/, '')
   const gen = applyGenerationDefaults(options?.generationSettings)
 
-  const formattedMessages = messages.map((m) => ({
+  const formattedMessages: Array<{ role: string; content: ProviderContent }> = messages.map((m) => ({
     role: m.role,
-    content: m.content
+    content: toOpenAIContent(m.content, options?.attachments?.get(m.id) ?? [])
   }))
 
   if (systemPrompt) {

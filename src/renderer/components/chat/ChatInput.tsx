@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   ArrowUp,
-  Paperclip,
+  Image as ImageIcon,
   Globe,
   Search,
   SlidersHorizontal,
@@ -12,7 +12,9 @@ import {
   MessageSquare,
   HelpCircle,
   Sparkles,
-  Wand2
+  Wand2,
+  AlertTriangle,
+  X
 } from 'lucide-react'
 import { EggLogo } from '../brand/EggLogo'
 import { useChatStore } from '../../stores/chatStore'
@@ -21,11 +23,20 @@ import { useSearchRuntimeStore } from '../../stores/searchRuntimeStore'
 import { useSidebarStore } from '../../stores/sidebarStore'
 import { getResearchPhaseLabel } from '../../../shared/research-progress'
 import { ContextTray } from './ContextTray'
+import { AttachmentTray } from './AttachmentTray'
 import { UsageMeter } from './UsageMeter'
 import { Tooltip } from './Tooltip'
 import { ModelSelector } from './ModelSelector'
 import { CommandPalette, CommandItem } from './CommandPalette'
 import { Skill } from '../../../shared/types'
+import { lookupCloudVisionSupport } from '../../../shared/vision-support'
+
+const IMAGE_MIME = /^image\/(png|jpeg|webp|gif)$/i
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i
+
+function pathForFile(file: File): string {
+  return window.goltiAPI.getPathForFile?.(file) || ''
+}
 
 interface ChatInputProps {
   isLanding?: boolean
@@ -60,6 +71,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     addContext,
     addContextPaths,
     addContextText,
+    stageAttachmentFiles,
+    stageAttachmentBytes,
+    pickAttachments,
+    stagedAttachments,
+    removeStagedAttachment,
+    attachmentError,
+    clearAttachmentError,
+    modelCapabilities,
+    models,
+    selectedModel,
+    setSelectedModel,
     undoDraft,
     redoDraft,
     draftUndoStack,
@@ -114,6 +136,25 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
 
   useEffect(() => setupListeners(), [setupListeners])
 
+  const visionBlocked = stagedAttachments.length > 0 && modelCapabilities?.image === false
+  const visionBlockReason = visionBlocked
+    ? modelCapabilities?.reason || 'This model cannot read images'
+    : null
+  const canSend =
+    Boolean(draft.trim()) && !isGenerating && !tokenBudget?.overflow && !visionBlocked
+
+  // Cloud support is a pure name lookup, so an alternative can be offered without
+  // a round trip. Local vision depends on an installed projector, so it is skipped.
+  const visionCapableAlternative =
+    visionBlocked && selectedModel && selectedModel.providerType !== 'golti-engine'
+      ? models.find(
+          (m) =>
+            m.providerId === selectedModel.providerId &&
+            m.id !== selectedModel.id &&
+            lookupCloudVisionSupport(m.name) === true
+        )
+      : undefined
+
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value
     setDraft(val)
@@ -158,7 +199,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     }
     if (e.key === 'Enter' && !e.shiftKey && !showCommandPalette) {
       e.preventDefault()
-      if (draft.trim() && !isGenerating && !tokenBudget?.overflow) {
+      if (canSend) {
         sendMessage()
       }
     }
@@ -168,14 +209,39 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     e.preventDefault()
     setDragOver(false)
     const files = Array.from(e.dataTransfer.files || [])
-    const paths = files.map((f: any) => f.path).filter(Boolean)
-    if (paths.length) {
-      await addContextPaths(paths)
-    } else if (files.length) {
-      for (const file of files) {
-        const text = await file.text()
-        await addContextText(file.name, text)
-      }
+    if (files.length === 0) return
+
+    const images = files.filter((f) => IMAGE_MIME.test(f.type) || IMAGE_EXT.test(f.name))
+    const others = files.filter((f) => !images.includes(f))
+
+    // `File.path` was removed in Electron 32; only webUtils can resolve a real path.
+    const imagePaths = images.map(pathForFile).filter(Boolean)
+    if (imagePaths.length) await stageAttachmentFiles(imagePaths)
+    for (const file of images) {
+      if (!pathForFile(file)) await stageAttachmentBytes(file)
+    }
+
+    const otherPaths = others.map(pathForFile).filter(Boolean)
+    if (otherPaths.length) await addContextPaths(otherPaths)
+    for (const file of others) {
+      if (!pathForFile(file)) await addContextText(file.name, await file.text())
+    }
+  }
+
+  const onPaste = async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items || [])
+    const imageFiles = items
+      .filter((item) => item.kind === 'file' && IMAGE_MIME.test(item.type))
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null)
+
+    if (imageFiles.length === 0) return
+
+    // Only swallow the paste once we know an image is coming, so pasting text
+    // alongside an image still lands in the textarea.
+    e.preventDefault()
+    for (const file of imageFiles) {
+      await stageAttachmentBytes(file)
     }
   }
 
@@ -222,13 +288,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
 
   const toolCommands: CommandItem[] = [
     {
-      id: 'attach',
-      label: 'Attach Files',
-      description: 'Add local files or folders as context',
-      icon: <Paperclip size={14} />,
+      id: 'attach-image',
+      label: 'Attach Image',
+      description: 'Send a screenshot or photo to a vision model',
+      icon: <ImageIcon size={14} />,
       action: () => {
         removeAtQueryFromDraft()
-        addContext()
+        pickAttachments()
       }
     },
     {
@@ -308,6 +374,42 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     <div className={`composer ${isLanding ? 'is-landing' : ''}`}>
       <div className="composer-inner">
         <ContextTray />
+        <AttachmentTray
+          attachments={stagedAttachments}
+          onRemove={removeStagedAttachment}
+          warn={visionBlocked}
+        />
+
+        {attachmentError && (
+          <div className="attachment-error" role="alert">
+            <AlertTriangle size={13} aria-hidden="true" />
+            <span>{attachmentError}</span>
+            <button
+              type="button"
+              className="attachment-error-dismiss"
+              onClick={clearAttachmentError}
+              aria-label="Dismiss attachment error"
+            >
+              <X size={12} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
+        {visionBlockReason && (
+          <div className="attachment-warning" role="status">
+            <AlertTriangle size={13} aria-hidden="true" />
+            <span>{visionBlockReason}. Remove the image or switch model.</span>
+            {visionCapableAlternative && (
+              <button
+                type="button"
+                className="attachment-warning-action"
+                onClick={() => setSelectedModel(visionCapableAlternative)}
+              >
+                Use {visionCapableAlternative.name}
+              </button>
+            )}
+          </div>
+        )}
 
         <div
           className={`composer-box ${dragOver ? 'is-dragover' : ''} ${tokenBudget?.overflow ? 'is-overflow' : ''}`}
@@ -398,6 +500,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
             value={draft}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
+            onPaste={onPaste}
             onScroll={(e) => {
               if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop
             }}
@@ -550,9 +653,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
             ) : (
               <Tooltip label="Send message" shortcut="Enter">
                 <button
-                  className={`composer-send ${draft.trim() && !tokenBudget?.overflow ? 'is-ready' : ''}`}
+                  className={`composer-send ${canSend ? 'is-ready' : ''}`}
                   onClick={() => sendMessage()}
-                  disabled={!draft.trim() || Boolean(tokenBudget?.overflow)}
+                  disabled={!canSend}
                   aria-label="Send message"
                 >
                   <ArrowUp size={16} />

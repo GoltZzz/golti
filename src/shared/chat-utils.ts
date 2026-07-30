@@ -716,15 +716,24 @@ export interface HistoryTrimResult<T> {
   kept: T[]
   droppedCount: number
   droppedTokens: number
+  /**
+   * The newest turn is always kept, so it can exceed the budget on its own —
+   * typically a large attachment. Callers must surface this rather than send a
+   * request that silently loses the attachment.
+   */
+  overflow?: boolean
 }
 
-export function trimHistoryToBudget<T extends { role: string; content: string }>(
-  history: T[],
-  availableTokens: number
-): HistoryTrimResult<T> {
+export function attachmentTokens(m: { attachments?: Array<{ tokenEstimate: number }> }): number {
+  return (m.attachments ?? []).reduce((sum, a) => sum + (a.tokenEstimate || 0), 0)
+}
+
+export function trimHistoryToBudget<
+  T extends { role: string; content: string; attachments?: Array<{ tokenEstimate: number }> }
+>(history: T[], availableTokens: number): HistoryTrimResult<T> {
   if (history.length === 0) return { kept: [], droppedCount: 0, droppedTokens: 0 }
 
-  const tokens = history.map((m) => estimateTokens(m.content))
+  const tokens = history.map((m) => estimateTokens(m.content) + attachmentTokens(m))
 
   let start = history.length - 1
   let used = tokens[start]
@@ -737,10 +746,13 @@ export function trimHistoryToBudget<T extends { role: string; content: string }>
     start += 1
   }
 
+  const keptTokens = tokens.slice(start).reduce((sum, t) => sum + t, 0)
+
   return {
     kept: history.slice(start),
     droppedCount: start,
-    droppedTokens: tokens.slice(0, start).reduce((sum, t) => sum + t, 0)
+    droppedTokens: tokens.slice(0, start).reduce((sum, t) => sum + t, 0),
+    overflow: keptTokens > availableTokens
   }
 }
 

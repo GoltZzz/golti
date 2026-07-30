@@ -37,6 +37,11 @@ export const Tooltip: React.FC<TooltipProps> = ({
     setIsVisible(false)
   }
 
+  const handleFocus = () => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    setIsVisible(true)
+  }
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
@@ -59,6 +64,8 @@ export const Tooltip: React.FC<TooltipProps> = ({
       className="tooltip-wrap"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onFocus={handleFocus}
+      onBlur={handleMouseLeave}
     >
       {children}
       {isVisible && (

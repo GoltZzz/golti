@@ -14,6 +14,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_RESERVED_OUTPUT,
   computeTokenBudget,
+  attachmentTokens,
   estimateTokens,
   extractArtifacts,
   extractShells,
@@ -45,6 +46,7 @@ import { CONTINUE_INSTRUCTION, normalizeFinishReason } from '../../shared/finish
 import { resolveContextWindow } from './context-window'
 import {
   dbArtifacts,
+  dbAttachments,
   dbCitations,
   dbContext,
   dbConversations,
@@ -52,6 +54,8 @@ import {
   dbSettings,
   dbSkills
 } from '../db/database'
+import { loadAttachments } from './attachment-loader'
+import { resolveModelCapabilities } from './model-capabilities'
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 import { startDeepResearch } from './deep-research'
@@ -248,6 +252,7 @@ export async function startChatGeneration(
     deepResearchEnabled,
     composerMode,
     contextItemIds,
+    attachmentIds,
     generationSettings,
     continueMessageId,
     skillRequest,
@@ -261,6 +266,15 @@ export async function startChatGeneration(
   const continuing = continueMessageId ? dbMessages.get(continueMessageId) : undefined
   if (continueMessageId && (!continuing || continuing.role !== 'assistant')) {
     throw new Error('Cannot continue: assistant message not found')
+  }
+
+  // Re-check here as well as in the composer: a stale renderer must not be able
+  // to send an image to a model that will silently ignore it.
+  if (attachmentIds?.length) {
+    const caps = await resolveModelCapabilities(providerId, model)
+    if (!caps.image) {
+      throw new Error(caps.reason || `${model} cannot read images`)
+    }
   }
 
   let userMsgId: string | undefined
@@ -318,6 +332,10 @@ export async function startChatGeneration(
     }
     dbMessages.create(userMsg)
     parentForAssistant = userMsgId
+  }
+
+  if (attachmentIds?.length && userMsgId) {
+    dbAttachments.bindToMessage(attachmentIds, userMsgId)
   }
 
   const generationId = newId('gen')
@@ -598,23 +616,30 @@ export async function startChatGeneration(
     const generationStartedAt = Date.now()
     const promptTokens =
       estimateTokens(historyForModel.map((m) => m.content).join('\n')) +
+      historyForModel.reduce((sum, m) => sum + attachmentTokens(m), 0) +
       estimateTokens(effectiveSystem || '')
     let firstTokenLogged = false
+    let firstTokenTime: number | null = null
+    let ttftMs: number | undefined = undefined
+
     const markFirstToken = () => {
       if (firstTokenLogged) return
       firstTokenLogged = true
-      const ms = Date.now() - generationStartedAt
-      console.log(`[perf] ttft=${ms}ms prompt=~${promptTokens}tok model=${providerId}:${model}`)
+      firstTokenTime = Date.now()
+      ttftMs = firstTokenTime - generationStartedAt
+      console.log(`[perf] ttft=${ttftMs}ms prompt=~${promptTokens}tok model=${providerId}:${model}`)
     }
 
     const streamOnce = async (
       history: Message[],
       extra?: { responseSchema?: Record<string, unknown> }
     ): Promise<void> => {
+      const loaded = loadAttachments(history)
       for await (const event of streamChatResponse(providerId, model, history, effectiveSystem, {
           signal: controller.signal,
           generationSettings: mergedSettings,
-          responseSchema: extra?.responseSchema
+          responseSchema: extra?.responseSchema,
+          attachments: loaded.byMessage
         })) {
           if (event.type === 'thinking' || event.type === 'text') markFirstToken()
 
@@ -659,11 +684,19 @@ export async function startChatGeneration(
               }
               generated += contentDelta
               activeGen.content = priorContent + generated
+              const liveDurationSec = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : 0
+              const liveToks = estimateTokens(generated)
+              const liveTps =
+                liveDurationSec > 0.1 && liveToks > 0
+                  ? Math.round((liveToks / liveDurationSec) * 10) / 10
+                  : undefined
               sendChunk(win, {
                 conversationId,
                 messageId: assistantMsgId,
                 generationId,
                 contentDelta,
+                ttftMs,
+                tokensPerSec: liveTps,
                 done: false,
                 eventType: 'text'
               })
@@ -894,10 +927,18 @@ export async function startChatGeneration(
         }
       }
 
+      const genDurationSec = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : 0
+      const finalTokensPerSec =
+        genDurationSec > 0.05 && usage?.completionTokens
+          ? Math.round((usage.completionTokens / genDurationSec) * 10) / 10
+          : undefined
+
       dbMessages.update(assistantMsgId, {
         content: storedContent,
         reasoningContent: reasoningAccumulated || undefined,
         thinkingDurationMs: totalThinkingDurationMs,
+        ttftMs,
+        tokensPerSec: finalTokensPerSec,
         shellIds,
         artifactIds: shellIds,
         tokensIn: usage.promptTokens,
@@ -913,6 +954,8 @@ export async function startChatGeneration(
         contentDelta: '',
         correctedContent: storedContent !== accumulated ? storedContent : undefined,
         thinkingDurationMs: totalThinkingDurationMs,
+        ttftMs,
+        tokensPerSec: finalTokensPerSec,
         done: true,
         usage,
         finishReason,

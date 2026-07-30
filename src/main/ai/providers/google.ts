@@ -7,6 +7,7 @@ import {
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
+import { toGoogleParts } from '../../../shared/message-blocks'
 
 export async function fetchGoogleModels(_provider: AIProviderConfig): Promise<string[]> {
   return ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash']
@@ -25,7 +26,7 @@ export async function* streamGoogleChat(
 
   const contents = messages.map((m) => ({
     role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }]
+    parts: toGoogleParts(m.content, options?.attachments?.get(m.id) ?? [])
   }))
 
   const body: Record<string, unknown> = {

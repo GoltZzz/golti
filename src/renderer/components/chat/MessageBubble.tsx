@@ -22,6 +22,7 @@ import {
   ChevronDown,
   X,
   Cpu,
+  Zap,
   HelpCircle,
   RotateCcw,
   Sparkles,
@@ -48,6 +49,7 @@ import { parseModelDisplay } from '../../../shared/model-display'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { ThinkingBlock } from './ThinkingBlock'
 import { EngineMemoryErrorCard } from './EngineMemoryErrorCard'
+import { MessageAttachments } from './MessageAttachments'
 
 interface MessageBubbleProps {
   message: Message
@@ -199,8 +201,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
     sendMessage('Please expand on your reasoning process step-by-step.')
   }
 
+  const isHighlighted = useChatStore((s) => s.highlightedMessageId === message.id)
+
   return (
-    <div className="msg">
+    <div className={`msg ${isHighlighted ? 'is-highlighted' : ''}`} id={`msg-${message.id}`}>
       <div className={`msg-row ${isUser ? 'is-user' : 'is-assistant'}`}>
         {!isUser && (
           <div className="msg-avatar is-assistant" aria-hidden>
@@ -291,6 +295,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             </div>
           ) : (
             <div className="msg-content" data-selectable>
+              {message.attachments && message.attachments.length > 0 && (
+                <MessageAttachments attachments={message.attachments} />
+              )}
               {message.isStreaming && !cleanContent ? (
                 researchProgress ? null : (
                   <div style={{ display: 'flex', gap: 4, padding: '6px 0' }}>
@@ -522,7 +529,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             </div>
           )}
 
-          {(message.tokensIn || message.tokensOut || siblings.length > 1 || modelDisplay) && (
+          {(message.tokensIn || message.tokensOut || siblings.length > 1 || modelDisplay || message.ttftMs != null || message.tokensPerSec != null) && (
             <div className="msg-meta">
               {siblings.length > 1 && (
                 <div className="branch-picker">
@@ -549,6 +556,26 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                 <span className="msg-model-badge" title={message.model}>
                   <Cpu size={11} />
                   <span className="msg-model-name">{modelDisplay.displayName}</span>
+                </span>
+              )}
+              {(message.ttftMs != null || message.tokensPerSec != null) && (
+                <span
+                  className="msg-speedometer-badge"
+                  title={
+                    [
+                      message.ttftMs != null ? `Time to first token: ${message.ttftMs}ms` : null,
+                      message.tokensPerSec != null ? `Generation speed: ${message.tokensPerSec} tokens/sec` : null
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  }
+                >
+                  <Zap size={11} className="speedometer-icon" />
+                  <span>
+                    {message.ttftMs != null ? `${message.ttftMs}ms TTFT` : ''}
+                    {message.ttftMs != null && message.tokensPerSec != null ? ' · ' : ''}
+                    {message.tokensPerSec != null ? `${message.tokensPerSec} t/s` : ''}
+                  </span>
                 </span>
               )}
               {modelDisplay && (message.tokensIn || message.tokensOut) && (

@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { EngineDownloadProgress, ModelDownloadResult } from '../../shared/types'
+import { isProjectorFile } from './gguf'
 
 let modelDirOverride: string | null = null
 
@@ -116,7 +117,11 @@ function applyPendingAction(base: string, active: ActiveDownload): void {
   }
 }
 
-export function listLocalModels(): LocalModelFile[] {
+/**
+ * Multimodal projectors live alongside models as `.gguf` files but are not
+ * loadable as chat models, so they are excluded unless explicitly requested.
+ */
+export function listLocalModels(includeProjectors = false): LocalModelFile[] {
   const dir = getModelDir()
   if (!fs.existsSync(dir)) return []
 
@@ -124,6 +129,7 @@ export function listLocalModels(): LocalModelFile[] {
     const files = fs.readdirSync(dir)
     return files
       .filter((f) => f.endsWith('.gguf'))
+      .filter((f) => includeProjectors || !isProjectorFile(path.join(dir, f)))
       .map((f) => {
         const filepath = path.join(dir, f)
         const stats = fs.statSync(filepath)

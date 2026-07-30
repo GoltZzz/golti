@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
 import { describeDiskFit, getCompatibility, getDiskFit } from '../../../shared/compatibility'
 import { describeOffload, estimateOffload } from '../../../shared/gpu-offload'
@@ -25,7 +25,8 @@ import {
   Play,
   X,
   Search,
-  Gauge
+  Gauge,
+  Eye
 } from 'lucide-react'
 
 interface ModelCardProps {
@@ -57,7 +58,15 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     cancelDownload,
     clearDownload,
     loadModel,
-    deleteLocalModel
+    deleteLocalModel,
+    projectors,
+    projectorBusy,
+    projectorErrors,
+    projectorTargets,
+    fetchProjectorFor,
+    installProjector,
+    removeProjector,
+    clearProjectorDownload
   } = useEngineStore()
 
   const selectedModel = useChatStore((s) => s.selectedModel)
@@ -106,6 +115,24 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const offloadNote = describeOffload(systemInfo, model, localGeometry)
   const offloadFit = estimateOffload(systemInfo, model, localGeometry).fit
   const diskBlocked = diskFit === 'insufficient'
+
+  const projectorPath = ggufFilename ? projectors[ggufFilename] : undefined
+  const projectorPending = ggufFilename ? !!projectorBusy[ggufFilename] : false
+  const projectorError = ggufFilename ? projectorErrors[ggufFilename] : undefined
+  const projectorTarget = ggufFilename ? projectorTargets[ggufFilename] : undefined
+  const projectorProgress = projectorTarget ? downloadingModels[projectorTarget.filename] : undefined
+  const projectorStatus = projectorProgress?.status
+  const isProjectorDownloading = Boolean(projectorProgress) && (!projectorStatus || projectorStatus === 'downloading')
+  const isProjectorPaused = projectorStatus === 'paused'
+  const isProjectorErrored = projectorStatus === 'error'
+  const showProjectorProgress =
+    Boolean(projectorTarget) && (isProjectorDownloading || isProjectorPaused || isProjectorErrored)
+
+  useEffect(() => {
+    if (isEngineModelDownloaded && ggufFilename && projectors[ggufFilename] === undefined) {
+      void fetchProjectorFor(ggufFilename)
+    }
+  }, [isEngineModelDownloaded, ggufFilename, projectors, fetchProjectorFor])
 
   const isEngineActive = useMemo(() => {
     if (!ggufFilename || !engineState.loadedModel) return false
@@ -392,6 +419,117 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         <div className={`offload-note ${offloadFit === 'cpu_only' ? 'offload-note-cpu' : ''}`}>
           <Gauge size={13} />
           <span>{offloadNote}</span>
+        </div>
+      )}
+
+      {isEngineModelDownloaded && ggufFilename && model.useCases.includes('vision') && (
+        <div className="installed-card-vision">
+          <div className="vision-status">
+            <Eye size={13} />
+            {projectorPath ? (
+              <span>Vision enabled</span>
+            ) : (
+              <span>Images disabled — no vision projector</span>
+            )}
+          </div>
+          {projectorPath ? (
+            <button className="btn-vision" onClick={() => void removeProjector(ggufFilename)}>
+              Remove
+            </button>
+          ) : !showProjectorProgress ? (
+            <button
+              className="btn-vision"
+              onClick={() => void installProjector(ggufFilename)}
+              disabled={projectorPending}
+            >
+              {projectorPending ? (
+                <>
+                  <Search size={13} className="spin" /> Finding...
+                </>
+              ) : (
+                'Add vision support'
+              )}
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {showProjectorProgress && projectorTarget && (
+        <div className="pull-progress-container projector-progress">
+          <div className="pull-status-row">
+            <span className="status-text">
+              {isProjectorDownloading ? (
+                <RefreshCw size={12} className="spin" />
+              ) : isProjectorPaused ? (
+                <Pause size={12} />
+              ) : (
+                <AlertTriangle size={12} />
+              )}{' '}
+              {isProjectorPaused
+                ? 'Paused'
+                : isProjectorErrored
+                  ? 'Projector download failed'
+                  : projectorProgress?.speed || 'Downloading vision projector...'}
+            </span>
+            <span className="percent-text">{projectorProgress?.percent || 0}%</span>
+          </div>
+          <div className="progress-bar-bg">
+            <div
+              className="progress-bar-fill"
+              style={{
+                width: `${projectorProgress?.percent || 0}%`,
+                backgroundColor: isProjectorErrored ? '#e06c75' : '#e5c07b'
+              }}
+            ></div>
+          </div>
+          <div className="pull-action-row">
+            {isProjectorDownloading ? (
+              <>
+                <button
+                  type="button"
+                  className="pull-action-btn"
+                  onClick={() => void pauseDownload(projectorTarget.filename)}
+                  title="Pause projector download"
+                >
+                  <Pause size={12} /> Pause
+                </button>
+                <button
+                  type="button"
+                  className="pull-action-btn pull-action-danger"
+                  onClick={() => void cancelDownload(projectorTarget.filename)}
+                  title="Cancel and discard partial download"
+                >
+                  <X size={12} /> Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="pull-action-btn"
+                  onClick={() => void installProjector(ggufFilename!)}
+                  title="Resume projector download"
+                >
+                  <Play size={12} /> Resume
+                </button>
+                <button
+                  type="button"
+                  className="pull-action-btn pull-action-danger"
+                  onClick={() => void clearProjectorDownload(ggufFilename!)}
+                  title="Delete partial download"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {projectorError && (
+        <div className="offload-note offload-note-cpu">
+          <AlertTriangle size={13} />
+          <span>{projectorError}</span>
         </div>
       )}
 
