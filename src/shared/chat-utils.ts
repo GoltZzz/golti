@@ -522,7 +522,8 @@ export function extractSkillBlocks(content: string): {
   return { skills, cleanContent: cleanContent.trim() }
 }
 
-const ASK_USER_OPENER = /```search|```(?:ask(?:[-_]?user)?|json)?\s*\n?\s*\{|\{\s*(?:"|')?question(?:"|')?\s*:/i
+const ASK_USER_OPENER =
+  /```search|```(?:ask(?:[-_]?user)?|json)?\s*\n?\s*\{|\{\s*(?:"|')?(?:question|reasoning|aspect|options|confidence)(?:"|')?\s*:|,?\s*\{\s*(?:"|')?label(?:"|')?\s*:/i
 
 /**
  * While a reply is still streaming, an ask-user block arrives character by
@@ -601,14 +602,23 @@ export function stripSearchRequests(content: string): string {
   return out.trim()
 }
 
-/** Remove any ```ask-user``` blocks from text so they aren't rendered as raw markdown. */
+/** Remove any ```ask-user``` blocks and trailing/orphan JSON residue from text so they aren't rendered as raw markdown. */
 export function stripAskUser(content: string): string {
-  const found = extractAllAskUser(content)
-  if (!found.length) return content
+  if (!content) return ''
   let out = content
-  for (let i = found.length - 1; i >= 0; i--) {
-    out = out.slice(0, found[i].fenceStart) + out.slice(found[i].fenceEnd)
-  }
+
+  // 1. Remove fenced ask-user blocks (canonical ```ask-user ... ``` or ```json ... ```)
+  out = out.replace(/```(?:ask(?:[-_]?user)?|json)?\s*\n?[\s\S]*?(?:```|$)/gi, '')
+
+  // 2. Remove unfenced ask-user JSON starting at { "question", { "reasoning", { "aspect", etc.
+  out = out.replace(/\{\s*"(?:question|reasoning|aspect|options|confidence)"[\s\S]*/gi, '')
+
+  // 3. Remove orphan option array fragments like , { "label": ... } ... }
+  out = out.replace(/,?\s*\{\s*"label"[\s\S]*/gi, '')
+
+  // 4. Remove residual trailing JSON syntax artifacts like }, "allowFreeText": ... }
+  out = out.replace(/\}\s*,?\s*"(?:allowFreeText|multiSelect|confidence|options|reasoning)"[\s\S]*/gi, '')
+
   return out.trim()
 }
 

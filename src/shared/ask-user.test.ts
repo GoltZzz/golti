@@ -114,4 +114,12 @@ describe('extractAskUser', () => {
       { label: 'Rust', description: 'Safe' }
     ])
   })
+
+  it('strips orphan option fragments and truncated JSON residue completely from visible text', () => {
+    const orphanFragment = `, { "label": "Market Acceptance and User Feedback", "description": "Evaluating user engagement", "recommended": true }, { "label": "Competitor Analysis" } ], "allowFreeText": true, "multiSelect": false }`
+    expect(stripAskUser(orphanFragment)).toBe('')
+
+    const mixedProseAndFragment = `Here is my question:\n, { "label": "Option A" }, { "label": "Option B" } ] }`
+    expect(stripAskUser(mixedProseAndFragment)).toBe('Here is my question:')
+  })
 })

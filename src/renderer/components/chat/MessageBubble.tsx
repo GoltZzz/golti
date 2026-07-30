@@ -173,7 +173,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
 
   const displayCleanContent = useMemo(() => {
     if (!cleanContent) return ''
-    let text = stripSearchRequests(askUser ? stripAskUser(cleanContent) : streamingAsk.visible)
+    const target = message.isStreaming ? streamingAsk.visible : cleanContent
+    let text = stripSearchRequests(stripAskUser(target))
     if (memoryErrorDetails?.isMemoryError) {
       text = text
         .replace(/\n*\*\[Error:.*?\]\*/gi, '')
@@ -181,7 +182,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
         .trim()
     }
     return text
-  }, [cleanContent, memoryErrorDetails, askUser, streamingAsk])
+  }, [cleanContent, memoryErrorDetails, message.isStreaming, streamingAsk])
 
   const answerAskUser = (answer: string) => {
     const text = answer.trim()
