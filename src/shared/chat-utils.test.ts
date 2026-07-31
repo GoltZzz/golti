@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  attachmentTokens,
   computeTokenBudget,
   createThinkStreamParser,
   estimateTokens,
@@ -110,6 +111,49 @@ describe('trimHistoryToBudget', () => {
       droppedCount: 0,
       droppedTokens: 0
     })
+  })
+
+  it('charges attachment tokens against the budget', () => {
+    const withImage = [
+      turn('u1', 'user'),
+      { ...turn('u2', 'user'), attachments: [{ tokenEstimate: 500 }] }
+    ]
+
+    // Text alone (10 + 10) fits in 100; the image pushes the newest turn over.
+    expect(trimHistoryToBudget(withImage, 100).kept.map((m) => m.id)).toEqual(['u2'])
+    expect(trimHistoryToBudget(withImage, 1000).kept).toHaveLength(2)
+  })
+
+  it('flags overflow when the newest attachment-bearing turn cannot fit', () => {
+    const result = trimHistoryToBudget(
+      [{ ...turn('u1', 'user'), attachments: [{ tokenEstimate: 5000 }] }],
+      100
+    )
+    expect(result.kept.map((m) => m.id)).toEqual(['u1'])
+    expect(result.overflow).toBe(true)
+  })
+
+  it('does not flag overflow when everything fits', () => {
+    expect(trimHistoryToBudget(conversation, 1000).overflow).toBe(false)
+  })
+
+  it('treats a missing attachments field as zero cost', () => {
+    expect(trimHistoryToBudget(conversation, 35).kept.map((m) => m.id)).toEqual([
+      'u2',
+      'a2',
+      'u3'
+    ])
+  })
+})
+
+describe('attachmentTokens', () => {
+  it('sums attachment estimates', () => {
+    expect(attachmentTokens({ attachments: [{ tokenEstimate: 10 }, { tokenEstimate: 5 }] })).toBe(15)
+  })
+
+  it('returns zero for no attachments', () => {
+    expect(attachmentTokens({})).toBe(0)
+    expect(attachmentTokens({ attachments: [] })).toBe(0)
   })
 })
 

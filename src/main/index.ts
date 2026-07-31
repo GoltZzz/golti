@@ -10,8 +10,26 @@ import {
   dbProviders,
   dbSettings,
   dbSkills,
+  dbAttachments,
   initDatabase
 } from './db/database'
+import {
+  stageImage,
+  stageImageFromPath,
+  deleteAttachment,
+  readAttachmentThumbUrl,
+  readAttachmentDataUrl,
+  sweepAttachments,
+  SUPPORTED_IMAGE_EXTENSIONS
+} from './services/attachment-store'
+import { resolveModelCapabilities } from './ai/model-capabilities'
+import {
+  clearProjectorCache,
+  forgetProjector,
+  recordProjector,
+  resolveProjectorFor
+} from './engine/projector'
+import { isProjectorFile } from './engine/gguf'
 import { getAllModels } from './ai/provider-manager'
 import { chatMemories } from './db/memory-repos'
 import { embedText, cosineSimilarity } from './engine/embeddings'
@@ -62,7 +80,7 @@ import {
   isBinaryInstalled,
   getModelDir
 } from './engine'
-import { searchHFModels, fetchHFModelDetail } from './hf/hf-client'
+import { searchHFModels, fetchHFModelDetail, findProjectorsForLocalModel } from './hf/hf-client'
 import { resolveGguf } from './hf/gguf-resolver'
 import {
   getSearchRuntimeState,
@@ -403,6 +421,14 @@ app.whenReady().then(() => {
   }
 
   initDatabase()
+  try {
+    const swept = sweepAttachments()
+    if (swept.rows || swept.files) {
+      console.log(`[attachments] swept ${swept.rows} stale rows, ${swept.files} orphaned files`)
+    }
+  } catch (err) {
+    console.warn('[attachments] sweep failed:', err)
+  }
   setupIpcHandlers()
   createWindow()
 
@@ -496,6 +522,7 @@ function setupIpcHandlers(): void {
   ipcMain.handle('db:messages:create', (_, msg: any) => dbMessages.create(msg))
   ipcMain.handle('db:messages:update', (_, id: string, updates: any) => dbMessages.update(id, updates))
   ipcMain.handle('db:messages:versions', (_, messageId: string) => dbMessages.listVersions(messageId))
+  ipcMain.handle('db:messages:search', (_, query: string) => dbMessages.searchMessages(query))
   ipcMain.handle('db:messages:set-active-leaf', (_, conversationId: string, leafId: string) => {
     dbConversations.update(conversationId, { activeLeafId: leafId })
     return dbMessages.listForConversation(conversationId)
@@ -530,9 +557,50 @@ function setupIpcHandlers(): void {
     return true
   })
 
+  // Attachments
+  ipcMain.handle('attachments:stage-file', (_, conversationId: string, filePath: string) =>
+    stageImageFromPath(conversationId, filePath)
+  )
+  ipcMain.handle(
+    'attachments:stage-bytes',
+    (_, conversationId: string, name: string, base64: string, mimeType?: string) =>
+      stageImage({
+        conversationId,
+        name,
+        bytes: Buffer.from(base64, 'base64'),
+        mimeType
+      })
+  )
+  ipcMain.handle('attachments:list-staged', (_, conversationId: string) =>
+    dbAttachments.listStaged(conversationId)
+  )
+  ipcMain.handle('attachments:delete', (_, id: string) => deleteAttachment(id))
+  ipcMain.handle('attachments:read-thumb', (_, id: string) => readAttachmentThumbUrl(id))
+  ipcMain.handle('attachments:read-data-url', (_, id: string) => readAttachmentDataUrl(id))
+  ipcMain.handle('attachments:pick', async (_, conversationId: string) => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: SUPPORTED_IMAGE_EXTENSIONS.map((e) => e.slice(1)) }
+      ]
+    })
+    if (result.canceled) return []
+
+    const staged: unknown[] = []
+    for (const filePath of result.filePaths) {
+      staged.push(stageImageFromPath(conversationId, filePath))
+    }
+    return staged
+  })
+  ipcMain.handle('model:capabilities', (_, providerId: string, model: string) =>
+    resolveModelCapabilities(providerId, model)
+  )
+
   // Memories (Brain & Memory)
   ipcMain.handle('memory:list', () => chatMemories.list())
   ipcMain.handle('memory:delete', (_, id: string) => chatMemories.delete(id))
+  ipcMain.handle('memory:create', (_, input: any) => chatMemories.create(input))
+  ipcMain.handle('memory:update', (_, id: string, input: any) => chatMemories.update(id, input))
   ipcMain.handle('memory:search', async (_, query: string) => {
     const q = String(query || '').trim()
     if (!q) return []
@@ -891,6 +959,35 @@ function setupIpcHandlers(): void {
     return res
   })
 
+  ipcMain.handle(
+    'engine:download-projector',
+    async (_, url: string, filename: string, modelFilename: string) => {
+      const res = await downloadModel(url, filename, (progress) => {
+        mainWindow?.webContents.send('engine:download-progress', progress)
+      })
+      if (res.status === 'complete') {
+        clearProjectorCache()
+        if (isProjectorFile(res.path)) {
+          recordProjector(modelFilename, filename)
+        } else {
+          deleteLocalModel(filename)
+          throw new Error(`${filename} is not a vision projector`)
+        }
+      }
+      return res
+    }
+  )
+
+  ipcMain.handle('engine:projector-for', (_, modelFilename: string) => {
+    const local = listLocalModels().find((m) => m.filename === modelFilename)
+    return local ? (resolveProjectorFor(local.filepath) ?? null) : null
+  })
+
+  ipcMain.handle('engine:unpair-projector', (_, modelFilename: string) => {
+    forgetProjector(modelFilename)
+    return true
+  })
+
   ipcMain.handle('engine:pause-download', (_, filename: string) => {
     return { success: pauseModelDownload(filename) }
   })
@@ -934,6 +1031,10 @@ function setupIpcHandlers(): void {
   )
 
   ipcMain.handle('hf:model-detail', async (_, repoId: string) => fetchHFModelDetail(repoId))
+
+  ipcMain.handle('hf:find-projector', async (_, modelFilename: string) =>
+    findProjectorsForLocalModel(String(modelFilename))
+  )
 
   ipcMain.handle('hf:resolve-gguf', async (_, ollamaTag: string, quantization?: string) =>
     resolveGguf(

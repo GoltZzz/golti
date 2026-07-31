@@ -10,12 +10,14 @@ import { MemorySettings } from './components/settings/MemorySettings'
 import { useSidebarStore } from './stores/sidebarStore'
 import { useMemoryStore } from './stores/memoryStore'
 import { useSkillStore } from './stores/skillStore'
+import { GlobalSearchModal } from './components/search/GlobalSearchModal'
 import type { Memory, Skill } from '../shared/types'
 
 export const App: React.FC = () => {
   const { activeTab } = useSidebarStore()
   const addSavedMemories = useMemoryStore((s) => s.addSavedMemories)
   const upsertSkill = useSkillStore((s) => s.upsertSkill)
+  const [isSearchOpen, setIsSearchOpen] = React.useState(false)
 
   React.useEffect(() => {
     return window.goltiAPI.onMemorySaved((memories: Memory[]) => addSavedMemories(memories))
@@ -24,6 +26,17 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     return window.goltiAPI.onSkillSaved((skill: Skill) => upsertSkill(skill))
   }, [upsertSkill])
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault()
+        setIsSearchOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const renderContent = () => {
     switch (activeTab) {
@@ -68,6 +81,7 @@ export const App: React.FC = () => {
         </main>
       </div>
       <StatusBar />
+      <GlobalSearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
     </div>
   )
 }

@@ -14,7 +14,8 @@ import {
   buildCookbookModels,
   reconcileParams,
   HFModelSummaryRaw,
-  HFTreeEntryRaw
+  HFTreeEntryRaw,
+  selectProjectorFiles
 } from './hf-catalog'
 
 function summaryRaw(overrides: Partial<HFModelSummaryRaw> = {}): HFModelSummaryRaw {
@@ -304,5 +305,78 @@ describe('buildCookbookModels', () => {
     })
     expect(models[0].parameterBillions).toBeGreaterThan(7)
     expect(models[0].sizeTier).toBe('small')
+  })
+})
+
+describe('selectProjectorFiles', () => {
+  const entry = (path: string, size: number) => ({ type: 'file' as const, path, size })
+
+  it('finds an mmproj file and builds a resolve url', () => {
+    expect(selectProjectorFiles('ggml-org/gemma-3-4b-it-GGUF', [
+      entry('gemma-3-4b-it-Q4_K_M.gguf', 2_500_000_000),
+      entry('mmproj-model-f16.gguf', 850_000_000)
+    ])).toEqual([
+      {
+        filename: 'mmproj-model-f16.gguf',
+        url: 'https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/mmproj-model-f16.gguf',
+        fileSizeBytes: 850_000_000
+      }
+    ])
+  })
+
+  it('returns nothing for a text-only repo', () => {
+    expect(
+      selectProjectorFiles('org/repo', [entry('model-Q4_K_M.gguf', 100)])
+    ).toEqual([])
+  })
+
+  it('recognises clip, vision and projector naming', () => {
+    const found = selectProjectorFiles('org/repo', [
+      entry('clip-vit-large.gguf', 300),
+      entry('vision_encoder.gguf', 200),
+      entry('llava-projector.gguf', 100)
+    ])
+    expect(found.map((p) => p.filename)).toEqual([
+      'clip-vit-large.gguf',
+      'vision_encoder.gguf',
+      'llava-projector.gguf'
+    ])
+  })
+
+  it('prefers the highest precision projector first', () => {
+    const found = selectProjectorFiles('org/repo', [
+      entry('mmproj-Q8_0.gguf', 200),
+      entry('mmproj-F32.gguf', 900),
+      entry('mmproj-F16.gguf', 450)
+    ])
+    expect(found.map((p) => p.filename)).toEqual([
+      'mmproj-F32.gguf',
+      'mmproj-F16.gguf',
+      'mmproj-Q8_0.gguf'
+    ])
+  })
+
+  it('ignores directories, nested paths, non-gguf files and zero sizes', () => {
+    expect(
+      selectProjectorFiles('org/repo', [
+        { type: 'directory', path: 'mmproj-dir' } as any,
+        entry('sub/mmproj-f16.gguf', 100),
+        entry('mmproj-f16.bin', 100),
+        entry('mmproj-empty.gguf', 0)
+      ])
+    ).toEqual([])
+  })
+
+  it('reads size from lfs metadata when present', () => {
+    const found = selectProjectorFiles('org/repo', [
+      { type: 'file', path: 'mmproj-f16.gguf', lfs: { size: 777 } } as any
+    ])
+    expect(found[0].fileSizeBytes).toBe(777)
+  })
+
+  it('does not classify a plain model as a projector', () => {
+    expect(
+      selectProjectorFiles('org/repo', [entry('Qwen2-VL-7B-Q4_K_M.gguf', 100)])
+    ).toEqual([])
   })
 })

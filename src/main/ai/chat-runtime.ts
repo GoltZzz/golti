@@ -14,6 +14,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_RESERVED_OUTPUT,
   computeTokenBudget,
+  attachmentTokens,
   estimateTokens,
   extractArtifacts,
   extractShells,
@@ -23,6 +24,7 @@ import {
   trimHistoryToBudget,
   extractSkillBlocks,
   extractSearchRequest,
+  extractAskUser,
   stripSearchRequests
 } from '../../shared/chat-utils'
 import {
@@ -33,6 +35,7 @@ import {
   BUILTIN_SKILL_NAMES
 } from '../../shared/types'
 import { decideWebSearch, resolveComposerSearchMode } from '../../shared/web-search-intent'
+import { ASK_USER_JSON_SCHEMA } from '../../shared/ask-user-schema'
 import {
   buildContextBlock,
   buildSystemPrompt,
@@ -43,6 +46,7 @@ import { CONTINUE_INSTRUCTION, normalizeFinishReason } from '../../shared/finish
 import { resolveContextWindow } from './context-window'
 import {
   dbArtifacts,
+  dbAttachments,
   dbCitations,
   dbContext,
   dbConversations,
@@ -50,6 +54,8 @@ import {
   dbSettings,
   dbSkills
 } from '../db/database'
+import { loadAttachments } from './attachment-loader'
+import { resolveModelCapabilities } from './model-capabilities'
 import { streamChatResponse } from './provider-manager'
 import { ensureLocalSearchReady, runWebSearch } from '../services/web-search'
 import { startDeepResearch } from './deep-research'
@@ -77,11 +83,18 @@ const ASK_USER_SYSTEM_SUFFIX = [
   'When the request is missing a detail you need, ask the user instead of guessing. Emit ONE ask-user block and nothing else — no text before or after it.',
   'The block is valid JSON inside these fences:',
   '```ask-user',
-  '{ "question": "Short, specific question?", "options": [{ "label": "Option A", "description": "What picking this means" }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true }',
+  '{ "reasoning": "Why this matters", "aspect": "Goal|Constraint|Trade-off|Priority|Scope|Edge case|Clarification", "question": "Short, specific question?", "confidence": 1, "assumptions": ["stated assumptions"], "options": [{ "label": "Option A", "description": "What picking this means", "recommended": true, "recommendedRationale": "Why recommended" }, { "label": "Option B", "description": "What picking this means" }], "allowFreeText": true, "multiSelect": false }',
   '```',
-  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first, each a short "label" plus a one-line "description" of what choosing it means. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form (a name, a number, a path).',
-  'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up like "what are you trying to build?"; never ask what you can already work out yourself — decide it and state the assumption; keep options concrete and genuinely different, not reworded versions of each other.'
+  'Always fill "options" with 2-5 realistic answers the user might pick, most likely first with "recommended": true and "recommendedRationale" on it. Include "reasoning", "aspect", and "assumptions" when applicable. Set "multiSelect": true if multiple options can be chosen at once. Keep "allowFreeText": true. Omit "options" only when the answer is genuinely free-form.',
+  'An optional "confidence" key (integer 1-5) reports how well you understand the request so far. When confidence reaches 5, emit a final summary block with type: "summary" and summary: { decisions: [...], assumptions: [...], tradeoffs: [...] }.',
+  'Good questions: ask about the one unknown that most changes your answer; never open with a generic warm-up; state assumptions explicitly; keep options concrete and genuinely different.'
 ].join('\n')
+
+const ASK_USER_RETRY_NOTE = [
+  'That reply was rejected: this turn must be a question, not an answer.',
+  'Reply with the ask-user JSON object only — question, confidence (1-5), and 2-5 options each with a label and description.',
+  'No prose, no fences, no text around it. If you already have everything you need, set confidence to 5 and make the question a summary for the user to confirm.'
+].join(' ')
 
 /** Lets the model pull fresh web results mid-turn instead of guessing from stale knowledge. */
 const SEARCH_TOOL_SYSTEM_SUFFIX = [
@@ -120,6 +133,25 @@ function sendChunk(win: BrowserWindow | null, chunk: StreamChunkPayload): void {
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send('ai:stream-chunk', chunk)
   }
+}
+
+type BranchMessage = { role: string; content: string; displayContent?: string }
+
+/** The expanded body of the most recent /slash-command turn on this branch.
+ *  A slash expansion is the only thing that sets displayContent to a /command. */
+function findSkillInvocation(branch: BranchMessage[]): string {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const m = branch[i]
+    if (m.role === 'user' && m.displayContent?.trim().startsWith('/')) return m.content || ''
+  }
+  return ''
+}
+
+function lastAssistantAsk(branch: BranchMessage[]) {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    if (branch[i].role === 'assistant') return extractAskUser(branch[i].content || '')
+  }
+  return null
 }
 
 function buildConversationContextBlock(conversationId: string, contextItemIds?: string[]): string {
@@ -220,6 +252,7 @@ export async function startChatGeneration(
     deepResearchEnabled,
     composerMode,
     contextItemIds,
+    attachmentIds,
     generationSettings,
     continueMessageId,
     skillRequest,
@@ -233,6 +266,15 @@ export async function startChatGeneration(
   const continuing = continueMessageId ? dbMessages.get(continueMessageId) : undefined
   if (continueMessageId && (!continuing || continuing.role !== 'assistant')) {
     throw new Error('Cannot continue: assistant message not found')
+  }
+
+  // Re-check here as well as in the composer: a stale renderer must not be able
+  // to send an image to a model that will silently ignore it.
+  if (attachmentIds?.length) {
+    const caps = await resolveModelCapabilities(providerId, model)
+    if (!caps.image) {
+      throw new Error(caps.reason || `${model} cannot read images`)
+    }
   }
 
   let userMsgId: string | undefined
@@ -292,6 +334,10 @@ export async function startChatGeneration(
     parentForAssistant = userMsgId
   }
 
+  if (attachmentIds?.length && userMsgId) {
+    dbAttachments.bindToMessage(attachmentIds, userMsgId)
+  }
+
   const generationId = newId('gen')
   const assistantMsgId = continuing ? continuing.id : newId('msg_a')
 
@@ -334,7 +380,8 @@ export async function startChatGeneration(
 
   const recallQuery =
     content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
-  const memoryBlock = continuing ? '' : await buildMemoryRecallBlock(recallQuery)
+  const memoryEnabled = settings.memoryEnabled ?? true
+  const memoryBlock = continuing || !memoryEnabled ? '' : await buildMemoryRecallBlock(recallQuery)
 
   const mode: WebSearchMode = resolveComposerSearchMode({
     webSearchEnabled,
@@ -343,16 +390,31 @@ export async function startChatGeneration(
     legacyBoolean: webSearch
   })
 
+  // A skill's instructions only ever arrive in the turn that invoked it, and that
+  // message is the first thing history trimming drops. Re-hoist them into the
+  // system prompt so a multi-turn interview keeps its rules on every turn.
+  const skillInstructions = findSkillInvocation(branch)
+  const interviewSkill = /ask-user/i.test(skillInstructions)
+  const priorAsk = continuing ? null : lastAssistantAsk(branch)
+  const askUserActive = !!askUserEnabled || (interviewSkill && !!priorAsk)
+
+  // A confidence of 5 is the skill's own sign-off: the next turn is the real
+  // answer, so it must stay free-form. Anything else means another question is due.
+  const expectAskUser = !!askUserEnabled || (askUserActive && priorAsk?.confidence !== 5)
+
   // Mid-turn search is only offered alongside a question flow: the model's own
   // short answers give the intent heuristic nothing to work with, so it has to
   // ask for results itself.
-  const searchToolEnabled = mode !== 'off' && !continuing && !!askUserEnabled
+  const searchToolEnabled = mode !== 'off' && !continuing && askUserActive
 
   const effectiveSystem = buildSystemPrompt({
     basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
     modeSuffix: [
       composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
-      askUserEnabled ? ASK_USER_SYSTEM_SUFFIX : '',
+      askUserActive && interviewSkill
+        ? `Active skill — follow these instructions for every turn of this conversation:\n\n${skillInstructions}`
+        : '',
+      askUserActive ? ASK_USER_SYSTEM_SUFFIX : '',
       searchToolEnabled ? SEARCH_TOOL_SYSTEM_SUFFIX : '',
       skillRequest ? SKILL_AUTHOR_SYSTEM_SUFFIX : ''
     ]
@@ -555,24 +617,30 @@ export async function startChatGeneration(
     const generationStartedAt = Date.now()
     const promptTokens =
       estimateTokens(historyForModel.map((m) => m.content).join('\n')) +
+      historyForModel.reduce((sum, m) => sum + attachmentTokens(m), 0) +
       estimateTokens(effectiveSystem || '')
     let firstTokenLogged = false
+    let firstTokenTime: number | null = null
+    let ttftMs: number | undefined = undefined
+
     const markFirstToken = () => {
       if (firstTokenLogged) return
       firstTokenLogged = true
-      const ms = Date.now() - generationStartedAt
-      console.log(`[perf] ttft=${ms}ms prompt=~${promptTokens}tok model=${providerId}:${model}`)
+      firstTokenTime = Date.now()
+      ttftMs = firstTokenTime - generationStartedAt
+      console.log(`[perf] ttft=${ttftMs}ms prompt=~${promptTokens}tok model=${providerId}:${model}`)
     }
 
-    try {
-      let searchRounds = 0
-
-      // Each pass streams until the model either finishes or asks for a web
-      // search; on a search it resumes with the results appended to its history.
-      for (;;) {
-        for await (const event of streamChatResponse(providerId, model, historyForModel, effectiveSystem, {
+    const streamOnce = async (
+      history: Message[],
+      extra?: { responseSchema?: Record<string, unknown> }
+    ): Promise<void> => {
+      const loaded = loadAttachments(history)
+      for await (const event of streamChatResponse(providerId, model, history, effectiveSystem, {
           signal: controller.signal,
-          generationSettings: mergedSettings
+          generationSettings: mergedSettings,
+          responseSchema: extra?.responseSchema,
+          attachments: loaded.byMessage
         })) {
           if (event.type === 'thinking' || event.type === 'text') markFirstToken()
 
@@ -617,11 +685,19 @@ export async function startChatGeneration(
               }
               generated += contentDelta
               activeGen.content = priorContent + generated
+              const liveDurationSec = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : 0
+              const liveToks = estimateTokens(generated)
+              const liveTps =
+                liveDurationSec > 0.1 && liveToks > 0
+                  ? Math.round((liveToks / liveDurationSec) * 10) / 10
+                  : undefined
               sendChunk(win, {
                 conversationId,
                 messageId: assistantMsgId,
                 generationId,
                 contentDelta,
+                ttftMs,
+                tokensPerSec: liveTps,
                 done: false,
                 eventType: 'text'
               })
@@ -637,6 +713,15 @@ export async function startChatGeneration(
             throw new Error(event.error)
           }
         }
+    }
+
+    try {
+      let searchRounds = 0
+
+      // Each pass streams until the model either finishes or asks for a web
+      // search; on a search it resumes with the results appended to its history.
+      for (;;) {
+        await streamOnce(historyForModel)
 
         const searchRequest = searchToolEnabled ? extractSearchRequest(generated) : null
         if (!searchRequest || controller.signal.aborted) {
@@ -684,6 +769,34 @@ export async function startChatGeneration(
             content: `${roundNote}\n\nContinue your reply from where you stopped. Do not repeat what you already wrote, and do not restate the search query.`,
             createdAt: Date.now()
           }
+        )
+      }
+
+      // A dropped ask-user block silently ends the interview, so when one was due
+      // and none arrived, discard the prose and take one schema-constrained pass.
+      if (expectAskUser && !controller.signal.aborted && !extractAskUser(generated)) {
+        generated = ''
+        activeGen.content = priorContent
+        sendChunk(win, {
+          conversationId,
+          messageId: assistantMsgId,
+          generationId,
+          correctedContent: priorContent,
+          done: false,
+          eventType: 'correction'
+        })
+        await streamOnce(
+          [
+            ...historyForModel,
+            {
+              id: 'ask_user_retry',
+              conversationId,
+              role: 'system',
+              content: ASK_USER_RETRY_NOTE,
+              createdAt: Date.now()
+            }
+          ],
+          { responseSchema: ASK_USER_JSON_SCHEMA as unknown as Record<string, unknown> }
         )
       }
 
@@ -815,10 +928,18 @@ export async function startChatGeneration(
         }
       }
 
+      const genDurationSec = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : 0
+      const finalTokensPerSec =
+        genDurationSec > 0.05 && usage?.completionTokens
+          ? Math.round((usage.completionTokens / genDurationSec) * 10) / 10
+          : undefined
+
       dbMessages.update(assistantMsgId, {
         content: storedContent,
         reasoningContent: reasoningAccumulated || undefined,
         thinkingDurationMs: totalThinkingDurationMs,
+        ttftMs,
+        tokensPerSec: finalTokensPerSec,
         shellIds,
         artifactIds: shellIds,
         tokensIn: usage.promptTokens,
@@ -834,28 +955,33 @@ export async function startChatGeneration(
         contentDelta: '',
         correctedContent: storedContent !== accumulated ? storedContent : undefined,
         thinkingDurationMs: totalThinkingDurationMs,
+        ttftMs,
+        tokensPerSec: finalTokensPerSec,
         done: true,
         usage,
         finishReason,
         eventType: 'done'
       })
 
-      try {
-        const path = getBranchPath(dbMessages.listForConversation(conversationId), assistantMsgId)
-        const lastUser = [...path].reverse().find((m) => m.role === 'user')
-        void extractAndStoreMemories({
-          conversationId,
-          messageId: assistantMsgId,
-          userText: content?.trim() || lastUser?.content || '',
-          assistantText: accumulated
-        }).then((saved) => {
-          if (saved.length && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('memory:saved', saved)
-          }
-        })
-      } catch {
-        // memory extraction is best-effort
+      if (settings.memoryEnabled ?? true) {
+        try {
+          const path = getBranchPath(dbMessages.listForConversation(conversationId), assistantMsgId)
+          const lastUser = [...path].reverse().find((m) => m.role === 'user')
+          void extractAndStoreMemories({
+            conversationId,
+            messageId: assistantMsgId,
+            userText: content?.trim() || lastUser?.content || '',
+            assistantText: accumulated
+          }).then((saved) => {
+            if (saved.length && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+              win.webContents.send('memory:saved', saved)
+            }
+          })
+        } catch (err) {
+          console.warn('[ChatRuntime] Memory extraction trigger failed:', err)
+        }
       }
+
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const totalThinkingDurationMs =

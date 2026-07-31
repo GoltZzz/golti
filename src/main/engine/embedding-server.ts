@@ -44,6 +44,7 @@ async function ensureModelDownloaded(): Promise<boolean> {
   downloading = (async () => {
     const target = modelPath()
     const temp = `${target}.part`
+    console.warn('[EmbeddingServer] Starting model download for nomic-embed-text...')
     try {
       const res = await fetch(EMBEDDING_MODEL_URL)
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
@@ -58,7 +59,7 @@ async function ensureModelDownloaded(): Promise<boolean> {
         fileStream.end((err?: Error | null) => (err ? reject(err) : resolve()))
       })
       fs.renameSync(temp, target)
-      console.log('[EmbeddingServer] Model downloaded')
+      console.warn('[EmbeddingServer] Model download complete!')
       return true
     } catch (err) {
       console.warn('[EmbeddingServer] Model download failed:', err)
@@ -74,12 +75,19 @@ async function ensureModelDownloaded(): Promise<boolean> {
   return downloading
 }
 
+export async function waitForEmbeddingModel(): Promise<boolean> {
+  return ensureModelDownloaded()
+}
+
 async function ensureServerRunning(): Promise<boolean> {
   if (serverProcess && (await checkHealth())) return true
   if (starting) return starting
 
   starting = (async () => {
-    if (!isBinaryInstalled() || !isEmbeddingModelInstalled()) return false
+    if (!isBinaryInstalled() || !isEmbeddingModelInstalled()) {
+      console.warn('[EmbeddingServer] Cannot start server: binaryInstalled=', isBinaryInstalled(), 'modelInstalled=', isEmbeddingModelInstalled())
+      return false
+    }
 
     const args = [
       '--host', '127.0.0.1',
@@ -115,6 +123,7 @@ async function ensureServerRunning(): Promise<boolean> {
       if (await checkHealth()) return true
       await new Promise((r) => setTimeout(r, 500))
     }
+    console.warn('[EmbeddingServer] Server health check timed out after 60s')
     return false
   })().finally(() => {
     starting = null
@@ -128,10 +137,14 @@ export async function embed(text: string): Promise<number[] | null> {
   if (!input) return null
 
   if (!isEmbeddingModelInstalled()) {
+    console.warn('[EmbeddingServer] embed() requested but model not installed. Starting background download...')
     void ensureModelDownloaded()
     return null
   }
-  if (!(await ensureServerRunning())) return null
+  if (!(await ensureServerRunning())) {
+    console.warn('[EmbeddingServer] embed() requested but server is not running')
+    return null
+  }
 
   try {
     const res = await fetch(`${EMBEDDING_ENDPOINT}/v1/embeddings`, {
@@ -140,12 +153,19 @@ export async function embed(text: string): Promise<number[] | null> {
       body: JSON.stringify({ input, model: EMBEDDING_MODEL_FILENAME }),
       signal: AbortSignal.timeout(15000)
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[EmbeddingServer] HTTP ${res.status} from embedding endpoint`)
+      return null
+    }
     const data = await res.json()
     const vector = data?.data?.[0]?.embedding
-    if (!Array.isArray(vector) || vector.length === 0) return null
+    if (!Array.isArray(vector) || vector.length === 0) {
+      console.warn('[EmbeddingServer] Invalid embedding vector returned:', data)
+      return null
+    }
     return vector.map(Number)
-  } catch {
+  } catch (err) {
+    console.warn('[EmbeddingServer] Embedding request failed:', err)
     return null
   }
 }
@@ -162,3 +182,4 @@ export async function stopEmbeddingServer(): Promise<void> {
     proc.kill()
   }
 }
+

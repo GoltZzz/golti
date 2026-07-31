@@ -12,6 +12,12 @@ import {
   usageEvent,
   type ProviderChatRequest
 } from '../provider-types'
+import {
+  contentToText,
+  toOpenAIContent,
+  type ProviderContent
+} from '../../../shared/message-blocks'
+import { DEFAULT_LOCAL_IMAGE_TOKENS } from '../../../shared/image-tokens'
 
 export async function fetchGoltiEngineModels(endpoint: string = 'http://127.0.0.1:8391'): Promise<string[]> {
   const cleanEndpoint = endpoint.replace(/\/+$/, '')
@@ -85,9 +91,9 @@ export async function* streamGoltiEngineChat(
     }
   }
 
-  const formattedMessages = messages.map((m) => ({
+  const formattedMessages: Array<{ role: string; content: ProviderContent }> = messages.map((m) => ({
     role: m.role,
-    content: m.content
+    content: toOpenAIContent(m.content, options?.attachments?.get(m.id) ?? [])
   }))
 
   if (systemPrompt) {
@@ -95,11 +101,16 @@ export async function* streamGoltiEngineChat(
   }
 
   const contextWindow = getEngineState().contextSize
+  const imageTokens = [...(options?.attachments?.values() ?? [])]
+    .flat()
+    .reduce((sum) => sum + DEFAULT_LOCAL_IMAGE_TOKENS, 0)
   const maxOutputTokens = resolveLocalMaxOutputTokens({
     modelName: model,
     requested: options?.generationSettings?.maxTokens,
     contextWindow,
-    promptTokens: estimateTokens(formattedMessages.map((m) => m.content).join('\n')),
+    promptTokens:
+      estimateTokens(formattedMessages.map((m) => contentToText(m.content)).join('\n')) +
+      imageTokens,
     floor: options?.outputTokenFloor
   })
 
@@ -116,7 +127,15 @@ export async function* streamGoltiEngineChat(
         top_p: gen.topP,
         max_tokens: maxOutputTokens,
         stop: gen.stopSequences,
-        cache_prompt: true
+        cache_prompt: true,
+        ...(options?.responseSchema
+          ? {
+              response_format: {
+                type: 'json_schema',
+                json_schema: { name: 'response', strict: true, schema: options.responseSchema }
+              }
+            }
+          : {})
       }),
       signal: options?.signal
     })

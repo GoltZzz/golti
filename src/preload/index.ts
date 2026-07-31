@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   Artifact,
   Citation,
@@ -7,6 +7,8 @@ import type {
   ConversationExportOptions,
   ConversationSearchHit,
   Message,
+  MessageAttachment,
+  MessageSearchHit,
   MessageVersion,
   Memory,
   MemorySearchHit,
@@ -52,6 +54,8 @@ const api = {
     ipcRenderer.invoke('db:messages:versions', messageId),
   setActiveLeaf: (conversationId: string, leafId: string): Promise<Message[]> =>
     ipcRenderer.invoke('db:messages:set-active-leaf', conversationId, leafId),
+  searchMessages: (query: string): Promise<MessageSearchHit[]> =>
+    ipcRenderer.invoke('db:messages:search', query),
 
   // Context
   listContext: (conversationId: string): Promise<ContextItem[]> =>
@@ -72,6 +76,38 @@ const api = {
     ipcRenderer.invoke('context:update', id, updates),
   deleteContext: (id: string): Promise<boolean> => ipcRenderer.invoke('context:delete', id),
 
+  // Attachments
+  stageAttachmentFile: (conversationId: string, filePath: string): Promise<MessageAttachment> =>
+    ipcRenderer.invoke('attachments:stage-file', conversationId, filePath),
+  stageAttachmentBytes: (
+    conversationId: string,
+    name: string,
+    base64: string,
+    mimeType?: string
+  ): Promise<MessageAttachment> =>
+    ipcRenderer.invoke('attachments:stage-bytes', conversationId, name, base64, mimeType),
+  listStagedAttachments: (conversationId: string): Promise<MessageAttachment[]> =>
+    ipcRenderer.invoke('attachments:list-staged', conversationId),
+  deleteAttachment: (id: string): Promise<boolean> => ipcRenderer.invoke('attachments:delete', id),
+  readAttachmentThumbUrl: (id: string): Promise<string | null> =>
+    ipcRenderer.invoke('attachments:read-thumb', id),
+  readAttachmentDataUrl: (id: string): Promise<string | null> =>
+    ipcRenderer.invoke('attachments:read-data-url', id),
+  pickAttachments: (conversationId: string): Promise<MessageAttachment[]> =>
+    ipcRenderer.invoke('attachments:pick', conversationId),
+  getModelCapabilities: (
+    providerId: string,
+    model: string
+  ): Promise<{ image: boolean; pdf: boolean; imageTokens?: number; reason?: string }> =>
+    ipcRenderer.invoke('model:capabilities', providerId, model),
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
+
   // Artifacts
   listArtifacts: (conversationId: string): Promise<Artifact[]> =>
     ipcRenderer.invoke('artifacts:list', conversationId),
@@ -91,6 +127,15 @@ const api = {
   // Memories (Brain & Memory)
   listMemories: (): Promise<Memory[]> => ipcRenderer.invoke('memory:list'),
   deleteMemory: (id: string): Promise<boolean> => ipcRenderer.invoke('memory:delete', id),
+  createMemory: (input: { category: string; title: string; summary: string; details: string[] }): Promise<Memory> =>
+    ipcRenderer.invoke('memory:create', {
+      id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      ...input
+    }),
+  updateMemory: (
+    id: string,
+    input: { category?: string; title?: string; summary?: string; details?: string[] }
+  ): Promise<Memory | undefined> => ipcRenderer.invoke('memory:update', id, input),
   searchMemories: (query: string): Promise<MemorySearchHit[]> =>
     ipcRenderer.invoke('memory:search', query),
   onMemorySaved: (callback: (memories: Memory[]) => void) => {
@@ -202,6 +247,12 @@ const api = {
     >,
   downloadModel: (url: string, filename: string) =>
     ipcRenderer.invoke('engine:download-model', url, filename),
+  downloadProjector: (url: string, filename: string, modelFilename: string) =>
+    ipcRenderer.invoke('engine:download-projector', url, filename, modelFilename),
+  getProjectorFor: (modelFilename: string): Promise<string | null> =>
+    ipcRenderer.invoke('engine:projector-for', modelFilename),
+  unpairProjector: (modelFilename: string): Promise<boolean> =>
+    ipcRenderer.invoke('engine:unpair-projector', modelFilename),
   pauseModelDownload: (filename: string) =>
     ipcRenderer.invoke('engine:pause-download', filename) as Promise<{ success: boolean }>,
   cancelModelDownload: (filename: string) =>
@@ -222,6 +273,12 @@ const api = {
     ipcRenderer.invoke('hf:model-detail', repoId) as Promise<{
       repoId: string
       models: CookbookModel[]
+      error?: string
+    }>,
+  findProjectorForModel: (modelFilename: string) =>
+    ipcRenderer.invoke('hf:find-projector', modelFilename) as Promise<{
+      repoId?: string
+      projectors: { filename: string; url: string; fileSizeBytes: number }[]
       error?: string
     }>,
   resolveModelGguf: (ollamaTag: string, quantization?: string) =>

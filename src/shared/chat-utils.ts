@@ -197,23 +197,140 @@ export const extractArtifacts = extractShells
 export interface AskUserOption {
   label: string
   description?: string
+  recommended?: boolean
+  recommendedRationale?: string
 }
 
-export interface AskUserPrompt {
+export interface AskUserSummary {
+  decisions: Array<{ label: string; value: string }>
+  assumptions: Array<{ label: string; value: string }>
+  tradeoffs: Array<{ chosen: string; over: string; reason: string }>
+}
+
+export interface AskUserParsed {
   question: string
   options: AskUserOption[]
   allowFreeText: boolean
+  multiSelect?: boolean
+  confidence?: number
+  reasoning?: string
+  aspect?: string
+  assumptions?: string[]
+  type?: 'question' | 'summary'
+  summary?: AskUserSummary
+}
+
+export interface AskUserPrompt extends AskUserParsed {
   fenceStart: number
   fenceEnd: number
 }
 
 type AskUserBody = Omit<AskUserPrompt, 'fenceStart' | 'fenceEnd'>
 
+function normalizeKeyValueArray(raw: unknown): Array<{ label: string; value: string }> {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const obj = item as Record<string, unknown>
+      return {
+        label: String(obj.label || obj.key || obj.name || '').trim(),
+        value: String(obj.value || obj.val || obj.description || '').trim()
+      }
+    })
+    .filter((item) => item.label && item.value)
+}
+
+function normalizeTradeoffArray(raw: unknown): Array<{ chosen: string; over: string; reason: string }> {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const obj = item as Record<string, unknown>
+      return {
+        chosen: String(obj.chosen || obj.selected || obj.choice || '').trim(),
+        over: String(obj.over || obj.insteadOf || obj.alternative || '').trim(),
+        reason: String(obj.reason || obj.why || obj.rationale || '').trim()
+      }
+    })
+    .filter((item) => item.chosen && item.over)
+}
+
+function normalizeSummary(raw: unknown): AskUserSummary | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const s = raw as Record<string, unknown>
+  const decisions = normalizeKeyValueArray(s.decisions)
+  const assumptions = normalizeKeyValueArray(s.assumptions)
+  const tradeoffs = normalizeTradeoffArray(s.tradeoffs)
+  if (!decisions.length && !assumptions.length && !tradeoffs.length) return undefined
+  return { decisions, assumptions, tradeoffs }
+}
+
 /**
  * Parse an ask-user JSON body, tolerating the formatting slips small local
  * models commonly make: single quotes, trailing commas, smart quotes, and a
  * stray language tag on the first line.
  */
+function normalizeAskUserOptions(raw: unknown): AskUserOption[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((o): AskUserOption | null => {
+      if (typeof o === 'string') {
+        return o.trim() ? { label: o.trim() } : null
+      }
+      if (o && typeof o === 'object') {
+        const entry = o as Record<string, unknown>
+        const pick = (...keys: string[]): string => {
+          for (const key of keys) {
+            const val = entry[key]
+            if (typeof val === 'string' && val.trim()) return val.trim()
+          }
+          return ''
+        }
+        const label = pick('label', 'option', 'text', 'value', 'title', 'name')
+        if (!label) return null
+        const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
+        const recommended = Boolean(entry.recommended || entry.isRecommended || entry.is_recommended) || undefined
+        const recommendedRationale =
+          pick('recommendedRationale', 'recommended_rationale', 'rationale', 'whyRecommended', 'why_recommended') || undefined
+        return { label, description, recommended, recommendedRationale }
+      }
+      return null
+    })
+    .filter((o): o is AskUserOption => o !== null)
+}
+
+function clampConfidence(raw: unknown): number | undefined {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) ? Math.min(5, Math.max(1, Math.round(value))) : undefined
+}
+
+function tryRepairTruncatedJson(str: string): Record<string, unknown> | null {
+  const suffixes = ['', '}', ']}', '"}]}', '"]}', '"}']
+  for (const s of suffixes) {
+    try {
+      const res = JSON.parse(str + s)
+      if (res && typeof res === 'object') return res as Record<string, unknown>
+    } catch {
+      continue
+    }
+  }
+  const lastComma = str.lastIndexOf(',')
+  if (lastComma > 0) {
+    const truncated = str.slice(0, lastComma)
+    for (const s of ['}', ']}', '"}]}', '"]}', '"}']) {
+      try {
+        const res = JSON.parse(truncated + s)
+        if (res && typeof res === 'object') return res as Record<string, unknown>
+      } catch {
+        continue
+      }
+    }
+  }
+  return null
+}
+
 function parseAskUserBody(raw: string): AskUserBody | null {
   const body = raw.trim().replace(/^(?:json|ask[-_]?user)\s*\n/i, '').trim()
   if (!body.startsWith('{')) return null
@@ -228,40 +345,33 @@ function parseAskUserBody(raw: string): AskUserBody | null {
   ]
 
   for (const candidate of candidates) {
-    let parsed: { question?: unknown; options?: unknown; allowFreeText?: unknown }
-    try {
-      parsed = JSON.parse(candidate)
-    } catch {
-      continue
-    }
-    if (!parsed || typeof parsed !== 'object') continue
+    let parsed = tryRepairTruncatedJson(candidate)
+    if (!parsed) continue
     const question = typeof parsed.question === 'string' ? parsed.question.trim() : ''
     if (!question) continue
-    const options = Array.isArray(parsed.options)
-      ? parsed.options
-          .map((o): AskUserOption | null => {
-            if (typeof o === 'string') {
-              return o.trim() ? { label: o.trim() } : null
-            }
-            if (o && typeof o === 'object') {
-              const raw = o as Record<string, unknown>
-              const pick = (...keys: string[]): string => {
-                for (const key of keys) {
-                  const val = raw[key]
-                  if (typeof val === 'string' && val.trim()) return val.trim()
-                }
-                return ''
-              }
-              const label = pick('label', 'option', 'text', 'value', 'title', 'name')
-              if (!label) return null
-              const description = pick('description', 'desc', 'subtitle', 'detail', 'hint') || undefined
-              return { label, description }
-            }
-            return null
-          })
-          .filter((o): o is AskUserOption => o !== null)
-      : []
-    return { question, options, allowFreeText: parsed.allowFreeText !== false }
+    const options = normalizeAskUserOptions(parsed.options)
+    const multiSelect = Boolean(parsed.multiSelect || parsed.multi_select) || undefined
+    const confidence = clampConfidence(parsed.confidence)
+    const reasoning = typeof parsed.reasoning === 'string' && parsed.reasoning.trim() ? parsed.reasoning.trim() : undefined
+    const aspect = typeof parsed.aspect === 'string' && parsed.aspect.trim() ? parsed.aspect.trim() : undefined
+    const assumptions = Array.isArray(parsed.assumptions)
+      ? parsed.assumptions.filter((a): a is string => typeof a === 'string' && Boolean(a.trim())).map((a) => a.trim())
+      : undefined
+    const type = parsed.type === 'summary' ? 'summary' : 'question'
+    const summary = parsed.type === 'summary' || parsed.summary ? normalizeSummary(parsed.summary) : undefined
+
+    return {
+      question,
+      options,
+      allowFreeText: parsed.allowFreeText !== false,
+      multiSelect,
+      confidence,
+      reasoning,
+      aspect,
+      assumptions,
+      type,
+      summary
+    }
   }
 
   return null
@@ -317,14 +427,15 @@ export function extractAllAskUser(content: string): AskUserPrompt[] {
   }
   if (fenced.length) return fenced
 
-  // Unfenced fallback: scan for balanced JSON objects carrying a question key.
+  // Unfenced fallback: scan for JSON objects carrying a question key.
   const bare: AskUserPrompt[] = []
   for (let i = content.indexOf('{'); i !== -1; i = content.indexOf('{', i + 1)) {
-    const end = findJsonEnd(content, i)
-    if (end === -1) break
+    let end = findJsonEnd(content, i)
+    if (end === -1) end = content.length
     const parsed = parseAskUserBody(content.slice(i, end))
     if (parsed) {
       bare.push({ ...parsed, fenceStart: i, fenceEnd: end })
+      if (end === content.length) break
       i = end - 1
     }
   }
@@ -411,7 +522,8 @@ export function extractSkillBlocks(content: string): {
   return { skills, cleanContent: cleanContent.trim() }
 }
 
-const ASK_USER_OPENER = /```search|```(?:ask(?:[-_]?user)?|json)?\s*\n?\s*\{|\{\s*(?:"|')?question(?:"|')?\s*:/i
+const ASK_USER_OPENER =
+  /```search|```(?:ask(?:[-_]?user)?|json)?\s*\n?\s*\{|\{\s*(?:"|')?(?:question|reasoning|aspect|options|confidence)(?:"|')?\s*:|,?\s*\{\s*(?:"|')?label(?:"|')?\s*:/i
 
 /**
  * While a reply is still streaming, an ask-user block arrives character by
@@ -490,14 +602,23 @@ export function stripSearchRequests(content: string): string {
   return out.trim()
 }
 
-/** Remove any ```ask-user``` blocks from text so they aren't rendered as raw markdown. */
+/** Remove any ```ask-user``` blocks and trailing/orphan JSON residue from text so they aren't rendered as raw markdown. */
 export function stripAskUser(content: string): string {
-  const found = extractAllAskUser(content)
-  if (!found.length) return content
+  if (!content) return ''
   let out = content
-  for (let i = found.length - 1; i >= 0; i--) {
-    out = out.slice(0, found[i].fenceStart) + out.slice(found[i].fenceEnd)
-  }
+
+  // 1. Remove fenced ask-user blocks (canonical ```ask-user ... ``` or ```json ... ```)
+  out = out.replace(/```(?:ask(?:[-_]?user)?|json)?\s*\n?[\s\S]*?(?:```|$)/gi, '')
+
+  // 2. Remove unfenced ask-user JSON starting at { "question", { "reasoning", { "aspect", etc.
+  out = out.replace(/\{\s*"(?:question|reasoning|aspect|options|confidence)"[\s\S]*/gi, '')
+
+  // 3. Remove orphan option array fragments like , { "label": ... } ... }
+  out = out.replace(/,?\s*\{\s*"label"[\s\S]*/gi, '')
+
+  // 4. Remove residual trailing JSON syntax artifacts like }, "allowFreeText": ... }
+  out = out.replace(/\}\s*,?\s*"(?:allowFreeText|multiSelect|confidence|options|reasoning)"[\s\S]*/gi, '')
+
   return out.trim()
 }
 
@@ -595,15 +716,24 @@ export interface HistoryTrimResult<T> {
   kept: T[]
   droppedCount: number
   droppedTokens: number
+  /**
+   * The newest turn is always kept, so it can exceed the budget on its own —
+   * typically a large attachment. Callers must surface this rather than send a
+   * request that silently loses the attachment.
+   */
+  overflow?: boolean
 }
 
-export function trimHistoryToBudget<T extends { role: string; content: string }>(
-  history: T[],
-  availableTokens: number
-): HistoryTrimResult<T> {
+export function attachmentTokens(m: { attachments?: Array<{ tokenEstimate: number }> }): number {
+  return (m.attachments ?? []).reduce((sum, a) => sum + (a.tokenEstimate || 0), 0)
+}
+
+export function trimHistoryToBudget<
+  T extends { role: string; content: string; attachments?: Array<{ tokenEstimate: number }> }
+>(history: T[], availableTokens: number): HistoryTrimResult<T> {
   if (history.length === 0) return { kept: [], droppedCount: 0, droppedTokens: 0 }
 
-  const tokens = history.map((m) => estimateTokens(m.content))
+  const tokens = history.map((m) => estimateTokens(m.content) + attachmentTokens(m))
 
   let start = history.length - 1
   let used = tokens[start]
@@ -616,10 +746,13 @@ export function trimHistoryToBudget<T extends { role: string; content: string }>
     start += 1
   }
 
+  const keptTokens = tokens.slice(start).reduce((sum, t) => sum + t, 0)
+
   return {
     kept: history.slice(start),
     droppedCount: start,
-    droppedTokens: tokens.slice(0, start).reduce((sum, t) => sum + t, 0)
+    droppedTokens: tokens.slice(0, start).reduce((sum, t) => sum + t, 0),
+    overflow: keptTokens > availableTokens
   }
 }
 

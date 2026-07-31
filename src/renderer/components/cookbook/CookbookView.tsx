@@ -23,7 +23,8 @@ export const CookbookView: React.FC = () => {
     filters,
     sortBy,
     searchQuery,
-    scanHardware
+    scanHardware,
+    fetchInstalled
   } = useCookbookStore()
 
   const { engineState, localModels, setupListeners, installEngine, reinstallEngine, startEngine, stopEngine, isInstallingBinary } = useEngineStore()
@@ -32,6 +33,7 @@ export const CookbookView: React.FC = () => {
   useEffect(() => {
     fetchSettings()
     scanHardware()
+    fetchInstalled()
     const unsubEngine = setupListeners()
     return () => {
       unsubEngine()

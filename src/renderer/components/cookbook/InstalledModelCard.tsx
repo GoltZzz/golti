@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { InstalledLocalModelInfo } from '../../../shared/types'
 import { useCookbookStore } from '../../stores/cookbookStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -10,9 +10,13 @@ import {
   HardDrive,
   Cpu,
   Zap,
-  CheckCircle2,
   AlertTriangle,
-  Layers
+  Layers,
+  Eye,
+  Loader2,
+  Pause,
+  Play,
+  X
 } from 'lucide-react'
 
 interface InstalledModelCardProps {
@@ -21,12 +25,45 @@ interface InstalledModelCardProps {
 
 export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model }) => {
   const { deleteLocalEngineModel, deletingModel } = useCookbookStore()
-  const { loadModel, localModels } = useEngineStore()
+  const {
+    loadModel,
+    localModels,
+    projectors,
+    projectorBusy,
+    projectorErrors,
+    projectorTargets,
+    downloadingModels,
+    fetchProjectorFor,
+    installProjector,
+    removeProjector,
+    clearProjectorDownload,
+    pauseDownload,
+    cancelDownload
+  } = useEngineStore()
   const [isDeleting, setIsDeleting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const isDeletingThis = deletingModel === model.tag || isDeleting
+
+  const projectorPath = projectors[model.tag]
+  const projectorPending = !!projectorBusy[model.tag]
+  const projectorError = projectorErrors[model.tag]
+  const projectorTarget = projectorTargets[model.tag]
+  const projectorProgress = projectorTarget ? downloadingModels[projectorTarget.filename] : undefined
+  const projectorStatus = projectorProgress?.status
+  const isProjectorDownloading =
+    Boolean(projectorProgress) && (!projectorStatus || projectorStatus === 'downloading')
+  const isProjectorPaused = projectorStatus === 'paused'
+  const isProjectorErrored = projectorStatus === 'error'
+  const showProjectorProgress =
+    Boolean(projectorTarget) && (isProjectorDownloading || isProjectorPaused || isProjectorErrored)
+
+  useEffect(() => {
+    if (model.isGoltiEngine && projectors[model.tag] === undefined) {
+      void fetchProjectorFor(model.tag)
+    }
+  }, [model.isGoltiEngine, model.tag, projectors, fetchProjectorFor])
 
   const handleStartChat = async () => {
     const chatStore = useChatStore.getState()
@@ -140,6 +177,112 @@ export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model })
           </div>
         )}
       </div>
+
+      {model.isGoltiEngine && (
+        <div className="installed-card-vision">
+          <div className="vision-status">
+            <Eye size={13} />
+            {projectorPath ? (
+              <span>Vision enabled — {projectorPath.split('/').pop()}</span>
+            ) : (
+              <span>No vision support — images are disabled for this model</span>
+            )}
+          </div>
+          {projectorPath ? (
+            <button className="btn-vision" onClick={() => void removeProjector(model.tag)}>
+              Remove
+            </button>
+          ) : !showProjectorProgress ? (
+            <button
+              className="btn-vision"
+              onClick={() => void installProjector(model.tag)}
+              disabled={projectorPending}
+            >
+              {projectorPending ? (
+                <>
+                  <Loader2 size={13} className="spin" /> Finding...
+                </>
+              ) : (
+                'Add vision support'
+              )}
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {showProjectorProgress && projectorTarget && (
+        <div className="pull-progress-container projector-progress">
+          <div className="pull-status-row">
+            <span className="status-text">
+              {isProjectorDownloading ? (
+                <Loader2 size={12} className="spin" />
+              ) : isProjectorPaused ? (
+                <Pause size={12} />
+              ) : (
+                <AlertTriangle size={12} />
+              )}{' '}
+              {isProjectorPaused
+                ? 'Paused'
+                : isProjectorErrored
+                  ? 'Projector download failed'
+                  : projectorProgress?.speed || 'Downloading vision projector...'}
+            </span>
+            <span className="percent-text">{projectorProgress?.percent || 0}%</span>
+          </div>
+          <div className="progress-bar-bg">
+            <div
+              className="progress-bar-fill"
+              style={{
+                width: `${projectorProgress?.percent || 0}%`,
+                backgroundColor: isProjectorErrored ? '#e06c75' : '#e5c07b'
+              }}
+            ></div>
+          </div>
+          <div className="pull-action-row">
+            {isProjectorDownloading ? (
+              <>
+                <button
+                  type="button"
+                  className="pull-action-btn"
+                  onClick={() => void pauseDownload(projectorTarget.filename)}
+                >
+                  <Pause size={12} /> Pause
+                </button>
+                <button
+                  type="button"
+                  className="pull-action-btn pull-action-danger"
+                  onClick={() => void cancelDownload(projectorTarget.filename)}
+                >
+                  <X size={12} /> Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="pull-action-btn"
+                  onClick={() => void installProjector(model.tag)}
+                >
+                  <Play size={12} /> Resume
+                </button>
+                <button
+                  type="button"
+                  className="pull-action-btn pull-action-danger"
+                  onClick={() => void clearProjectorDownload(model.tag)}
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {projectorError && (
+        <div className="installed-card-error">
+          <AlertTriangle size={13} /> {projectorError}
+        </div>
+      )}
 
       {errorMsg && (
         <div className="installed-card-error">

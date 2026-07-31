@@ -34,6 +34,9 @@ export interface EngineState {
   lastLogs?: string
   /** Plain-language classification of the last startup failure. */
   failure?: EngineFailure
+  /** True when the engine loaded a multimodal projector and can accept images. */
+  visionEnabled?: boolean
+  projectorPath?: string
 }
 
 export type EngineDownloadStatus =
@@ -227,6 +230,41 @@ export interface ResearchPlan {
   reasoning: string
 }
 
+export type AttachmentKind = 'image' | 'document'
+
+export interface ModelCapabilities {
+  image: boolean
+  pdf: boolean
+  imageTokens?: number
+  reason?: string
+}
+
+export interface LoadedAttachment {
+  id: string
+  kind: AttachmentKind
+  mimeType: string
+  name: string
+  base64: string
+}
+
+export interface MessageAttachment {
+  id: string
+  conversationId: string
+  messageId: string | null
+  kind: AttachmentKind
+  mimeType: string
+  name: string
+  storagePath: string
+  thumbPath?: string
+  byteSize: number
+  width?: number
+  height?: number
+  extractedText?: string
+  tokenEstimate: number
+  createdAt: number
+  error?: string
+}
+
 export interface Message {
   id: string
   conversationId: string
@@ -251,7 +289,10 @@ export interface Message {
   isDeepResearch?: boolean
   reasoningContent?: string
   thinkingDurationMs?: number
+  ttftMs?: number
+  tokensPerSec?: number
   finishReason?: string
+  attachments?: MessageAttachment[]
 }
 
 export interface MessageVersion {
@@ -357,6 +398,7 @@ export interface SendMessagePayload {
   /** Composer Chat vs Agent mode */
   composerMode?: ComposerMode
   contextItemIds?: string[]
+  attachmentIds?: string[]
   generationSettings?: GenerationSettings
   continueMessageId?: string
   /** Set when the user ran /skill: capture this reply as a new skill's instructions. */
@@ -389,6 +431,8 @@ export interface StreamChunkPayload {
   reasoningContent?: string
   thinkingDelta?: string
   thinkingDurationMs?: number
+  ttftMs?: number
+  tokensPerSec?: number
   done: boolean
   error?: string
   usage?: TokenUsage
@@ -410,6 +454,13 @@ export interface ChatRequestOptions {
    * utility completions; chat replies want the default floor.
    */
   outputTokenFloor?: number
+  /**
+   * JSON Schema the reply must conform to. Honoured by the local engine via
+   * llama.cpp grammar constraints; providers that cannot enforce it ignore it.
+   */
+  responseSchema?: Record<string, unknown>
+  /** Attachment bytes for this generation, keyed by message id. */
+  attachments?: Map<string, LoadedAttachment[]>
 }
 
 export type ProviderStreamEvent =
@@ -627,6 +678,15 @@ export interface ConversationSearchHit {
   snippet: string
   updatedAt: number
   pinned: boolean
+}
+
+export interface MessageSearchHit {
+  messageId: string
+  conversationId: string
+  conversationTitle: string
+  role: MessageRole
+  contentSnippet: string
+  createdAt: number
 }
 
 export interface BranchSibling {

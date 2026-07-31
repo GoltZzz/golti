@@ -66,7 +66,7 @@ export function closeSqlite(): void {
   }
 }
 
-const MIGRATIONS: Array<{ version: number; sql: string }> = [
+export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
     version: 1,
     sql: `
@@ -255,6 +255,42 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 7,
     sql: `
       ALTER TABLE messages ADD COLUMN display_content TEXT;
+    `
+  },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE messages ADD COLUMN ttft_ms INTEGER;
+      ALTER TABLE messages ADD COLUMN tokens_per_sec REAL;
+    `
+  },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        message_id TEXT,
+        kind TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        storage_path TEXT NOT NULL,
+        thumb_path TEXT,
+        byte_size INTEGER NOT NULL DEFAULT 0,
+        width INTEGER,
+        height INTEGER,
+        extracted_text TEXT,
+        token_estimate INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        error TEXT,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_attachments_message ON message_attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_staged
+        ON message_attachments(conversation_id, message_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_storage ON message_attachments(storage_path);
     `
   }
 ]

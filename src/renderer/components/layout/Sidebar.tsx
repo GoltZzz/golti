@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   MessageSquare,
   Brain,
@@ -19,6 +19,7 @@ import {
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { ConfirmDialog } from '../common/ConfirmDialog'
 import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
 
@@ -46,6 +47,27 @@ export const Sidebar: React.FC = () => {
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [detectedPlatform, setDetectedPlatform] = useState<'darwin' | 'win32' | 'linux'>('darwin')
+  const { settings, fetchSettings } = useSettingsStore()
+
+  useEffect(() => {
+    fetchSettings()
+    if (window.goltiAPI?.getPlatform) {
+      window.goltiAPI
+        .getPlatform()
+        .then((p: 'darwin' | 'win32' | 'linux') => {
+          if (p) setDetectedPlatform(p)
+        })
+        .catch(() => {})
+    }
+  }, [fetchSettings])
+
+  const effectiveOS =
+    settings?.osPlatformOverride && settings.osPlatformOverride !== 'auto'
+      ? settings.osPlatformOverride
+      : detectedPlatform
+
+  const searchShortcut = effectiveOS === 'darwin' ? '⌘⇧F' : 'Ctrl+Shift+F'
 
   const displayedConversations = useMemo(() => {
     if (searchHits.length > 0 && localQuery.trim()) {
@@ -307,7 +329,7 @@ export const Sidebar: React.FC = () => {
               Recents
             </div>
 
-            <div className="conv-search">
+            <div className="conv-search" style={{ position: 'relative' }}>
               <input
                 value={localQuery}
                 onChange={(e) => {
@@ -316,7 +338,29 @@ export const Sidebar: React.FC = () => {
                 }}
                 placeholder="Search chats…"
                 aria-label="Search conversations"
+                style={{ paddingRight: effectiveOS === 'darwin' ? '50px' : '75px' }}
               />
+              <span
+                style={{
+                  position: 'absolute',
+                  right: '20px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  fontSize: '10px',
+                  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, var(--font-sans)",
+                  fontWeight: 500,
+                  color: 'var(--text-muted)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '3px',
+                  padding: '1px 4px',
+                  pointerEvents: 'none',
+                  lineHeight: '1.2',
+                  userSelect: 'none'
+                }}
+              >
+                {searchShortcut}
+              </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>

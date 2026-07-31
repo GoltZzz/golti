@@ -15,7 +15,7 @@ export const ContextTray: React.FC = () => {
   if (contextItems.length === 0) return null
 
   return (
-    <div className="context-tray" aria-label="Attached context">
+    <div className="context-tray" aria-label="Attached context and images">
       {contextItems.map((item) => (
         <div
           key={item.id}

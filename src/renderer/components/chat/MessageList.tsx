@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef } from 'react'
 import type { Message } from '../../../shared/types'
 import { MessageBubble } from './MessageBubble'
+import { useChatStore } from '../../stores/chatStore'
 
 interface MessageListProps {
   messages: Message[]
@@ -54,6 +55,22 @@ export const MessageList: React.FC<MessageListProps> = ({ messages, onScrollStat
       userScrolledUpRef.current = true
     }
   }
+
+  const highlightedMessageId = useChatStore((s) => s.highlightedMessageId)
+  const setHighlightedMessageId = useChatStore((s) => s.setHighlightedMessageId)
+
+  useEffect(() => {
+    if (!highlightedMessageId) return
+    const el = document.getElementById(`msg-${highlightedMessageId}`)
+    if (el) {
+      userScrolledUpRef.current = true
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const timer = setTimeout(() => {
+        setHighlightedMessageId(null)
+      }, 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [highlightedMessageId, messages, setHighlightedMessageId])
 
   useEffect(() => {
     // If a new message was added (e.g. user submitted a message), reset scroll state to bottom

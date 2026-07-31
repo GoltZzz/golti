@@ -3,12 +3,14 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { migrate, setSqlitePath, closeSqlite, getSqlite } from './sqlite'
+import type { MessageAttachment } from '../../shared/types'
+import { MIGRATIONS, migrate, setSqlitePath, closeSqlite, getSqlite } from './sqlite'
 import {
   chatConversations,
   chatMessages,
   chatContext,
-  chatArtifacts
+  chatArtifacts,
+  chatAttachments
 } from './chat-repos'
 
 describe('sqlite chat repos', () => {
@@ -60,6 +62,32 @@ describe('sqlite chat repos', () => {
 
     const hits = chatConversations.search('searchable')
     expect(hits.some((h) => h.conversationId === 'c1')).toBe(true)
+  })
+
+  it('searches messages and returns message search hits', () => {
+    chatConversations.create({
+      id: 'c_search',
+      title: 'Quantum Computing Overview',
+      model: 'm',
+      providerId: 'p',
+      createdAt: 1,
+      updatedAt: 1,
+      pinned: false,
+      archived: false
+    })
+
+    chatMessages.create({
+      id: 'm_quantum',
+      conversationId: 'c_search',
+      role: 'assistant',
+      content: 'Superposition and entanglement are key principles of quantum computing.',
+      createdAt: 100
+    })
+
+    const hits = chatMessages.searchMessages('superposition')
+    expect(hits).toHaveLength(1)
+    expect(hits[0].messageId).toBe('m_quantum')
+    expect(hits[0].conversationTitle).toBe('Quantum Computing Overview')
   })
 
   it('versions artifacts', () => {
@@ -200,8 +228,10 @@ describe('sqlite chat repos', () => {
 
     expect(chatMessages.get('a9')?.finishReason).toBe('length')
 
-    chatMessages.update('a9', { content: 'cut off here and resumed', finishReason: 'stop' })
+    chatMessages.update('a9', { content: 'cut off here and resumed', finishReason: 'stop', ttftMs: 320, tokensPerSec: 28.5 })
     expect(chatMessages.get('a9')?.finishReason).toBe('stop')
+    expect(chatMessages.get('a9')?.ttftMs).toBe(320)
+    expect(chatMessages.get('a9')?.tokensPerSec).toBe(28.5)
 
     chatMessages.update('a9', { finishReason: undefined })
     expect(chatMessages.get('a9')?.finishReason).toBeUndefined()
@@ -210,9 +240,148 @@ describe('sqlite chat repos', () => {
   it('runs migrations idempotently', () => {
     const db = new Database(path.join(dir, 'mig.sqlite'))
     migrate(db)
+    const first = db
+      .prepare('SELECT MAX(version) as v, COUNT(*) as n FROM schema_migrations')
+      .get() as { v: number; n: number }
     migrate(db)
-    const row = db.prepare('SELECT MAX(version) as v FROM schema_migrations').get() as { v: number }
-    expect(row.v).toBe(7)
+    const second = db
+      .prepare('SELECT MAX(version) as v, COUNT(*) as n FROM schema_migrations')
+      .get() as { v: number; n: number }
+
+    expect(second).toEqual(first)
+    expect(first.v).toBe(MIGRATIONS[MIGRATIONS.length - 1].version)
+    expect(first.n).toBe(MIGRATIONS.length)
     db.close()
+  })
+
+  describe('attachments', () => {
+    beforeEach(() => {
+      chatConversations.create({
+        id: 'ca',
+        title: 'attachments',
+        model: 'm',
+        providerId: 'p',
+        createdAt: 1,
+        updatedAt: 1,
+        pinned: false,
+        archived: false
+      })
+      chatMessages.create({
+        id: 'um1',
+        conversationId: 'ca',
+        role: 'user',
+        content: 'look at this',
+        createdAt: 1,
+        parentId: null
+      })
+    })
+
+    const stage = (id: string, overrides: Partial<MessageAttachment> = {}): MessageAttachment => {
+      const att: MessageAttachment = {
+        id,
+        conversationId: 'ca',
+        messageId: null,
+        kind: 'image',
+        mimeType: 'image/png',
+        name: 'image.png',
+        storagePath: `/tmp/attachments/${id}.png`,
+        thumbPath: `/tmp/attachments/${id}.thumb.jpg`,
+        byteSize: 1234,
+        width: 800,
+        height: 600,
+        tokenEstimate: 1024,
+        createdAt: 10,
+        ...overrides
+      }
+      chatAttachments.stage(att)
+      return att
+    }
+
+    it('stages unbound rows and binds them to a message', () => {
+      stage('at1')
+      expect(chatAttachments.listStaged('ca').map((a) => a.id)).toEqual(['at1'])
+
+      chatAttachments.bindToMessage(['at1'], 'um1')
+
+      expect(chatAttachments.listStaged('ca')).toEqual([])
+      expect(chatAttachments.get('at1')?.messageId).toBe('um1')
+    })
+
+    it('never rebinds an attachment that already belongs to a message', () => {
+      stage('at1')
+      chatAttachments.bindToMessage(['at1'], 'um1')
+      chatAttachments.bindToMessage(['at1'], 'other')
+      expect(chatAttachments.get('at1')?.messageId).toBe('um1')
+    })
+
+    it('hydrates bound attachments onto messages, excluding staged ones', () => {
+      stage('bound')
+      stage('staged')
+      chatAttachments.bindToMessage(['bound'], 'um1')
+
+      const messages = chatMessages.listForConversation('ca')
+      const user = messages.find((m) => m.id === 'um1')
+      expect(user?.attachments?.map((a) => a.id)).toEqual(['bound'])
+    })
+
+    it('leaves attachments undefined on messages that have none', () => {
+      const messages = chatMessages.listForConversation('ca')
+      expect(messages.find((m) => m.id === 'um1')?.attachments).toBeUndefined()
+    })
+
+    it('groups listForMessages by message id', () => {
+      stage('a1', { createdAt: 10 })
+      stage('a2', { createdAt: 20 })
+      chatAttachments.bindToMessage(['a1', 'a2'], 'um1')
+
+      const map = chatAttachments.listForMessages(['um1', 'missing'])
+      expect(map.get('um1')?.map((a) => a.id)).toEqual(['a1', 'a2'])
+      expect(map.get('missing')).toBeUndefined()
+    })
+
+    it('returns an empty map for no message ids', () => {
+      expect(chatAttachments.listForMessages([])).toEqual(new Map())
+    })
+
+    it('refcounts shared storage paths', () => {
+      const shared = '/tmp/attachments/shared.png'
+      stage('a1', { storagePath: shared })
+      stage('a2', { storagePath: shared })
+
+      expect(chatAttachments.countByStoragePath(shared)).toBe(2)
+      chatAttachments.delete('a1')
+      expect(chatAttachments.countByStoragePath(shared)).toBe(1)
+      chatAttachments.delete('a2')
+      expect(chatAttachments.countByStoragePath(shared)).toBe(0)
+    })
+
+    it('cascades when the owning message is deleted', () => {
+      stage('at1')
+      chatAttachments.bindToMessage(['at1'], 'um1')
+
+      getSqlite().prepare('DELETE FROM messages WHERE id = ?').run('um1')
+
+      expect(chatAttachments.get('at1')).toBeUndefined()
+    })
+
+    it('lists storage and thumb paths for the orphan sweep', () => {
+      stage('at1', { storagePath: '/s/a.png', thumbPath: '/s/a.thumb.jpg' })
+      stage('at2', { storagePath: '/s/b.png', thumbPath: undefined })
+
+      expect(chatAttachments.listAllStoragePaths().sort()).toEqual([
+        '/s/a.png',
+        '/s/a.thumb.jpg',
+        '/s/b.png'
+      ])
+    })
+
+    it('finds stale staged rows by age', () => {
+      stage('old', { createdAt: 100 })
+      stage('fresh', { createdAt: 5000 })
+      stage('bound', { createdAt: 100 })
+      chatAttachments.bindToMessage(['bound'], 'um1')
+
+      expect(chatAttachments.listStaleStaged(1000).map((a) => a.id)).toEqual(['old'])
+    })
   })
 })

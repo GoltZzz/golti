@@ -7,14 +7,12 @@ import {
   INSPECTOR_MAX_WIDTH
 } from '../../stores/inspectorStore'
 import { useChatStore } from '../../stores/chatStore'
-import { UsageMeter } from './UsageMeter'
 import { ShellEditor } from './ShellEditor'
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'context', label: 'Context' },
   { id: 'thread', label: 'Thread' },
-  { id: 'shells', label: 'Shells' },
-  { id: 'usage', label: 'Usage' }
+  { id: 'shells', label: 'Shells' }
 ]
 
 export const InspectorPanel: React.FC = () => {
@@ -286,13 +284,6 @@ export const InspectorPanel: React.FC = () => {
                 ))}
               </div>
             )}
-          </>
-        )}
-
-        {activeTab === 'usage' && (
-          <>
-            <div className="inspector-section-title">Token budget</div>
-            <UsageMeter />
           </>
         )}
       </div>

@@ -4,8 +4,14 @@ import { spawn, execFile, ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
 import { detectGpu, GpuVendor } from './gpu-detect'
-import { computeContextSize, reduceContextSize, MIN_CONTEXT_SIZE } from './context-size'
+import {
+  computeContextSize,
+  reduceContextSize,
+  MIN_CONTEXT_SIZE,
+  VISION_MIN_CONTEXT_SIZE
+} from './context-size'
 import { readGgufModelInfo } from './gguf'
+import { resolveProjectorFor } from './projector'
 import { getAvailableMemoryBytes } from '../system/memory'
 import { detectCpuCounts } from '../system/cpu'
 import { kvBytesPerToken } from '../../shared/context-budget'
@@ -126,6 +132,50 @@ export async function listEngineDevices(binaryPath: string): Promise<EngineDevic
   } catch {
     return []
   }
+}
+
+const mmprojSupport = new Map<string, boolean>()
+
+/**
+ * The pinned llama.cpp assets link libmtmd, but confirm rather than assume so a
+ * future version bump cannot silently produce `--mmproj` startup failures.
+ */
+export async function engineSupportsMmproj(binaryPath: string): Promise<boolean> {
+  const cached = mmprojSupport.get(binaryPath)
+  if (cached !== undefined) return cached
+
+  let supported = false
+  try {
+    const { stdout, stderr } = await execFileAsync(binaryPath, ['--help'], {
+      env: getEngineSpawnEnv(binaryPath),
+      timeout: 10000
+    })
+    supported = `${stdout}\n${stderr}`.includes('--mmproj')
+  } catch (err: any) {
+    // Some builds exit non-zero after printing help.
+    supported = `${err?.stdout ?? ''}\n${err?.stderr ?? ''}`.includes('--mmproj')
+  }
+
+  mmprojSupport.set(binaryPath, supported)
+  return supported
+}
+
+export function _clearMmprojSupportCache(): void {
+  mmprojSupport.clear()
+}
+
+const MMPROJ_FAILURE_PATTERNS = [
+  'mmproj',
+  'failed to load vision model',
+  'failed to load audio model',
+  'clip_model_load',
+  'mtmd_init',
+  'unknown projector type'
+]
+
+export function isMmprojFailure(stderr: string): boolean {
+  const text = stderr.toLowerCase()
+  return MMPROJ_FAILURE_PATTERNS.some((p) => text.includes(p))
 }
 
 /**
@@ -369,6 +419,8 @@ export async function startEngine(
   const layerCount = readGgufModelInfo(modelPath)?.blockCount
   const threads = chooseThreadCount(await detectCpuCounts())
   let tuningEnabled = true
+  let mmprojEnabled = modelPath ? await engineSupportsMmproj(binaryPath) : false
+  let mmprojOffload = true
   console.log(
     `[GoltiEngine] Offload ${layers} of ${layerCount ?? 'unknown'} layers, ${threads} generation threads`
   )
@@ -379,6 +431,15 @@ export async function startEngine(
     freeVramGB: device ? device.freeMiB / 1024 : undefined
   })
   let contextSize = sizing.contextSize
+  const mappedProjector = modelPath && mmprojEnabled ? resolveProjectorFor(modelPath) : undefined
+  if (mappedProjector && contextSize < VISION_MIN_CONTEXT_SIZE) {
+    // A single image costs 1-2k tokens, which a small window cannot absorb.
+    contextSize = Math.min(
+      VISION_MIN_CONTEXT_SIZE,
+      sizing.trainedContextSize ?? VISION_MIN_CONTEXT_SIZE
+    )
+    console.log(`[GoltiEngine] Raised context size to ${contextSize} for vision`)
+  }
   console.log(
     `[GoltiEngine] Context size ${contextSize}` +
       (sizing.trainedContextSize ? ` (model trained for ${sizing.trainedContextSize}` : ' (model context unknown') +
@@ -412,7 +473,12 @@ export async function startEngine(
       '--jinja',
       '--reasoning-format', 'deepseek'
     ]
+    const projectorPath = mmprojEnabled ? mappedProjector : undefined
     if (modelPath) args.push('--model', modelPath)
+    if (projectorPath) {
+      args.push('--mmproj', projectorPath)
+      if (!mmprojOffload) args.push('--no-mmproj-offload')
+    }
     if (device) args.push('--device', device.id)
     args.push('--n-gpu-layers', String(layers))
     args.push(...buildTuningArgs({ gpuLayers: layers, threads, enabled: tuningEnabled }))
@@ -427,9 +493,33 @@ export async function startEngine(
 
     currentProcess = attempt.process
     const pid = currentProcess.pid
-    updateState({ pid, binaryPath, binaryVersion: LLAMA_VERSION, backend, gpuLayers: layers, fellBackToCpu: fellBack, contextSize })
+    updateState({
+      pid,
+      binaryPath,
+      binaryVersion: LLAMA_VERSION,
+      backend,
+      gpuLayers: layers,
+      fellBackToCpu: fellBack,
+      contextSize,
+      visionEnabled: Boolean(projectorPath),
+      projectorPath
+    })
 
     const isHealthy = await waitForHealthy(actualPort, attempt, loadBudgetMs)
+
+    if (!isHealthy && attempt.hasExited() && projectorPath && isMmprojFailure(attempt.getStderr())) {
+      // A mismatched projector kills the server outright: shed offload, then vision.
+      try { currentProcess?.kill('SIGKILL') } catch {}
+      currentProcess = null
+      if (mmprojOffload) {
+        console.warn('[GoltiEngine] Projector failed to offload, retrying on CPU')
+        mmprojOffload = false
+      } else {
+        console.warn('[GoltiEngine] Projector rejected, retrying without vision')
+        mmprojEnabled = false
+      }
+      continue
+    }
 
     if (!isHealthy && attempt.hasExited() && tuningEnabled && isUnsupportedArgFailure(attempt.getStderr())) {
       // This engine build rejects one of the performance flags - retry plain.

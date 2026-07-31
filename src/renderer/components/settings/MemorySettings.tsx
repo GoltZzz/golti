@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, Trash2 } from 'lucide-react'
+import { ChevronLeft, Trash2, Plus, Search, Edit3, ExternalLink, X, Check } from 'lucide-react'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useEngineStore } from '../../stores/engineStore'
+import { useSidebarStore } from '../../stores/sidebarStore'
+import { useChatStore } from '../../stores/chatStore'
 import { Memory } from '../../../shared/types'
 
 function updatedLabel(ts: number): string {
@@ -106,74 +108,347 @@ const CardDetail: React.FC<{
   memory: Memory
   onBack: () => void
   onDelete: (id: string) => void
-}> = ({ memory, onBack, onDelete }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-    <button
-      onClick={onBack}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-        alignSelf: 'flex-start',
-        background: 'transparent',
-        border: 'none',
-        color: 'var(--text-muted)',
-        cursor: 'pointer',
-        fontSize: '13px',
-        padding: 0
-      }}
-    >
-      <ChevronLeft size={16} /> Back
-    </button>
+  onUpdate: (id: string, updates: { category?: string; title?: string; summary?: string; details?: string[] }) => Promise<void>
+}> = ({ memory, onBack, onDelete, onUpdate }) => {
+  const { setActiveTab } = useSidebarStore()
+  const { selectConversation } = useChatStore()
+  const [isEditing, setIsEditing] = useState(false)
+  const [title, setTitle] = useState(memory.title)
+  const [category, setCategory] = useState(memory.category)
+  const [summary, setSummary] = useState(memory.summary)
+  const [detailsText, setDetailsText] = useState(memory.details.join('\n'))
 
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
-      <h3 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-        {memory.title}
-      </h3>
+  const handleSave = async () => {
+    const details = detailsText
+      .split('\n')
+      .map((d) => d.trim())
+      .filter(Boolean)
+    await onUpdate(memory.id, { title, category, summary, details })
+    setIsEditing(false)
+  }
+
+  const handleJumpToSource = async () => {
+    if (memory.sourceConversationId) {
+      setActiveTab('chat')
+      await selectConversation(memory.sourceConversationId)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
       <button
-        onClick={() => {
-          onDelete(memory.id)
-          onBack()
-        }}
+        onClick={onBack}
         style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          alignSelf: 'flex-start',
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--text-muted)',
+          cursor: 'pointer',
           fontSize: '13px',
-          padding: '8px 16px',
-          borderRadius: 'var(--radius-md)',
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border-medium)',
-          color: 'var(--text-primary)',
-          cursor: 'pointer'
+          padding: 0
         }}
       >
-        Delete
+        <ChevronLeft size={16} /> Back to Recall
       </button>
-    </div>
 
-    <div>
-      <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>
-        Summary
-      </div>
-      <p style={{ fontSize: '15px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-        {memory.summary}
-      </p>
-    </div>
-
-    {memory.details.length > 0 && (
-      <div>
-        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>
-          Details
+      {isEditing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', backgroundColor: 'var(--bg-card)', padding: 'var(--space-5)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-subtle)' }}>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px' }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Category</label>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px' }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Summary</label>
+            <textarea
+              rows={3}
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px', resize: 'vertical' }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Details (one per line)</label>
+            <textarea
+              rows={4}
+              value={detailsText}
+              onChange={(e) => setDetailsText(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px', resize: 'vertical' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setIsEditing(false)}
+              style={{ padding: '6px 14px', fontSize: '13px', borderRadius: 'var(--radius-md)', background: 'transparent', border: '1px solid var(--border-medium)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              style={{ padding: '6px 14px', fontSize: '13px', borderRadius: 'var(--radius-md)', background: 'var(--accent-primary)', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+            >
+              <Check size={14} /> Save Changes
+            </button>
+          </div>
         </div>
-        <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          {memory.details.map((d, i) => (
-            <li key={i} style={{ fontSize: '15px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              {d}
-            </li>
-          ))}
-        </ul>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
+            <div>
+              <span style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                {memory.category}
+              </span>
+              <h3 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', margin: '4px 0 0' }}>
+                {memory.title}
+              </h3>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => setIsEditing(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-medium)',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Edit3 size={15} /> Edit
+              </button>
+              <button
+                onClick={() => {
+                  onDelete(memory.id)
+                  onBack()
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-medium)',
+                  color: 'var(--accent-danger, #e5484d)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Trash2 size={15} /> Delete
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 'var(--space-2)' }}>
+              Summary
+            </div>
+            <p style={{ fontSize: '15px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+              {memory.summary}
+            </p>
+          </div>
+
+          {memory.details.length > 0 && (
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 'var(--space-2)' }}>
+                Details
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                {memory.details.map((d, i) => (
+                  <li key={i} style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {memory.sourceConversationId && (
+            <div style={{ paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+              <button
+                onClick={handleJumpToSource}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px',
+                  color: 'var(--accent-primary)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0
+                }}
+              >
+                <ExternalLink size={14} /> Jump to source conversation
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+const CreateMemoryModal: React.FC<{
+  isOpen: boolean
+  onClose: () => void
+  onSave: (input: { category: string; title: string; summary: string; details: string[] }) => Promise<void>
+}> = ({ isOpen, onClose, onSave }) => {
+  const [title, setTitle] = useState('')
+  const [category, setCategory] = useState('Personal')
+  const [summary, setSummary] = useState('')
+  const [detailsText, setDetailsText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  if (!isOpen) return null
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!title.trim() || !summary.trim()) return
+    setSubmitting(true)
+    const details = detailsText
+      .split('\n')
+      .map((d) => d.trim())
+      .filter(Boolean)
+    await onSave({
+      title: title.trim(),
+      category: category.trim() || 'General',
+      summary: summary.trim(),
+      details
+    })
+    setSubmitting(false)
+    onClose()
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: '16px'
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '520px',
+          backgroundColor: 'var(--bg-surface, #1e1e24)',
+          borderRadius: 'var(--radius-lg)',
+          border: '1px solid var(--border-medium)',
+          padding: '24px',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px'
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+            Create Memory Fact
+          </h3>
+          <button
+            onClick={onClose}
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Title *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Coding Standards & Stack"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Category</label>
+            <input
+              type="text"
+              placeholder="e.g. Personal, Work, Code, Project"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Summary *</label>
+            <textarea
+              rows={2}
+              required
+              placeholder="Short summary of this memory"
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px', resize: 'vertical' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Details (optional, one per line)</label>
+            <textarea
+              rows={3}
+              placeholder="Additional facts or details..."
+              value={detailsText}
+              onChange={(e) => setDetailsText(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-medium)', marginTop: '4px', resize: 'vertical' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ padding: '8px 16px', fontSize: '13px', borderRadius: 'var(--radius-md)', background: 'transparent', border: '1px solid var(--border-medium)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{ padding: '8px 16px', fontSize: '13px', borderRadius: 'var(--radius-md)', background: 'var(--accent-primary)', border: 'none', color: '#fff', cursor: 'pointer' }}
+            >
+              {submitting ? 'Creating...' : 'Save Memory'}
+            </button>
+          </div>
+        </form>
       </div>
-    )}
-  </div>
-)
+    </div>
+  )
+}
 
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = ({
   checked,
@@ -212,13 +487,15 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = (
 )
 
 export const MemorySettings: React.FC = () => {
-  const { memories, loading, error, fetchMemories, deleteMemory } = useMemoryStore()
+  const { memories, loading, error, fetchMemories, createMemory, updateMemory, deleteMemory } = useMemoryStore()
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const localModels = useEngineStore((s) => s.localModels)
   const fetchLocalModels = useEngineStore((s) => s.fetchLocalModels)
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [filterText, setFilterText] = useState('')
+  const [isAddOpen, setIsAddOpen] = useState(false)
 
   const memoryEnabled = settings?.memoryEnabled ?? true
 
@@ -227,36 +504,73 @@ export const MemorySettings: React.FC = () => {
     fetchLocalModels()
   }, [fetchMemories, fetchLocalModels])
 
+  const filteredMemories = useMemo(() => {
+    if (!filterText.trim()) return memories
+    const q = filterText.toLowerCase()
+    return memories.filter(
+      (m) =>
+        m.title.toLowerCase().includes(q) ||
+        m.summary.toLowerCase().includes(q) ||
+        m.category.toLowerCase().includes(q) ||
+        m.details.some((d) => d.toLowerCase().includes(q))
+    )
+  }, [memories, filterText])
+
   const grouped = useMemo(() => {
     const map = new Map<string, Memory[]>()
-    for (const m of memories) {
+    for (const m of filteredMemories) {
       const list = map.get(m.category) ?? []
       list.push(m)
       map.set(m.category, list)
     }
     return Array.from(map.entries())
-  }, [memories])
+  }, [filteredMemories])
 
   const selected = selectedId ? memories.find((m) => m.id === selectedId) ?? null : null
 
   if (selected) {
     return (
       <div style={{ maxWidth: '760px' }}>
-        <CardDetail memory={selected} onBack={() => setSelectedId(null)} onDelete={deleteMemory} />
+        <CardDetail
+          memory={selected}
+          onBack={() => setSelectedId(null)}
+          onDelete={deleteMemory}
+          onUpdate={updateMemory}
+        />
       </div>
     )
   }
 
   return (
     <div style={{ maxWidth: '760px', display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      <div>
-        <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
-          Recall
-        </h3>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-          {memories.length} {memories.length === 1 ? 'topic' : 'topics'} distilled from your
-          conversations.
-        </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h3 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+            Recall & Brain Memory
+          </h3>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+            {memories.length} {memories.length === 1 ? 'topic' : 'topics'} distilled from chats or added manually.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setIsAddOpen(true)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '8px 14px',
+            fontSize: '13px',
+            fontWeight: 500,
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--accent-primary)',
+            border: 'none',
+            color: '#fff',
+            cursor: 'pointer'
+          }}
+        >
+          <Plus size={16} /> Add Memory
+        </button>
       </div>
 
       {/* Controls */}
@@ -330,6 +644,54 @@ export const MemorySettings: React.FC = () => {
         </div>
       </div>
 
+      {/* Live Search Filter Input */}
+      {memories.length > 0 && (
+        <div style={{ position: 'relative' }}>
+          <Search
+            size={16}
+            style={{
+              position: 'absolute',
+              left: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-muted)'
+            }}
+          />
+          <input
+            type="text"
+            placeholder="Filter memories by title, category, or detail..."
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '8px 12px 8px 36px',
+              fontSize: '13px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'var(--bg-input)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-medium)'
+            }}
+          />
+          {filterText && (
+            <button
+              onClick={() => setFilterText('')}
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer'
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Memory list */}
       {loading && <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Loading memories…</p>}
       {error && <p style={{ fontSize: '13px', color: 'var(--accent-danger, #e5484d)' }}>{error}</p>}
@@ -338,8 +700,14 @@ export const MemorySettings: React.FC = () => {
         <div style={{ textAlign: 'center', padding: 'var(--space-8) 0' }}>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>No topics yet.</p>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '380px', margin: '4px auto 0' }}>
-            As you chat, durable facts, preferences, and project context are collected here automatically.
+            As you chat, durable facts, preferences, and project context are collected here automatically, or you can add facts manually.
           </p>
+        </div>
+      )}
+
+      {!loading && filteredMemories.length === 0 && memories.length > 0 && (
+        <div style={{ textAlign: 'center', padding: 'var(--space-6) 0' }}>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>No memories match "{filterText}"</p>
         </div>
       )}
 
@@ -348,13 +716,15 @@ export const MemorySettings: React.FC = () => {
           <div key={category}>
             <h4
               style={{
-                fontSize: '18px',
+                fontSize: '14px',
                 fontWeight: 600,
-                color: 'var(--text-primary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: 'var(--text-muted)',
                 margin: '0 0 var(--space-2)'
               }}
             >
-              {category}
+              {category} ({group.length})
             </h4>
             <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
               {group.map((m) => (
@@ -368,6 +738,12 @@ export const MemorySettings: React.FC = () => {
             </div>
           </div>
         ))}
+
+      <CreateMemoryModal
+        isOpen={isAddOpen}
+        onClose={() => setIsAddOpen(false)}
+        onSave={createMemory}
+      />
     </div>
   )
 }

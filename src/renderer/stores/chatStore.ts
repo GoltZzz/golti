@@ -7,6 +7,9 @@ import type {
   Conversation,
   GenerationSettings,
   Message,
+  MessageAttachment,
+  ModelCapabilities,
+  MessageSearchHit,
   ModelInfo,
   StreamChunkPayload,
   TokenBudget,
@@ -59,6 +62,9 @@ interface ChatState {
    *  so the sidebar can show a live indicator on each. */
   generatingConversationIds: string[]
   contextItems: ContextItem[]
+  stagedAttachments: MessageAttachment[]
+  attachmentError: string | null
+  modelCapabilities: ModelCapabilities | null
   artifacts: Artifact[]
   citations: Citation[]
   tokenBudget: TokenBudget | null
@@ -78,6 +84,7 @@ interface ChatState {
   actionRedoStack: UndoEntry[]
   searchQuery: string
   searchHits: Array<{ conversationId: string; title: string; snippet: string }>
+  highlightedMessageId: string | null
 
   fetchConversations: () => Promise<void>
   selectConversation: (id: string) => Promise<void>
@@ -88,6 +95,8 @@ interface ChatState {
   archiveConversation: (id: string) => Promise<void>
   exportConversation: (format: 'markdown' | 'json') => Promise<void>
   searchConversations: (query: string) => Promise<void>
+  searchMessages: (query: string) => Promise<MessageSearchHit[]>
+  setHighlightedMessageId: (id: string | null) => void
   autoTitleConversation: (
     id: string,
     prompt: string,
@@ -114,6 +123,13 @@ interface ChatState {
   addContextUrl: (url: string) => Promise<void>
   toggleContextItem: (id: string, enabled: boolean) => Promise<void>
   removeContextItem: (id: string) => Promise<void>
+  fetchStagedAttachments: (conversationId: string) => Promise<void>
+  stageAttachmentFiles: (filePaths: string[]) => Promise<void>
+  stageAttachmentBytes: (file: File) => Promise<void>
+  removeStagedAttachment: (id: string) => Promise<void>
+  pickAttachments: () => Promise<void>
+  refreshModelCapabilities: () => Promise<void>
+  clearAttachmentError: () => void
   setDraft: (text: string, pushHistory?: boolean) => void
   undoDraft: () => void
   redoDraft: () => void
@@ -157,6 +173,13 @@ function emptyBudget(): TokenBudget {
   }
 }
 
+/** Electron wraps handler throws in "Error invoking remote method ...: Error: msg". */
+function cleanIpcError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  const match = /Error invoking remote method '[^']*':\s*(?:Error:\s*)?(.*)$/s.exec(raw)
+  return (match ? match[1] : raw).trim() || 'Unknown error'
+}
+
 function newClientId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
 }
@@ -166,6 +189,8 @@ function conversationScopedReset() {
     messages: [] as Message[],
     visibleMessages: [] as Message[],
     contextItems: [] as ContextItem[],
+    stagedAttachments: [] as MessageAttachment[],
+    attachmentError: null as string | null,
     artifacts: [] as Artifact[],
     citations: [] as Citation[],
     tokenBudget: emptyBudget(),
@@ -201,6 +226,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeGenerationId: null,
   generatingConversationIds: [],
   contextItems: [],
+  stagedAttachments: [],
+  attachmentError: null,
+  modelCapabilities: null,
   artifacts: [],
   citations: [],
   tokenBudget: emptyBudget(),
@@ -220,6 +248,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   actionRedoStack: [],
   searchQuery: '',
   searchHits: [],
+  highlightedMessageId: null,
 
   hydrateWebSearchPreference: async () => {
     try {
@@ -304,7 +333,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           (m) =>
             (m.providerId === conv.providerId && m.name === conv.model) || m.name === conv.model
         )
-        if (matchingModel) set({ selectedModel: matchingModel })
+        if (matchingModel) {
+          set({ selectedModel: matchingModel })
+          void get().refreshModelCapabilities()
+        }
       }
 
       // A generation may still be streaming in the background (the user switched
@@ -317,7 +349,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({ isGenerating: true, activeGenerationId: active.generationId })
       }
 
-      await Promise.all([get().refreshContext(), get().refreshArtifacts(), get().refreshBudget()])
+      await Promise.all([
+        get().refreshContext(),
+        get().refreshArtifacts(),
+        get().refreshBudget(),
+        get().fetchStagedAttachments(id)
+      ])
       if (seq !== selectSeq || get().currentConversationId !== id) return
 
       const citations = await window.goltiAPI.listCitations(id)
@@ -451,6 +488,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ searchHits: hits })
   },
 
+  searchMessages: async (query: string) => {
+    if (!query.trim()) return []
+    return await window.goltiAPI.searchMessages(query)
+  },
+
+  setHighlightedMessageId: (id: string | null) => set({ highlightedMessageId: id }),
+
   autoTitleConversation: async (id, prompt, providerId, model) => {
     const placeholder = fallbackTitle(prompt)
     try {
@@ -473,6 +517,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   sendMessage: async (content, options) => {
     const rawInput = (content ?? get().draft).trim()
+    // Skills load asynchronously; without this a /command fired early passes
+    // through unexpanded and the model just sees the literal slash text.
+    if (/^\/[a-z0-9-]+/i.test(rawInput) && useSkillStore.getState().skills.length === 0) {
+      await useSkillStore.getState().fetchSkills()
+    }
     const text = expandSlashCommand(rawInput, useSkillStore.getState().skills)
     if (!text || get().isGenerating) return
 
@@ -565,6 +614,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await get().autoTitleConversation(convId, text, providerId, modelName)
     }
 
+    const attachmentIds = get().stagedAttachments.map((a) => a.id)
+
     const result = await window.goltiAPI.sendMessage({
       conversationId: convId,
       content: text,
@@ -580,6 +631,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       contextItemIds: get()
         .contextItems.filter((c) => c.enabled)
         .map((c) => c.id),
+      attachmentIds,
       generationSettings: get().generationSettings,
       skillRequest,
       askUserEnabled
@@ -620,6 +672,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages,
         visibleMessages: recomputeVisible(messages, result.assistantMsgId),
         activeGenerationId: result.generationId,
+        stagedAttachments: [],
         searchStatusByMessageId,
         researchProgressByMessageId,
         conversations: state.conversations.map((c) =>
@@ -895,12 +948,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
         if (matchingModel) {
           set({ selectedModel: matchingModel })
+          void get().refreshModelCapabilities()
           return
         }
       }
 
       if (modelsList.length > 0 && !get().selectedModel) {
         set({ selectedModel: modelsList[0] })
+        void get().refreshModelCapabilities()
       }
     } catch (err) {
       console.error('Failed to fetch models:', err)
@@ -909,11 +964,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setSelectedModel: (model: ModelInfo) => {
-    set({ selectedModel: model })
+    set({ selectedModel: model, modelCapabilities: null })
     const convId = get().currentConversationId
     if (convId) {
       window.goltiAPI.updateConversation(convId, { model: model.name, providerId: model.providerId })
     }
+    void get().refreshModelCapabilities()
   },
 
   setupStreamListener: () => {
@@ -926,6 +982,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         reasoningContent: chunkReasoningContent,
         thinkingDelta,
         thinkingDurationMs,
+        ttftMs,
+        tokensPerSec,
         done,
         error,
         usage,
@@ -977,6 +1035,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               content: nextContent,
               reasoningContent: reasoningContent || msg.reasoningContent,
               thinkingDurationMs: thinkingDurationMs ?? msg.thinkingDurationMs,
+              ttftMs: ttftMs ?? msg.ttftMs,
+              tokensPerSec: tokensPerSec ?? msg.tokensPerSec,
               isStreaming: !done,
               error: error || msg.error,
               tokensIn: usage?.promptTokens ?? msg.tokensIn,
@@ -1229,6 +1289,100 @@ export const useChatStore = create<ChatState>((set, get) => ({
           await get().refreshContext()
         }
       })
+    }
+  },
+
+  fetchStagedAttachments: async (conversationId: string) => {
+    try {
+      const staged = await window.goltiAPI.listStagedAttachments(conversationId)
+      if (get().currentConversationId === conversationId) {
+        set({ stagedAttachments: staged })
+      }
+    } catch (err) {
+      console.warn('Failed to fetch staged attachments:', err)
+    }
+  },
+
+  stageAttachmentFiles: async (filePaths: string[]) => {
+    let convId = get().currentConversationId
+    if (!convId) {
+      convId = await get().newConversation()
+    }
+    const failures: string[] = []
+    for (const p of filePaths) {
+      try {
+        const att = await window.goltiAPI.stageAttachmentFile(convId, p)
+        set((state) => ({ stagedAttachments: [...state.stagedAttachments, att] }))
+      } catch (err: any) {
+        failures.push(`${p.split('/').pop()}: ${cleanIpcError(err)}`)
+      }
+    }
+    set({ attachmentError: failures.length ? failures.join('\n') : null })
+    await get().refreshBudget()
+  },
+
+  stageAttachmentBytes: async (file: File) => {
+    let convId = get().currentConversationId
+    if (!convId) {
+      convId = await get().newConversation()
+    }
+    const buffer = await file.arrayBuffer()
+    const base64 = btoa(
+      new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+    )
+    try {
+      const att = await window.goltiAPI.stageAttachmentBytes(convId, file.name, base64, file.type)
+      set((state) => ({ stagedAttachments: [...state.stagedAttachments, att], attachmentError: null }))
+      await get().refreshBudget()
+    } catch (err: any) {
+      set({ attachmentError: `${file.name || 'image'}: ${cleanIpcError(err)}` })
+    }
+  },
+
+  removeStagedAttachment: async (id: string) => {
+    try {
+      await window.goltiAPI.deleteAttachment(id)
+      set((state) => ({
+        stagedAttachments: state.stagedAttachments.filter((a) => a.id !== id)
+      }))
+      await get().refreshBudget()
+    } catch (err) {
+      console.warn('Failed to remove attachment:', id, err)
+    }
+  },
+
+  pickAttachments: async () => {
+    let convId = get().currentConversationId
+    if (!convId) {
+      convId = await get().newConversation()
+    }
+    try {
+      const staged: MessageAttachment[] = await window.goltiAPI.pickAttachments(convId)
+      if (staged.length) {
+        set((state) => ({
+          stagedAttachments: [...state.stagedAttachments, ...staged],
+          attachmentError: null
+        }))
+        await get().refreshBudget()
+      }
+    } catch (err: any) {
+      set({ attachmentError: cleanIpcError(err) })
+    }
+  },
+
+  clearAttachmentError: () => set({ attachmentError: null }),
+
+  refreshModelCapabilities: async () => {
+    const model = get().selectedModel
+    if (!model) {
+      set({ modelCapabilities: null })
+      return
+    }
+    try {
+      const caps = await window.goltiAPI.getModelCapabilities(model.providerId, model.name)
+      if (get().selectedModel?.id === model.id) set({ modelCapabilities: caps })
+    } catch {
+      set({ modelCapabilities: null })
     }
   },
 
