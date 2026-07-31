@@ -380,7 +380,8 @@ export async function startChatGeneration(
 
   const recallQuery =
     content || branch.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
-  const memoryBlock = continuing ? '' : await buildMemoryRecallBlock(recallQuery)
+  const memoryEnabled = settings.memoryEnabled ?? true
+  const memoryBlock = continuing || !memoryEnabled ? '' : await buildMemoryRecallBlock(recallQuery)
 
   const mode: WebSearchMode = resolveComposerSearchMode({
     webSearchEnabled,
@@ -962,22 +963,25 @@ export async function startChatGeneration(
         eventType: 'done'
       })
 
-      try {
-        const path = getBranchPath(dbMessages.listForConversation(conversationId), assistantMsgId)
-        const lastUser = [...path].reverse().find((m) => m.role === 'user')
-        void extractAndStoreMemories({
-          conversationId,
-          messageId: assistantMsgId,
-          userText: content?.trim() || lastUser?.content || '',
-          assistantText: accumulated
-        }).then((saved) => {
-          if (saved.length && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('memory:saved', saved)
-          }
-        })
-      } catch {
-        // memory extraction is best-effort
+      if (settings.memoryEnabled ?? true) {
+        try {
+          const path = getBranchPath(dbMessages.listForConversation(conversationId), assistantMsgId)
+          const lastUser = [...path].reverse().find((m) => m.role === 'user')
+          void extractAndStoreMemories({
+            conversationId,
+            messageId: assistantMsgId,
+            userText: content?.trim() || lastUser?.content || '',
+            assistantText: accumulated
+          }).then((saved) => {
+            if (saved.length && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+              win.webContents.send('memory:saved', saved)
+            }
+          })
+        } catch (err) {
+          console.warn('[ChatRuntime] Memory extraction trigger failed:', err)
+        }
       }
+
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const totalThinkingDurationMs =

@@ -3,6 +3,7 @@ import type { Memory } from '../../shared/types'
 import { memorySearchText } from '../../shared/types'
 import { chatMemories } from '../db/memory-repos'
 import { embedText, cosineSimilarity } from '../engine/embeddings'
+import { isEmbeddingModelInstalled, waitForEmbeddingModel } from '../engine/embedding-server'
 import { getEngineState } from '../engine/engine-process'
 import { runMemoryCompletion } from '../engine/memory-server'
 import { dbSettings } from '../db/database'
@@ -11,6 +12,39 @@ const ENDPOINT = 'http://127.0.0.1:8391'
 const DEDUP_THRESHOLD = 0.9
 const RELATED_THRESHOLD = 0.6
 const MAX_RELATED = 12
+
+const pendingExtractions: ExtractInput[] = []
+let isFlushingQueue = false
+
+async function flushPendingExtractions(): Promise<void> {
+  if (isFlushingQueue || pendingExtractions.length === 0) return
+  isFlushingQueue = true
+  console.warn(`[Memory] Embedding model is now ready. Flushing ${pendingExtractions.length} pending extractions...`)
+  try {
+    while (pendingExtractions.length > 0) {
+      const item = pendingExtractions.shift()
+      if (item) {
+        await extractAndStoreMemories(item)
+      }
+    }
+  } finally {
+    isFlushingQueue = false
+  }
+}
+
+function queuePendingExtraction(input: ExtractInput): void {
+  if (pendingExtractions.length >= 10) {
+    pendingExtractions.shift() // Drop oldest to keep queue bounded
+  }
+  pendingExtractions.push(input)
+  console.warn(`[Memory] Queued pending extraction (queue length: ${pendingExtractions.length}). Waiting for embedding model...`)
+  
+  void waitForEmbeddingModel().then((success) => {
+    if (success) {
+      void flushPendingExtractions()
+    }
+  })
+}
 
 const SYSTEM_PROMPT = `You maintain a durable, long-term memory about a user, organized as topic cards.
 Each card is one topic (e.g. "Profile", "Games", "Tools") and has:
@@ -96,14 +130,18 @@ function parseOps(raw: string): MemoryOp[] {
 }
 
 async function callExtractor(userPrompt: string): Promise<string | null> {
-
   const memoryModel = dbSettings.get().memoryModel?.trim()
   if (memoryModel) {
-    return runMemoryCompletion(memoryModel, SYSTEM_PROMPT, userPrompt)
+    const res = await runMemoryCompletion(memoryModel, SYSTEM_PROMPT, userPrompt)
+    if (res) return res
+    console.warn(`[Memory] Dedicated memoryModel "${memoryModel}" unavailable or failed. Falling back to main Golti Engine...`)
   }
 
   const state = getEngineState()
-  if (state.status !== 'running' || !state.loadedModel) return null
+  if (state.status !== 'running' || !state.loadedModel) {
+    console.warn('[Memory] Extraction skipped: Golti Engine is not running or has no model loaded (status:', state.status, ')')
+    return null
+  }
   try {
     const res = await fetch(`${ENDPOINT}/v1/chat/completions`, {
       method: 'POST',
@@ -120,10 +158,14 @@ async function callExtractor(userPrompt: string): Promise<string | null> {
       }),
       signal: AbortSignal.timeout(30000)
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[Memory] Main Golti Engine HTTP ${res.status} during extraction`)
+      return null
+    }
     const data = await res.json()
     return data?.choices?.[0]?.message?.content ?? null
-  } catch {
+  } catch (err) {
+    console.warn('[Memory] Extraction completion request failed:', err)
     return null
   }
 }
@@ -154,6 +196,11 @@ export async function extractAndStoreMemories(input: ExtractInput): Promise<Memo
   const { conversationId, messageId, userText, assistantText } = input
   if (!userText.trim() || !assistantText.trim()) return []
 
+  if (!isEmbeddingModelInstalled()) {
+    queuePendingExtraction(input)
+    return []
+  }
+
   const turnText = `User: ${userText}\n\nAssistant: ${assistantText}`
   const turnEmbed = await embedText(turnText)
   const related = await findRelated(turnEmbed?.vector ?? null)
@@ -171,17 +218,28 @@ export async function extractAndStoreMemories(input: ExtractInput): Promise<Memo
   const userPrompt = `Existing related memories:\n${relatedBlock}\n\nConversation turn:\n\n${turnText}`
 
   const raw = await callExtractor(userPrompt)
-  if (!raw) return []
+  if (!raw) {
+    console.warn('[Memory] Extractor returned no response')
+    return []
+  }
 
   const ops = parseOps(raw)
-  if (ops.length === 0) return []
+  if (ops.length === 0) {
+    console.warn('[Memory] Extractor produced no ops (nothing durable to store for this turn)')
+    return []
+  }
+
+  console.warn(`[Memory] Extractor proposed ${ops.length} ops:`, ops)
 
   const relatedById = new Map(related.map((m) => [m.id, m]))
   const changed: Memory[] = []
 
   for (const op of ops) {
     if (op.op === 'delete') {
-      if (relatedById.has(op.id)) chatMemories.delete(op.id)
+      if (relatedById.has(op.id)) {
+        chatMemories.delete(op.id)
+        console.warn(`[Memory] Deleted memory id=${op.id}`)
+      }
       continue
     }
 
@@ -198,14 +256,21 @@ export async function extractAndStoreMemories(input: ExtractInput): Promise<Memo
         embedding: embedResult?.vector ?? null,
         embeddingModel: embedResult?.model
       })
-      if (updated) changed.push(updated)
+      if (updated) {
+        changed.push(updated)
+        console.warn(`[Memory] Updated memory id=${op.id}:`, op.title)
+      }
       continue
     }
 
-    if (isExactDuplicate(cardText, related)) continue
+    if (isExactDuplicate(cardText, related)) {
+      console.warn(`[Memory] Skipped exact duplicate memory:`, op.title)
+      continue
+    }
     const embedResult = await embedText(cardText)
     const embedding = embedResult?.vector ?? null
     if (embedding && related.some((e) => e.embedding && cosineSimilarity(embedding, e.embedding) >= DEDUP_THRESHOLD)) {
+      console.warn(`[Memory] Skipped near-duplicate memory (similarity >= ${DEDUP_THRESHOLD}):`, op.title)
       continue
     }
     const created = chatMemories.create({
@@ -221,7 +286,9 @@ export async function extractAndStoreMemories(input: ExtractInput): Promise<Memo
     })
     related.push({ ...created, embedding })
     changed.push(created)
+    console.warn(`[Memory] Created new memory id=${created.id}:`, created.title)
   }
 
   return changed
 }
+

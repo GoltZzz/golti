@@ -9,7 +9,10 @@ export async function buildMemoryRecallBlock(query: string): Promise<string> {
   if (!q) return ''
 
   const embedResult = await embedText(q)
-  if (!embedResult) return ''
+  if (!embedResult) {
+    console.warn('[Recall] Embedding failed for query:', q.slice(0, 50))
+    return ''
+  }
 
   const rows = chatMemories.listWithEmbeddings()
   const scored = rows
@@ -19,7 +22,12 @@ export async function buildMemoryRecallBlock(query: string): Promise<string> {
     .sort((a, b) => b.score - a.score)
     .slice(0, TOP_K)
 
-  if (scored.length === 0) return ''
+  if (scored.length === 0) {
+    console.warn(`[Recall] Searched ${rows.length} memories for query "${q.slice(0, 40)}", no matches above threshold ${MIN_SCORE}`)
+    return ''
+  }
+
+  console.warn(`[Recall] Found ${scored.length} matching memories for query "${q.slice(0, 40)}" (top score: ${scored[0].score.toFixed(2)})`)
 
   const lines = scored.map((r) => {
     const m = r.memory
@@ -28,3 +36,4 @@ export async function buildMemoryRecallBlock(query: string): Promise<string> {
   })
   return `The following are relevant long-term memories about the user. Use them when helpful, but do not mention them unless relevant:\n\n${lines.join('\n\n')}`
 }
+
