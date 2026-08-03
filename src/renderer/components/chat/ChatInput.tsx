@@ -14,6 +14,7 @@ import {
   Sparkles,
   Wand2,
   AlertTriangle,
+  Pencil,
   X
 } from 'lucide-react'
 import { EggLogo } from '../brand/EggLogo'
@@ -56,6 +57,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     draft,
     setDraft,
     sendMessage,
+    editingMessageId,
+    cancelEdit,
     isGenerating,
     stopGeneration,
     webSearchEnabled,
@@ -136,6 +139,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
 
   useEffect(() => setupListeners(), [setupListeners])
 
+  useEffect(() => {
+    if (editingMessageId && textareaRef.current) {
+      textareaRef.current.focus()
+    }
+  }, [editingMessageId])
+
   const visionBlocked = stagedAttachments.length > 0 && modelCapabilities?.image === false
   const visionBlockReason = visionBlocked
     ? modelCapabilities?.reason || 'This model cannot read images'
@@ -195,6 +204,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
     if (e.key === 'Tab' && e.shiftKey && !showCommandPalette) {
       e.preventDefault()
       cycleComposerMode()
+      return
+    }
+    if (e.key === 'Escape' && editingMessageId) {
+      e.preventDefault()
+      cancelEdit()
       return
     }
     if (e.key === 'Enter' && !e.shiftKey && !showCommandPalette) {
@@ -487,6 +501,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
             </div>
           )}
 
+          {editingMessageId && (
+            <div className="composer-edit-banner">
+              <Pencil size={12} />
+              <span>Editing message</span>
+              <button
+                className="composer-edit-cancel"
+                onClick={cancelEdit}
+                aria-label="Cancel edit"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
           <div className={`composer-input-wrap ${activeSkill ? 'has-skill' : ''}`}>
             {activeSkill && (
               <div ref={highlightRef} className="composer-highlight" aria-hidden="true">
@@ -505,10 +533,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
               if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop
             }}
             placeholder={
-              composerMode === 'agent'
+              editingMessageId
+                ? 'Edit your message... (Esc to cancel)'
+                : composerMode === 'agent'
                 ? isLanding
-                  ? 'Describe a task for the agent… (@ for tools)'
-                  : 'Tell the agent what to do…'
+                  ? 'Describe a task for the agent... (@ for tools)'
+                  : 'Tell the agent what to do...'
                 : isLanding
                   ? 'Plan, Build, / for skills, @ for context'
                   : 'Ask Golti anything… (@ for tools, Shift+Enter for newline)'
@@ -651,12 +681,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ isLanding = false }) => {
                 </button>
               </Tooltip>
             ) : (
-              <Tooltip label="Send message" shortcut="Enter">
+              <Tooltip label={editingMessageId ? 'Save & resend' : 'Send message'} shortcut="Enter">
                 <button
                   className={`composer-send ${canSend ? 'is-ready' : ''}`}
                   onClick={() => sendMessage()}
                   disabled={!canSend}
-                  aria-label="Send message"
+                  aria-label={editingMessageId ? 'Save & resend' : 'Send message'}
                 >
                   <ArrowUp size={16} />
                 </button>

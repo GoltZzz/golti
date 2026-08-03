@@ -63,13 +63,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
     [isUser, message.model]
   )
   const [copiedCodeIndex, setCopiedCodeIndex] = useState<number | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [editText, setEditText] = useState(message.content)
 
   const showThinkingProcess = useSettingsStore((s) => s.settings?.showThinkingProcess ?? true)
 
   const regenerate = useChatStore((s) => s.regenerate)
   const continueMessage = useChatStore((s) => s.continueMessage)
+  const setEditingMessage = useChatStore((s) => s.setEditingMessage)
   const editAndResend = useChatStore((s) => s.editAndResend)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const selectBranch = useChatStore((s) => s.selectBranch)
@@ -270,31 +269,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             </div>
           )}
 
-          {editing ? (
-            <div className="msg-edit-box">
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                aria-label="Edit message"
-              />
-              <div className="msg-edit-actions">
-                <button className="chat-ghost-btn" onClick={() => setEditing(false)}>
-                  Cancel
-                </button>
-                <button
-                  className="primary-btn"
-                  onClick={() => {
-                    setEditing(false)
-                    editAndResend(message.id, editText.trim())
-                  }}
-                  disabled={!editText.trim() || isGenerating}
-                >
-                  Save & resend
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="msg-content" data-selectable>
+          <div className="msg-content" data-selectable>
               {message.attachments && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
@@ -439,7 +414,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                 />
               )}
             </div>
-          )}
 
           {!isUser && searchStatus && !researchProgress && (
             <div
@@ -591,17 +565,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
             </div>
           )}
 
-          {!editing && (
-            <div className={`msg-actions ${message.isStreaming ? 'is-open' : ''}`}>
+          <div className={`msg-actions ${message.isStreaming ? 'is-open' : ''}`}>
               {isUser && (
                 <button
                   className="msg-action-btn"
                   title="Edit"
                   aria-label="Edit message"
-                  onClick={() => {
-                    setEditText(message.content)
-                    setEditing(true)
-                  }}
+                  onClick={() => setEditingMessage(message.id)}
                   disabled={isGenerating}
                 >
                   <Pencil size={14} />
@@ -637,7 +607,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
                 <Copy size={14} />
               </button>
             </div>
-          )}
         </div>
 
         {isUser && (

@@ -80,6 +80,7 @@ interface ChatState {
   draftsByConversationId: Record<string, string>
   draftUndoStack: string[]
   draftRedoStack: string[]
+  editingMessageId: string | null
   actionUndoStack: UndoEntry[]
   actionRedoStack: UndoEntry[]
   searchQuery: string
@@ -130,6 +131,8 @@ interface ChatState {
   pickAttachments: () => Promise<void>
   refreshModelCapabilities: () => Promise<void>
   clearAttachmentError: () => void
+  setEditingMessage: (messageId: string) => void
+  cancelEdit: () => void
   setDraft: (text: string, pushHistory?: boolean) => void
   undoDraft: () => void
   redoDraft: () => void
@@ -244,6 +247,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftsByConversationId: {},
   draftUndoStack: [],
   draftRedoStack: [],
+  editingMessageId: null,
   actionUndoStack: [],
   actionRedoStack: [],
   searchQuery: '',
@@ -516,6 +520,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content, options) => {
+    const editingId = get().editingMessageId
+    if (editingId) {
+      const text = (content ?? get().draft).trim()
+      if (!text || get().isGenerating) return
+      set({ editingMessageId: null, draft: '', draftUndoStack: [], draftRedoStack: [] })
+      await get().editAndResend(editingId, text)
+      return
+    }
     const rawInput = (content ?? get().draft).trim()
     // Skills load asynchronously; without this a /command fired early passes
     // through unexpanded and the model just sees the literal slash text.
@@ -1384,6 +1396,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch {
       set({ modelCapabilities: null })
     }
+  },
+
+  setEditingMessage: (messageId) => {
+    const msg = get().messages.find((m) => m.id === messageId)
+    if (!msg) return
+    set({ editingMessageId: messageId, draft: msg.content, draftUndoStack: [], draftRedoStack: [] })
+  },
+
+  cancelEdit: () => {
+    set({ editingMessageId: null, draft: '', draftUndoStack: [], draftRedoStack: [] })
   },
 
   setDraft: (text, pushHistory = true) => {
