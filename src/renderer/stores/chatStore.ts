@@ -93,6 +93,7 @@ interface ChatState {
   startBlankConversation: () => void
   deleteConversation: (id: string) => Promise<void>
   pinConversation: (id: string, pinned: boolean) => Promise<void>
+  renameConversation: (id: string, title: string) => Promise<void>
   archiveConversation: (id: string) => Promise<void>
   exportConversation: (format: 'markdown' | 'json') => Promise<void>
   searchConversations: (query: string) => Promise<void>
@@ -445,6 +446,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
       }
     }
+  },
+
+  renameConversation: async (id: string, title: string) => {
+    const prev = get().conversations.find((c) => c.id === id)?.title
+    await window.goltiAPI.updateConversation(id, { title })
+    set((s) => ({
+      conversations: s.conversations.map((c) => (c.id === id ? { ...c, title } : c))
+    }))
   },
 
   pinConversation: async (id: string, pinned: boolean) => {

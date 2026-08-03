@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   MessageSquare,
   Brain,
@@ -14,13 +14,15 @@ import {
   Archive,
   Download,
   Home,
-  Code2
+  Code2,
+  Pencil
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { ConfirmDialog } from '../common/ConfirmDialog'
+import { ContextMenu, ContextMenuItem } from '../common/ContextMenu'
 import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
 
 export const Sidebar: React.FC = () => {
@@ -34,6 +36,7 @@ export const Sidebar: React.FC = () => {
     startBlankConversation,
     deleteConversation,
     pinConversation,
+    renameConversation,
     archiveConversation,
     exportConversation,
     searchConversations,
@@ -48,6 +51,9 @@ export const Sidebar: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [detectedPlatform, setDetectedPlatform] = useState<'darwin' | 'win32' | 'linux'>('darwin')
+  const [contextMenu, setContextMenu] = useState<{ conv: typeof conversations[0]; x: number; y: number } | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const { settings, fetchSettings } = useSettingsStore()
 
   useEffect(() => {
@@ -68,6 +74,18 @@ export const Sidebar: React.FC = () => {
       : detectedPlatform
 
   const searchShortcut = effectiveOS === 'darwin' ? '⌘⇧F' : 'Ctrl+Shift+F'
+
+  const handleRenameSubmit = useCallback(async (id: string, title: string) => {
+    const trimmed = title.trim()
+    if (trimmed) await renameConversation(id, trimmed)
+    setRenamingId(null)
+  }, [renameConversation])
+
+  const openContextMenu = useCallback((e: React.MouseEvent, conv: typeof conversations[0]) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ conv, x: e.clientX, y: e.clientY })
+  }, [])
 
   const displayedConversations = useMemo(() => {
     if (searchHits.length > 0 && localQuery.trim()) {
@@ -373,6 +391,7 @@ export const Sidebar: React.FC = () => {
                     key={conv.id}
                     className="conv-item"
                     onClick={() => openConversation(conv.id)}
+                    onContextMenu={(e) => openContextMenu(e, conv)}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -387,75 +406,55 @@ export const Sidebar: React.FC = () => {
                     }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}
-                      >
-                        {conv.pinned && <Pin size={11} className="conv-pin" />}
-                        {isGenerating && (
-                          <span
-                            className="conv-generating-dot"
-                            title="Generating…"
-                            aria-label="Generating"
-                          />
-                        )}
-                        {conv.title}
-                      </div>
-                      {hit?.snippet && localQuery.trim() && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: 'var(--text-muted)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                      {renamingId === conv.id ? (
+                        <input
+                          className="conv-rename-input"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={() => handleRenameSubmit(conv.id, renameValue)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRenameSubmit(conv.id, renameValue)
+                            if (e.key === 'Escape') setRenamingId(null)
                           }}
-                        >
-                          {hit.snippet}
-                        </div>
+                          onClick={(e) => e.stopPropagation()}
+                          autoFocus
+                        />
+                      ) : (
+                        <>
+                          <div
+                            style={{
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            {conv.pinned && <Pin size={11} className="conv-pin" />}
+                            {isGenerating && (
+                              <span
+                                className="conv-generating-dot"
+                                title="Generating..."
+                                aria-label="Generating"
+                              />
+                            )}
+                            {conv.title}
+                          </div>
+                          {hit?.snippet && localQuery.trim() && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: 'var(--text-muted)',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {hit.snippet}
+                            </div>
+                          )}
+                        </>
                       )}
-                    </div>
-                    <div className="conv-item-actions" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        title={conv.pinned ? 'Unpin' : 'Pin'}
-                        aria-label={conv.pinned ? 'Unpin conversation' : 'Pin conversation'}
-                        onClick={() => pinConversation(conv.id, !conv.pinned)}
-                      >
-                        <Pin size={12} />
-                      </button>
-                      <button
-                        title="Archive"
-                        aria-label="Archive conversation"
-                        onClick={() => archiveConversation(conv.id)}
-                      >
-                        <Archive size={12} />
-                      </button>
-                      <button
-                        title="Export Markdown"
-                        aria-label="Export conversation"
-                        onClick={async () => {
-                          await selectConversation(conv.id)
-                          await exportConversation('markdown')
-                        }}
-                      >
-                        <Download size={12} />
-                      </button>
-                      <button
-                        title="Delete"
-                        aria-label="Delete conversation"
-                        onClick={() => {
-                          setDeleteError(null)
-                          setPendingDelete({ id: conv.id, title: conv.title })
-                        }}
-                        style={{ color: 'var(--accent-primary)' }}
-                      >
-                        <Trash2 size={12} />
-                      </button>
                     </div>
                   </div>
                 )
@@ -505,6 +504,50 @@ export const Sidebar: React.FC = () => {
         </button>
       </div>
     </aside>
+
+    {contextMenu && (
+      <ContextMenu
+        position={{ x: contextMenu.x, y: contextMenu.y }}
+        onClose={() => setContextMenu(null)}
+        items={[
+          {
+            label: 'Rename',
+            icon: <Pencil size={14} />,
+            onClick: () => {
+              setRenameValue(contextMenu.conv.title)
+              setRenamingId(contextMenu.conv.id)
+            }
+          },
+          {
+            label: contextMenu.conv.pinned ? 'Unpin' : 'Pin',
+            icon: <Pin size={14} />,
+            onClick: () => pinConversation(contextMenu.conv.id, !contextMenu.conv.pinned)
+          },
+          {
+            label: 'Archive',
+            icon: <Archive size={14} />,
+            onClick: () => archiveConversation(contextMenu.conv.id)
+          },
+          {
+            label: 'Export Markdown',
+            icon: <Download size={14} />,
+            onClick: async () => {
+              await selectConversation(contextMenu.conv.id)
+              await exportConversation('markdown')
+            }
+          },
+          {
+            label: 'Delete',
+            icon: <Trash2 size={14} />,
+            danger: true,
+            onClick: () => {
+              setDeleteError(null)
+              setPendingDelete({ id: contextMenu.conv.id, title: contextMenu.conv.title })
+            }
+          }
+        ]}
+      />
+    )}
 
     <ConfirmDialog
       open={pendingDelete !== null}

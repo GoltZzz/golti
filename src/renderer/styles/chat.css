@@ -1760,6 +1760,70 @@
   margin-right: 4px;
 }
 
+.conv-rename-input {
+  width: 100%;
+  background: var(--bg-glass-input);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.conv-rename-input:focus {
+  border-color: var(--accent-secondary);
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.context-menu-item.is-danger {
+  color: var(--accent-primary);
+}
+
+.context-menu-item.is-danger:hover {
+  background: rgba(255, 80, 80, 0.1);
+}
+
+.context-menu-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.context-menu-item.is-danger .context-menu-icon {
+  color: var(--accent-primary);
+}
+
 .conv-generating-dot {
   flex-shrink: 0;
   width: 7px;
