@@ -8,6 +8,9 @@ import {
   updateState,
   checkEngineHealth,
   listEngineDevices,
+  registerGenerationChecker,
+  EngineBusyError,
+  compactEngineKvCache,
   type EngineDevice
 } from './engine-process'
 import {
@@ -61,6 +64,9 @@ export {
   updateState,
   checkEngineHealth,
   listEngineDevices,
+  registerGenerationChecker,
+  EngineBusyError,
+  compactEngineKvCache,
   type EngineDevice,
   downloadModel,
   listLocalModels,

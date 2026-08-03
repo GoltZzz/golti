@@ -51,6 +51,7 @@ export const EngineStatusBadge: React.FC<EngineStatusBadgeProps> = ({
       case 'running':
         return '#98c379'
       case 'starting':
+      case 'stopping':
       case 'downloading':
         return '#61afef'
       case 'error':
@@ -68,6 +69,7 @@ export const EngineStatusBadge: React.FC<EngineStatusBadgeProps> = ({
       case 'running':
         return 'rgba(152, 195, 121, 0.1)'
       case 'starting':
+      case 'stopping':
       case 'downloading':
         return 'rgba(97, 175, 239, 0.1)'
       case 'error':
@@ -85,6 +87,7 @@ export const EngineStatusBadge: React.FC<EngineStatusBadgeProps> = ({
       case 'running':
         return '1px solid rgba(152, 195, 121, 0.3)'
       case 'starting':
+      case 'stopping':
       case 'downloading':
         return '1px solid rgba(97, 175, 239, 0.3)'
       case 'error':
@@ -124,7 +127,7 @@ export const EngineStatusBadge: React.FC<EngineStatusBadgeProps> = ({
       >
         {status === 'running' ? (
           <CheckCircle2 size={12} />
-        ) : status === 'starting' || status === 'downloading' ? (
+        ) : status === 'starting' || status === 'stopping' || status === 'downloading' ? (
           <RefreshCw size={12} style={{ animation: 'spin 1.5s linear infinite' }} />
         ) : status === 'error' ? (
           <AlertTriangle size={12} />
@@ -170,7 +173,7 @@ export const EngineStatusBadge: React.FC<EngineStatusBadgeProps> = ({
           >
             {status === 'running' ? (
               <Zap size={20} />
-            ) : status === 'starting' || status === 'downloading' ? (
+            ) : status === 'starting' || status === 'stopping' || status === 'downloading' ? (
               <RefreshCw size={20} style={{ animation: 'spin 1.5s linear infinite' }} />
             ) : status === 'error' ? (
               <AlertTriangle size={20} />

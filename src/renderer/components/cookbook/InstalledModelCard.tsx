@@ -43,6 +43,9 @@ export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model })
   const [isDeleting, setIsDeleting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const isGenerating = useChatStore((s) => s.isGenerating)
+  const engineState = useEngineStore((s) => s.engineState)
+  const engineBusy = isGenerating || engineState.status === 'starting' || engineState.status === 'stopping'
 
   const isDeletingThis = deletingModel === model.tag || isDeleting
 
@@ -294,6 +297,8 @@ export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model })
         <button
           className="btn-chat-installed"
           onClick={handleStartChat}
+          disabled={engineBusy}
+          title={engineBusy ? 'Engine is busy' : undefined}
         >
           <MessageSquare size={14} /> Start Chat
         </button>
@@ -301,7 +306,8 @@ export const InstalledModelCard: React.FC<InstalledModelCardProps> = ({ model })
         <button
           className={`btn-delete-installed ${confirmDelete ? 'confirming' : ''}`}
           onClick={handleDelete}
-          disabled={isDeletingThis}
+          disabled={isDeletingThis || engineBusy}
+          title={engineBusy ? 'Engine is busy' : undefined}
         >
           <Trash2 size={14} />
           {isDeletingThis

@@ -1758,6 +1758,31 @@
 .conv-pin {
   color: var(--accent-yellow);
   margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.conv-more-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.conv-item:hover .conv-more-btn {
+  display: flex;
+}
+
+.conv-more-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
 }
 
 .conv-rename-input {

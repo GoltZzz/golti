@@ -42,6 +42,31 @@ let currentState: EngineState = {
   error: undefined
 }
 
+let _generationChecker: (() => boolean) | null = null
+
+export function registerGenerationChecker(checker: () => boolean): void {
+  _generationChecker = checker
+}
+
+export class EngineBusyError extends Error {
+  readonly reason: string
+
+  constructor(reason: string) {
+    super(`Engine is busy: ${reason}`)
+    this.name = 'EngineBusyError'
+    this.reason = reason
+  }
+}
+
+function assertEngineNotBusy(): void {
+  const { status } = currentState
+  if (status === 'starting') throw new EngineBusyError('engine is loading a model')
+  if (status === 'stopping') throw new EngineBusyError('engine is shutting down')
+  if (_generationChecker?.()) throw new EngineBusyError('a generation is in progress')
+}
+
+let _skipBusyGuard = false
+
 /**
  * Probing the disk needs `app.getPath('userData')`, which is not available while
  * this module is being imported. Defer it to the first read instead.
@@ -359,9 +384,12 @@ export async function startEngine(
   gpuLayers?: number,
   preferredDeviceId?: string
 ): Promise<EngineState> {
+  if (!_skipBusyGuard) assertEngineNotBusy()
+
   if (currentProcess) {
     if (modelPath && currentState.loadedModel !== modelPath) {
-      await stopEngine()
+      _skipBusyGuard = true
+      try { await stopEngine() } finally { _skipBusyGuard = false }
     } else {
       return currentState
     }
@@ -470,6 +498,7 @@ export async function startEngine(
       '--port', String(actualPort),
       '--ctx-size', String(contextSize),
       '--cache-reuse', '256',
+      '--defrag-thold', '0.1',
       '--jinja',
       '--reasoning-format', 'deepseek'
     ]
@@ -629,7 +658,10 @@ export async function startEngine(
 }
 
 export async function stopEngine(): Promise<EngineState> {
+  if (!_skipBusyGuard) assertEngineNotBusy()
+
   if (currentProcess) {
+    updateState({ status: 'stopping' })
     currentProcess.kill('SIGTERM')
     let attempts = 0
     while (currentProcess && attempts < 10) {
@@ -651,6 +683,41 @@ export async function loadModelInEngine(
   gpuLayers?: number,
   preferredDeviceId?: string
 ): Promise<EngineState> {
-  await stopEngine()
-  return startEngine(modelPath, port, gpuLayers, preferredDeviceId)
+  assertEngineNotBusy()
+  _skipBusyGuard = true
+  try {
+    await stopEngine()
+    return await startEngine(modelPath, port, gpuLayers, preferredDeviceId)
+  } finally {
+    _skipBusyGuard = false
+  }
+}
+
+export async function compactEngineKvCache(): Promise<void> {
+  const { status, port } = currentState
+  if (status !== 'running') {
+    throw new Error('Engine is not running')
+  }
+  if (_generationChecker?.()) {
+    throw new EngineBusyError('a generation is in progress')
+  }
+
+  const endpoint = `http://127.0.0.1:${port ?? 8391}`
+
+  const slotsRes = await fetch(`${endpoint}/slots`, { signal: AbortSignal.timeout(3000) })
+  if (!slotsRes.ok) {
+    throw new Error(`Failed to list slots: ${slotsRes.status}`)
+  }
+  const slots: Array<{ id: number }> = await slotsRes.json()
+
+  for (const slot of slots) {
+    const res = await fetch(`${endpoint}/slots/${slot.id}?action=cache_compact`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!res.ok) {
+      console.warn(`[GoltiEngine] Compact failed for slot ${slot.id}: ${res.status}`)
+    }
+  }
+  console.log(`[GoltiEngine] KV cache compacted for ${slots.length} slot(s)`)
 }

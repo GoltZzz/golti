@@ -44,3 +44,5 @@ Thumbs.db
 
 # Test temp dirs
 .tmp-model-dl-*/
+
+.claude/

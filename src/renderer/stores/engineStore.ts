@@ -40,6 +40,7 @@ interface EngineStore {
     geometry?: ModelGeometry
   }[]
   isInstallingBinary: boolean
+  isCompacting: boolean
   error: string | null
 
   fetchStatus: () => Promise<void>
@@ -60,6 +61,7 @@ interface EngineStore {
   fetchLocalModels: () => Promise<void>
   deleteLocalModel: (filename: string) => Promise<{ success: boolean; error?: string }>
   loadModel: (ggufPath: string) => Promise<void>
+  compactKvCache: () => Promise<void>
   projectors: Record<string, string | null>
   projectorBusy: Record<string, boolean>
   projectorErrors: Record<string, string>
@@ -126,6 +128,7 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
   binaryDownloadProgress: null,
   localModels: [],
   isInstallingBinary: false,
+  isCompacting: false,
   resolving: {},
   resolvedModels: loadResolvedModels(),
   resolveErrors: {},
@@ -580,6 +583,18 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
       set({ engineState: state })
     } catch (err: any) {
       set({ error: err.message || String(err) })
+    }
+  },
+
+  compactKvCache: async () => {
+    if (get().isCompacting) return
+    set({ isCompacting: true, error: null })
+    try {
+      await window.goltiAPI.compactEngineKvCache()
+    } catch (err: any) {
+      set({ error: err.message || String(err) })
+    } finally {
+      set({ isCompacting: false })
     }
   },
 

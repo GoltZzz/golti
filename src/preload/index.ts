@@ -241,6 +241,7 @@ const api = {
   startEngine: () => ipcRenderer.invoke('engine:start'),
   stopEngine: () => ipcRenderer.invoke('engine:stop'),
   loadEngineModel: (ggufPath: string) => ipcRenderer.invoke('engine:load-model', ggufPath),
+  compactEngineKvCache: () => ipcRenderer.invoke('engine:compact'),
   listEngineDevices: () =>
     ipcRenderer.invoke('engine:list-devices') as Promise<
       { id: string; name: string; totalMiB: number; freeMiB: number }[]

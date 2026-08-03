@@ -76,6 +76,9 @@ import {
   cancelModelDownload,
   loadModelInEngine,
   listEngineDevices,
+  registerGenerationChecker,
+  EngineBusyError,
+  compactEngineKvCache,
   getBinaryPath,
   isBinaryInstalled,
   getModelDir
@@ -440,6 +443,9 @@ app.whenReady().then(() => {
   onSearchRuntimeStatusChange((state) => {
     sendToRenderer('search-runtime:status-change', state)
   })
+
+  // Let the engine guard against model loads while a generation is active.
+  registerGenerationChecker(hasActiveGenerations)
 
   // Auto-init engine if enabled
   initEngine().catch((err) => console.warn('[Engine Init Warning]', err))
@@ -940,6 +946,10 @@ function setupIpcHandlers(): void {
     const settings = dbSettings.get()
     const { layers, device } = resolveEngineOffload(settings)
     return await loadModelInEngine(ggufPath, settings.enginePort, layers, device)
+  })
+
+  ipcMain.handle('engine:compact', async () => {
+    await compactEngineKvCache()
   })
 
   ipcMain.handle('engine:list-devices', async () => {

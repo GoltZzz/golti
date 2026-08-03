@@ -15,7 +15,8 @@ import {
   Download,
   Home,
   Code2,
-  Pencil
+  Pencil,
+  MoreVertical
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -456,6 +457,19 @@ export const Sidebar: React.FC = () => {
                         </>
                       )}
                     </div>
+                    {renamingId !== conv.id && (
+                      <button
+                        className="conv-more-btn"
+                        aria-label="More actions"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          setContextMenu({ conv, x: rect.right, y: rect.top })
+                        }}
+                      >
+                        <MoreVertical size={14} />
+                      </button>
+                    )}
                   </div>
                 )
               })}

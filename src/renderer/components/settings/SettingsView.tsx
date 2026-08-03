@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { Server, Sliders, Info, Zap, Download, Trash2, CheckCircle2, Globe, Copy, RefreshCw, BrainCircuit, MonitorSmartphone, SquareSlash } from "lucide-react";
+import { Server, Sliders, Info, Zap, Download, Trash2, CheckCircle2, Globe, Copy, RefreshCw, BrainCircuit, MonitorSmartphone, SquareSlash, Loader2, Shrink } from "lucide-react";
 import { ProviderConfig } from "./ProviderConfig";
 import { SkillsSettings } from "./SkillsSettings";
 import { EggLogo } from "../brand/EggLogo";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useEngineStore } from "../../stores/engineStore";
+import { useChatStore } from "../../stores/chatStore";
 import { useSearchRuntimeStore } from "../../stores/searchRuntimeStore";
 import { useSidebarStore, type SettingsSubTab } from "../../stores/sidebarStore";
 import { EngineStatusBadge } from "../common/EngineStatusBadge";
@@ -26,7 +27,9 @@ export const SettingsView: React.FC = () => {
     reinstallEngine,
     fetchLocalModels,
     deleteLocalModel,
-    loadModel
+    loadModel,
+    compactKvCache,
+    isCompacting
   } = useEngineStore();
   const {
     runtimeState,
@@ -50,6 +53,8 @@ export const SettingsView: React.FC = () => {
   const [gpuDevices, setGpuDevices] = useState<
     { id: string; name: string; totalMiB: number; freeMiB: number }[]
   >([]);
+  const isGenerating = useChatStore((s) => s.isGenerating);
+  const engineBusy = isGenerating || engineState.status === 'starting' || engineState.status === 'stopping';
 
   const refreshGpuDevices = React.useCallback(async () => {
     try {
@@ -280,8 +285,20 @@ export const SettingsView: React.FC = () => {
               </div>
 
               {engineState.loadedModel && (
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                  <strong>Active Loaded Model:</strong> {engineState.loadedModel.split(/[\/\\]/).pop()}
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span>
+                    <strong>Active Loaded Model:</strong> {engineState.loadedModel.split(/[\/\\]/).pop()}
+                  </span>
+                  <button
+                    onClick={() => compactKvCache()}
+                    disabled={isCompacting || engineBusy || engineState.status !== "running"}
+                    className="settings-btn"
+                    style={{ fontSize: "11px", padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                    title="Compact the KV cache to free memory"
+                  >
+                    {isCompacting ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Shrink size={12} />}
+                    {isCompacting ? "Compacting..." : "Compact KV Cache"}
+                  </button>
                 </div>
               )}
 
@@ -370,13 +387,19 @@ export const SettingsView: React.FC = () => {
                         <div style={{ display: "flex", gap: "6px" }}>
                           <button
                             onClick={() => loadModel(m.filepath)}
-                            disabled={isLoaded}
-                            className={"settings-btn" + (isLoaded ? "" : " settings-btn--primary")}
-                            style={isLoaded ? { color: "var(--text-muted)" } : undefined}
+                            disabled={isLoaded || engineBusy}
+                            className={"settings-btn" + (isLoaded || engineBusy ? "" : " settings-btn--primary")}
+                            style={isLoaded || engineBusy ? { color: "var(--text-muted)" } : undefined}
+                            title={engineBusy ? "Engine is busy" : undefined}
                           >
                             {isLoaded ? "Active" : "Load Model"}
                           </button>
-                          <button onClick={() => deleteLocalModel(m.filename)} className="settings-btn settings-btn--danger">
+                          <button
+                            onClick={() => deleteLocalModel(m.filename)}
+                            disabled={engineBusy || isLoaded}
+                            className="settings-btn settings-btn--danger"
+                            title={engineBusy ? "Engine is busy" : isLoaded ? "Unload model first" : undefined}
+                          >
                             <Trash2 size={14} />
                           </button>
                         </div>

@@ -7,7 +7,7 @@ export type ProviderType = 'openai' | 'anthropic' | 'google' | 'golti-engine'
 /** Composer Chat vs Agent mode (Cursor-style Shift+Tab toggle). */
 export type ComposerMode = 'chat' | 'agent'
 
-export type EngineStatus = 'not-installed' | 'downloading' | 'stopped' | 'starting' | 'running' | 'error'
+export type EngineStatus = 'not-installed' | 'downloading' | 'stopped' | 'starting' | 'stopping' | 'running' | 'error'
 
 export interface EngineState {
   status: EngineStatus

@@ -1,6 +1,6 @@
 import path from 'path'
 import type { AIProviderConfig, Message, ProviderStreamEvent } from '../../../shared/types'
-import { listLocalModels, getEngineState, loadModelInEngine, checkEngineHealth } from '../../engine'
+import { listLocalModels, getEngineState, loadModelInEngine, checkEngineHealth, EngineBusyError } from '../../engine'
 import { estimateTokens } from '../../../shared/chat-utils'
 import { resolveLocalMaxOutputTokens } from '../../../shared/output-tokens'
 import {
@@ -79,15 +79,22 @@ export async function* streamGoltiEngineChat(
     : undefined
 
   if (matchingLocal && (state.status !== 'running' || currentlyLoaded !== cleanModelTarget)) {
-    console.log(`[GoltiEngine] Auto-loading model for chat: ${matchingLocal.filepath}`)
-    await loadModelInEngine(matchingLocal.filepath)
+    try {
+      console.log(`[GoltiEngine] Auto-loading model for chat: ${matchingLocal.filepath}`)
+      await loadModelInEngine(matchingLocal.filepath)
 
-    let attempts = 0
-    while (attempts < 15) {
-      const healthy = await checkEngineHealth(8391)
-      if (healthy) break
-      await new Promise((r) => setTimeout(r, 400))
-      attempts++
+      let attempts = 0
+      while (attempts < 15) {
+        const healthy = await checkEngineHealth(8391)
+        if (healthy) break
+        await new Promise((r) => setTimeout(r, 400))
+        attempts++
+      }
+    } catch (err) {
+      if (err instanceof EngineBusyError) {
+        throw new Error('Cannot switch models while the engine is busy. Stop the current generation first.')
+      }
+      throw err
     }
   }
 
