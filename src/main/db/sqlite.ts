@@ -292,6 +292,63 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
         ON message_attachments(conversation_id, message_id);
       CREATE INDEX IF NOT EXISTS idx_attachments_storage ON message_attachments(storage_path);
     `
+  },
+  {
+    version: 10,
+    sql: `
+      CREATE TABLE IF NOT EXISTS office_agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        role_title TEXT NOT NULL,
+        avatar_json TEXT NOT NULL,
+        desk_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        temperature REAL,
+        system_prompt TEXT NOT NULL DEFAULT '',
+        assigned_skill_ids_json TEXT NOT NULL DEFAULT '[]',
+        level INTEGER NOT NULL DEFAULT 1,
+        xp INTEGER NOT NULL DEFAULT 0,
+        xp_to_next_level INTEGER NOT NULL DEFAULT 250,
+        stats_json TEXT NOT NULL DEFAULT '{}',
+        memories_json TEXT NOT NULL DEFAULT '[]',
+        token_budget INTEGER NOT NULL DEFAULT 0,
+        tokens_used INTEGER NOT NULL DEFAULT 0,
+        conversation_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS office_tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        priority TEXT NOT NULL DEFAULT 'medium',
+        status TEXT NOT NULL DEFAULT 'backlog',
+        assigned_agent_id TEXT,
+        created_by TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        result_snippet TEXT,
+        FOREIGN KEY (assigned_agent_id) REFERENCES office_agents(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS office_achievements (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT,
+        key TEXT NOT NULL,
+        unlocked_at INTEGER NOT NULL,
+        FOREIGN KEY (agent_id) REFERENCES office_agents(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_office_tasks_status ON office_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_office_tasks_agent ON office_tasks(assigned_agent_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_office_achievements_unique
+        ON office_achievements(agent_id, key);
+    `
   }
 ]
 

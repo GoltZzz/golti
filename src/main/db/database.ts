@@ -13,6 +13,7 @@ import {
   chatMessages
 } from './chat-repos'
 import { chatSkills, seedDefaultSkills } from './skill-repos'
+import { officeAgents, officeTasks } from './office-repos'
 
 interface DBData {
   settings: Settings
@@ -233,6 +234,8 @@ export const dbArtifacts = chatArtifacts
 export const dbShells = chatShells
 export const dbCitations = chatCitations
 export const dbSkills = chatSkills
+export const dbOfficeAgents = officeAgents
+export const dbOfficeTasks = officeTasks
 
 // Provider DB Helper Methods - JSON
 export const dbProviders = {

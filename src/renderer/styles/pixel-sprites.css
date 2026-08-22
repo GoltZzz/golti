@@ -1,0 +1,218 @@
+/**
+ * Stepped 16/32-Bit Pixel Animation Engine
+ *
+ * Implements crisp stepped keyframe animations (steps(2), steps(4))
+ * for authentic retro sprite fidelity.
+ */
+
+.pixel-sprite {
+  display: block;
+  shape-rendering: crispEdges;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  overflow: visible;
+  user-select: none;
+}
+
+/* Idle Breathing Bob (2-step subtle RPG stance) */
+.pixel-sprite.anim-idle .pixel-head,
+.pixel-sprite.anim-idle .pixel-hair,
+.pixel-sprite.anim-idle .pixel-accessory-head {
+  animation: pixelIdleBob 1.6s steps(2) infinite;
+  transform-origin: 16px 20px;
+}
+
+@keyframes pixelIdleBob {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(1px);
+  }
+}
+
+/* Working / Typing Motion (4-step rapid alternating hands) */
+.pixel-sprite.anim-working .pixel-head {
+  animation: pixelWorkFocus 1.2s steps(2) infinite;
+}
+
+.pixel-sprite.anim-working .pixel-hand-left {
+  animation: pixelTypingLeft 0.32s steps(2) infinite;
+}
+
+.pixel-sprite.anim-working .pixel-hand-right {
+  animation: pixelTypingRight 0.32s steps(2) infinite 0.16s;
+}
+
+.pixel-sprite.anim-working .pixel-screen-glare {
+  animation: pixelScreenFlicker 2.4s steps(4) infinite;
+}
+
+@keyframes pixelWorkFocus {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(1px);
+  }
+}
+
+@keyframes pixelTypingLeft {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes pixelTypingRight {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes pixelScreenFlicker {
+  0%, 100% {
+    opacity: 0.55;
+  }
+  25% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  75% {
+    opacity: 0.95;
+  }
+}
+
+/* Thinking (Contemplative chin pulse & thought spark) */
+.pixel-sprite.anim-thinking .pixel-thought-spark {
+  animation: pixelThinkingSpark 1.8s steps(4) infinite;
+  transform-origin: 22px 10px;
+}
+
+@keyframes pixelThinkingSpark {
+  0%, 100% {
+    transform: translateY(0) scale(0.9);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-2px) scale(1.15);
+    opacity: 1;
+  }
+}
+
+/* Break / Coffee Sipping (Steam particles rising) */
+.pixel-sprite.anim-break .pixel-coffee-steam-1 {
+  animation: pixelSteamRise 1.4s steps(4) infinite;
+}
+
+.pixel-sprite.anim-break .pixel-coffee-steam-2 {
+  animation: pixelSteamRise 1.4s steps(4) infinite 0.7s;
+}
+
+@keyframes pixelSteamRise {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 0.85;
+    transform: translateY(-1px);
+  }
+  70% {
+    opacity: 0.6;
+    transform: translateY(-3px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+/* Meeting / Gesturing (Conversational hand motion) */
+.pixel-sprite.anim-meeting .pixel-gesture-arm {
+  animation: pixelMeetingArm 2s steps(4) infinite;
+  transform-origin: 20px 26px;
+}
+
+@keyframes pixelMeetingArm {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  30% {
+    transform: rotate(-6deg) translateY(-1px);
+  }
+  70% {
+    transform: rotate(4deg);
+  }
+}
+
+/* Error / Glitch (Alarmed sweat & jitter) */
+.pixel-sprite.anim-error .pixel-body-group {
+  animation: pixelGlitchJitter 0.5s steps(2) infinite;
+}
+
+.pixel-sprite.anim-error .pixel-sweat-drop {
+  animation: pixelSweatPulse 0.9s steps(2) infinite;
+}
+
+@keyframes pixelGlitchJitter {
+  0%, 100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-1px, 1px);
+  }
+  50% {
+    transform: translate(1px, -1px);
+  }
+  75% {
+    transform: translate(-1px, 0);
+  }
+}
+
+@keyframes pixelSweatPulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(1px);
+  }
+}
+
+/* Celebration / Level-up jump */
+.pixel-sprite.anim-celebrate .pixel-body-group {
+  animation: pixelCelebrateJump 0.8s steps(4) 2;
+}
+
+@keyframes pixelCelebrateJump {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  35% {
+    transform: translateY(-4px);
+  }
+  60% {
+    transform: translateY(-2px);
+  }
+}
+
+/* Reduced Motion Override */
+@media (prefers-reduced-motion: reduce) {
+  .pixel-sprite * {
+    animation: none !important;
+  }
+}
+
+.pixel-sprite.is-reduced-motion * {
+  animation: none !important;
+}

@@ -14,17 +14,29 @@ import {
   Archive,
   Download,
   Home,
-  Code2
+  Briefcase,
+  UserPlus,
+  Kanban
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useOfficeStore } from '../../stores/officeStore'
 import { ConfirmDialog } from '../common/ConfirmDialog'
 import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
+import { isOfficeConversationId } from '../../../shared/office-achievements'
 
 export const Sidebar: React.FC = () => {
-  const { isCollapsed, activeTab, toggleCollapsed, setActiveTab } = useSidebarStore()
+  const { isCollapsed, activeTab, topTab, toggleCollapsed, setActiveTab, setTopTab } =
+    useSidebarStore()
+  const {
+    agents: officeAgents,
+    selectedAgentId,
+    setSelectedAgentId,
+    setIsHireModalOpen,
+    setIsBlackboardOpen
+  } = useOfficeStore()
   const unseenMemories = useMemoryStore((s) => s.unseenCount)
   const markMemoriesSeen = useMemoryStore((s) => s.markSeen)
   const {
@@ -43,7 +55,6 @@ export const Sidebar: React.FC = () => {
   } = useChatStore()
 
   const [localQuery, setLocalQuery] = useState('')
-  const [topTab, setTopTab] = useState<'home' | 'code'>('home')
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -70,14 +81,20 @@ export const Sidebar: React.FC = () => {
   const searchShortcut = effectiveOS === 'darwin' ? '⌘⇧F' : 'Ctrl+Shift+F'
 
   const displayedConversations = useMemo(() => {
+    // Office agents own real conversations; they belong to the Office view,
+    // not Recents. The inspector links straight to them when you want one.
+    const visible = conversations.filter(
+      (c) => !isOfficeConversationId(c.id) || c.id === currentConversationId
+    )
+
     if (searchHits.length > 0 && localQuery.trim()) {
       const ids = new Set(searchHits.map((h) => h.conversationId))
-      return conversations.filter((c) => ids.has(c.id))
+      return visible.filter((c) => ids.has(c.id))
     }
     if (localQuery.trim() && searchHits.length === 0) {
       return []
     }
-    return conversations.filter(
+    return visible.filter(
       (c) => c.title !== DEFAULT_CONVERSATION_TITLE || c.id === currentConversationId
     )
   }, [conversations, searchHits, localQuery, currentConversationId])
@@ -139,93 +156,182 @@ export const Sidebar: React.FC = () => {
         }}
       >
         <button
+          className="shell-icon-btn"
           onClick={toggleCollapsed}
           title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-          style={{
-            padding: 'var(--space-2)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--text-secondary)'
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+          aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          style={{ padding: 'var(--space-2)' }}
         >
           {isCollapsed ? <PanelLeft size={18} /> : <PanelLeftClose size={18} />}
         </button>
 
       </div>
 
-      {!isCollapsed && (
-        <div
-          style={{
-            display: 'flex',
-            gap: '4px',
-            padding: 'var(--space-2)',
-            borderBottom: '1px solid var(--border-subtle)'
-          }}
-        >
-          {(['home', 'code'] as const).map((t) => {
-            const isActive = topTab === t
-            return (
-              <button
-                key={t}
-                onClick={() => setTopTab(t)}
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                  padding: '8px 10px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: isActive ? 'var(--bg-card)' : 'transparent',
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  fontWeight: isActive ? 600 : 400,
-                  fontSize: '13px'
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'
-                }}
-              >
-                {t === 'home' ? <Home size={16} /> : <Code2 size={16} />}
-                <span>{t === 'home' ? 'Home' : 'Code'}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {/* Top-level switch. Rendered collapsed too, otherwise the Office
+          becomes unreachable once the sidebar is narrowed. */}
+      <div className={`sidebar-toptabs ${isCollapsed ? 'is-collapsed' : ''}`} role="tablist">
+        {(['home', 'office'] as const).map((t) => {
+          const isActive = topTab === t
+          const label = t === 'home' ? 'Home' : 'Office'
+          return (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={isActive}
+              className={`sidebar-toptab ${isActive ? 'is-active' : ''}`}
+              onClick={() => setTopTab(t)}
+              title={isCollapsed ? label : undefined}
+            >
+              {t === 'home' ? <Home size={16} /> : <Briefcase size={16} />}
+              {!isCollapsed && <span>{label}</span>}
+            </button>
+          )
+        })}
+      </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-2)' }}>
-        {topTab === 'code' && !isCollapsed ? (
-          <div style={{ padding: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-            Code view coming soon.
+        {topTab === 'office' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {!isCollapsed && (
+              <>
+                <button
+                  onClick={() => setIsHireModalOpen(true)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'linear-gradient(135deg, rgba(224, 108, 117, 0.15), rgba(97, 175, 239, 0.15))',
+                    color: 'var(--text-primary)',
+                    border: '1px solid rgba(224, 108, 117, 0.3)',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    width: '100%'
+                  }}
+                >
+                  <UserPlus size={16} color="var(--accent-primary)" />
+                  <span>Hire New Agent</span>
+                </button>
+
+                <button
+                  className="shell-row shell-row-card"
+                  onClick={() => setIsBlackboardOpen(true)}
+                >
+                  <Kanban size={16} color="var(--accent-yellow)" />
+                  <span>Studio Blackboard</span>
+                </button>
+
+                <div
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    color: 'var(--text-muted)',
+                    padding: '12px 6px 4px 6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}
+                >
+                  <span>Active Roster</span>
+                  <span style={{ fontSize: '10px', color: 'var(--accent-blue)' }}>
+                    {officeAgents.length} Agents
+                  </span>
+                </div>
+              </>
+            )}
+
+            <div className="office-sidebar-roster">
+              {officeAgents.map((ag) => {
+                const isSelected = selectedAgentId === ag.id
+                return (
+                  <div
+                    key={ag.id}
+                    className={`office-roster-item ${isSelected ? 'active' : ''}`}
+                    onClick={() => setSelectedAgentId(ag.id)}
+                    title={`${ag.name} (${ag.roleTitle}) - ${ag.status}`}
+                    style={{
+                      justifyContent: isCollapsed ? 'center' : 'flex-start',
+                      padding: isCollapsed ? '8px' : '8px 10px'
+                    }}
+                  >
+                    <div
+                      className="roster-avatar-dot"
+                      style={{
+                        backgroundColor: ag.avatar.outfitColor || 'var(--bg-card)',
+                        color: '#fff'
+                      }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 700 }}>
+                        {ag.name.slice(0, 1)}
+                      </span>
+                      <div className={`roster-status-indicator status-dot-${ag.status}`} />
+                    </div>
+
+                    {!isCollapsed && (
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: isSelected ? 700 : 500,
+                              color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
+                            }}
+                          >
+                            {ag.name}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 700,
+                              color: 'var(--accent-yellow)'
+                            }}
+                          >
+                            L{ag.level}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: 'var(--text-muted)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                          }}
+                        >
+                          {ag.statusMessage || ag.roleTitle}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         ) : (
         <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           <button
+            className="shell-row"
             onClick={startNewConversation}
             title={isCollapsed ? 'New Chat' : undefined}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-3)',
               padding: isCollapsed ? '10px' : '8px 12px',
               justifyContent: isCollapsed ? 'center' : 'flex-start',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'transparent',
-              color: 'var(--text-secondary)',
-              borderLeft: '3px solid transparent',
-              fontSize: '13px',
-              width: '100%',
-              textAlign: 'left'
+              borderLeft: '3px solid transparent'
             }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)')
-            }
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
           >
             <MessageSquare size={18} />
             {!isCollapsed && <span>New</span>}
@@ -241,27 +347,14 @@ export const Sidebar: React.FC = () => {
                   if (item.id === 'memory') markMemoriesSeen()
                 }}
                 title={isCollapsed ? item.label : undefined}
+                aria-current={isActive ? 'page' : undefined}
+                className={`shell-row ${isActive ? 'is-active' : ''}`}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-3)',
                   padding: isCollapsed ? '10px' : '8px 12px',
                   justifyContent: isCollapsed ? 'center' : 'flex-start',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: isActive ? 'var(--bg-card)' : 'transparent',
-                  color: isActive ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                  borderLeft: isActive ? '3px solid var(--accent-primary)' : '3px solid transparent',
+                  borderLeft: isActive ? undefined : '3px solid transparent',
                   fontWeight: isActive ? 600 : 400,
-                  fontSize: '13px',
-                  width: '100%',
-                  textAlign: 'left',
                   position: 'relative'
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'
                 }}
               >
                 <span style={{ position: 'relative', display: 'inline-flex' }}>
@@ -479,25 +572,13 @@ export const Sidebar: React.FC = () => {
 
       <div style={{ padding: 'var(--space-2)', borderTop: '1px solid var(--border-subtle)' }}>
         <button
+          className={`shell-row ${activeTab === 'settings' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('settings')}
           title={isCollapsed ? 'Settings' : undefined}
+          aria-current={activeTab === 'settings' ? 'page' : undefined}
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-3)',
             padding: isCollapsed ? '10px' : '8px 12px',
-            justifyContent: isCollapsed ? 'center' : 'flex-start',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: activeTab === 'settings' ? 'var(--bg-card)' : 'transparent',
-            color: activeTab === 'settings' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-            fontSize: '13px',
-            width: '100%'
-          }}
-          onMouseEnter={(e) => {
-            if (activeTab !== 'settings') e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'
-          }}
-          onMouseLeave={(e) => {
-            if (activeTab !== 'settings') e.currentTarget.style.backgroundColor = 'transparent'
+            justifyContent: isCollapsed ? 'center' : 'flex-start'
           }}
         >
           <SettingsIcon size={18} />

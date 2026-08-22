@@ -15,6 +15,8 @@ import type {
   Skill,
   ModelInfo,
   SendMessagePayload,
+  OfficeAgent,
+  OfficeTask,
   Settings,
   StreamChunkPayload,
   TokenBudget,
@@ -158,6 +160,17 @@ const api = {
     ipcRenderer.on('skill:saved', listener)
     return () => ipcRenderer.removeListener('skill:saved', listener)
   },
+
+  // Office (gamified agent studio)
+  listOfficeAgents: (): Promise<OfficeAgent[]> => ipcRenderer.invoke('office:agents:list'),
+  upsertOfficeAgent: (agent: OfficeAgent): Promise<void> =>
+    ipcRenderer.invoke('office:agents:upsert', agent),
+  deleteOfficeAgent: (id: string): Promise<void> =>
+    ipcRenderer.invoke('office:agents:delete', id),
+  listOfficeTasks: (): Promise<OfficeTask[]> => ipcRenderer.invoke('office:tasks:list'),
+  upsertOfficeTask: (task: OfficeTask): Promise<void> =>
+    ipcRenderer.invoke('office:tasks:upsert', task),
+  deleteOfficeTask: (id: string): Promise<void> => ipcRenderer.invoke('office:tasks:delete', id),
 
   // Tokens
   getTokenBudget: (conversationId: string, draft?: string): Promise<TokenBudget> =>

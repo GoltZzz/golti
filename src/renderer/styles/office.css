@@ -1,0 +1,899 @@
+/* ==========================================================================
+   Golti AI Studio - Modern Isometric Cyberpunk Office Design System
+   Playful but Premium · Scoped Tokens · Painter's Order Depth · Micro-Animations
+   ========================================================================== */
+
+:root {
+  /* Office Scoped Tokens */
+  --office-bg-surface: #0a0b10;
+  --office-bg-stage: #07080d;
+  --office-bg-dock: #0f1018;
+  --office-bg-card: #141522;
+  --office-bg-card-hover: #1b1d2c;
+  --office-bg-input: #10111a;
+  --office-border-subtle: rgba(255, 255, 255, 0.07);
+  --office-border-medium: rgba(255, 255, 255, 0.14);
+  --office-border-light-edge: rgba(255, 255, 255, 0.2);
+
+  /* Role-Specific Accents */
+  --role-orchestrator: #e06c75;
+  --role-coder: #61afef;
+  --role-researcher: #98c379;
+  --role-reviewer: #c678dd;
+  --role-devops: #d19a66;
+  --role-custom: #abb2bf;
+
+  /* Status Colors */
+  --status-working: #61afef;
+  --status-thinking: #e5c07b;
+  --status-idle: #5c637a;
+  --status-break: #98c379;
+  --status-meeting: #c678dd;
+  --status-error: #e06c75;
+
+  /* Layout Measurements */
+  --office-topbar-h: 46px;
+  --office-dock-w: 370px;
+  --office-taskrail-h: 56px;
+
+  /* Subtle UI motion */
+  --office-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --office-transition-fast: 180ms var(--office-ease-out);
+  --office-transition-normal: 240ms var(--office-ease-out);
+}
+
+/* --------------------------------------------------------------------------
+   1. Shell Grid Layout
+   -------------------------------------------------------------------------- */
+.office-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--office-dock-w);
+  grid-template-rows: var(--office-topbar-h) minmax(0, 1fr) var(--office-taskrail-h);
+  grid-template-areas:
+    'topbar dock'
+    'floor  dock'
+    'rail   dock';
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--office-bg-surface);
+  user-select: none;
+}
+
+.office-shell > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .office-shell {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    --office-dock-w: 320px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   2. TopBar
+   -------------------------------------------------------------------------- */
+.office-topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  background: rgba(13, 14, 22, 0.92);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--office-border-subtle);
+  z-index: var(--z-sticky);
+  gap: var(--space-3);
+}
+
+.office-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.office-brand-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  letter-spacing: 0.4px;
+  flex-shrink: 0;
+}
+
+.office-brand-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-xs);
+  background: linear-gradient(135deg, rgba(224, 108, 117, 0.2), rgba(97, 175, 239, 0.15));
+  color: var(--brand);
+  border: 1px solid var(--office-border-light-edge);
+}
+
+.office-telemetry-pill {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 var(--space-3);
+  background: var(--office-bg-card);
+  border: 1px solid var(--office-border-subtle);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.office-telemetry-pill strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+/* Thin Momentum Progress Bar */
+.office-momentum-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 var(--space-3);
+  background: var(--office-bg-card);
+  border: 1px solid var(--office-border-subtle);
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.office-momentum-label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent-yellow);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.office-momentum-bar {
+  width: 64px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  position: relative;
+}
+
+.office-momentum-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--accent-yellow), var(--brand));
+  box-shadow: 0 0 6px rgba(224, 108, 117, 0.4);
+  transition: width var(--office-transition-normal);
+}
+
+.office-momentum-text {
+  font-size: var(--text-2xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+}
+
+.office-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Office Action Buttons */
+.office-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--office-bg-card);
+  border: 1px solid var(--office-border-subtle);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--office-transition-fast);
+}
+
+.office-btn:hover {
+  background: var(--office-bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--office-border-medium);
+}
+
+.office-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.office-btn.primary {
+  background: linear-gradient(135deg, var(--brand), #e8828a);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(224, 108, 117, 0.25);
+  font-weight: var(--weight-semibold);
+}
+
+.office-btn.primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 4px 14px rgba(224, 108, 117, 0.35);
+}
+
+.office-btn.icon-only {
+  width: 28px;
+  padding: 0;
+}
+
+.office-btn.is-danger {
+  color: var(--status-error);
+}
+
+.office-btn.is-danger:hover {
+  background: rgba(224, 108, 117, 0.15);
+  border-color: rgba(224, 108, 117, 0.4);
+}
+
+/* --------------------------------------------------------------------------
+   3. Floor Stage & Canvas
+   -------------------------------------------------------------------------- */
+.office-stage {
+  grid-area: floor;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--office-bg-stage);
+}
+
+.office-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.office-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.office-floor-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.office-camera-hud {
+  position: absolute;
+  bottom: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  gap: var(--space-1);
+  padding: 3px;
+  background: rgba(17, 18, 27, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--office-border-subtle);
+  border-radius: var(--radius-sm);
+  z-index: var(--z-office-hud);
+}
+
+.office-camera-hud .office-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+}
+
+/* --------------------------------------------------------------------------
+   4. DOM Floor Layer & Agent Overlays
+   -------------------------------------------------------------------------- */
+.office-floor-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.office-seat-highlight {
+  position: absolute;
+  width: 52px;
+  height: 26px;
+  margin-left: -26px;
+  margin-top: -13px;
+  border-radius: var(--radius-full);
+  background: radial-gradient(ellipse at center, rgba(97, 175, 239, 0.3) 0%, transparent 75%);
+  box-shadow: 0 0 0 1.5px rgba(97, 175, 239, 0.5), 0 0 14px rgba(97, 175, 239, 0.3);
+  pointer-events: none;
+  animation: pulseSeat 2s ease-in-out infinite;
+}
+
+.office-seat-highlight.highlight-linked {
+  background: radial-gradient(ellipse at center, rgba(229, 192, 123, 0.4) 0%, transparent 75%);
+  box-shadow: 0 0 0 2px var(--accent-yellow), 0 0 16px rgba(229, 192, 123, 0.4);
+}
+
+@keyframes pulseSeat {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+/* Agent Node Element */
+.agent-node {
+  position: absolute;
+  transform-origin: 50% 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: filter var(--office-transition-fast);
+}
+
+.agent-node:hover {
+  filter: brightness(1.15) drop-shadow(0 0 8px rgba(97, 175, 239, 0.4));
+}
+
+.agent-node:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.agent-node.is-selected {
+  filter: drop-shadow(0 0 12px rgba(224, 108, 117, 0.5));
+}
+
+.agent-node.is-highlighted {
+  filter: drop-shadow(0 0 14px var(--accent-yellow));
+}
+
+/* Agent Status Ring & Token Budget Arc */
+.agent-ring-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-sprite-hitbox {
+  pointer-events: auto;
+  background: transparent;
+}
+
+.agent-status-ring-svg {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.agent-ring-base {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.6);
+  stroke-width: 2.5;
+}
+
+.agent-ring-budget {
+  fill: none;
+  stroke: var(--accent-green);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dashoffset var(--office-transition-normal);
+}
+
+.agent-ring-dot {
+  fill: var(--status-idle);
+  transition: fill var(--office-transition-fast);
+}
+
+/* Status Modes on Ring */
+.agent-node.status-working .agent-ring-dot {
+  fill: var(--status-working);
+  animation: ringPulse 1.8s ease-in-out infinite;
+}
+
+.agent-node.status-thinking .agent-ring-dot {
+  fill: var(--status-thinking);
+  animation: ringBreathe 2.4s ease-in-out infinite;
+}
+
+.agent-node.status-break .agent-ring-dot {
+  fill: var(--status-break);
+}
+
+.agent-node.status-meeting .agent-ring-dot {
+  fill: var(--status-meeting);
+  animation: ringPulse 2s ease-in-out infinite;
+}
+
+.agent-node.status-error .agent-ring-dot {
+  fill: var(--status-error);
+}
+
+@keyframes ringPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes ringBreathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* Floating Status / Thought Bubble */
+.agent-thought-bubble {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 190px;
+  margin-bottom: 2px;
+  padding: 3px 8px;
+  background: rgba(18, 19, 30, 0.95);
+  border: 1px solid var(--office-border-medium);
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: floatBubble 3s ease-in-out infinite;
+}
+
+.agent-thought-bubble span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes floatBubble {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* Floating XP Popups */
+.office-xp-floater {
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: var(--accent-yellow);
+  text-shadow: 0 0 8px rgba(229, 192, 123, 0.6);
+  pointer-events: none;
+  animation: floatXP 1.8s ease-out forwards;
+  white-space: nowrap;
+  z-index: 100;
+}
+
+@keyframes floatXP {
+  0% { opacity: 0; transform: translate(-50%, 0) scale(0.8); }
+  20% { opacity: 1; transform: translate(-50%, -10px) scale(1.1); }
+  80% { opacity: 1; transform: translate(-50%, -22px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -30px) scale(0.9); }
+}
+
+/* Agent Nameplate & Tags */
+.agent-nameplate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+  margin-top: 2px;
+}
+
+.agent-name-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  background: rgba(14, 15, 23, 0.92);
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--office-border-subtle);
+  white-space: nowrap;
+  transition: all var(--office-transition-fast);
+}
+
+.agent-node.is-selected .agent-name-badge {
+  border-color: var(--brand);
+  box-shadow: 0 0 10px rgba(224, 108, 117, 0.35);
+  background: rgba(20, 21, 32, 0.96);
+}
+
+.agent-role-pill {
+  font-size: 9px;
+  color: var(--text-muted);
+  background: rgba(10, 11, 17, 0.85);
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* --------------------------------------------------------------------------
+   5. Envelopes & Data Trails
+   -------------------------------------------------------------------------- */
+.office-envelope-item {
+  position: absolute;
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--envelope-tint, var(--accent-yellow));
+  box-shadow: 0 0 8px var(--envelope-tint, var(--accent-yellow)), 0 2px 6px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.office-envelope-trail {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--envelope-tint, var(--accent-yellow));
+  opacity: 0.4;
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+.office-envelope-shadow {
+  position: absolute;
+  width: 12px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   6. Task Rail (Horizontal in-flight work strip)
+   -------------------------------------------------------------------------- */
+.office-task-rail {
+  grid-area: rail;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  background: rgba(13, 14, 22, 0.94);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--office-border-subtle);
+  overflow-x: auto;
+  overflow-y: hidden;
+  z-index: var(--z-sticky);
+}
+
+.office-task-rail-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  padding-right: var(--space-2);
+  border-right: 1px solid var(--office-border-subtle);
+}
+
+.office-task-rail-list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+.office-task-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 var(--space-3);
+  background: var(--office-bg-card);
+  border: 1px solid var(--office-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  min-width: 190px;
+  max-width: 260px;
+  transition: all var(--office-transition-fast);
+  text-align: left;
+}
+
+.office-task-chip:hover {
+  background: var(--office-bg-card-hover);
+  border-color: var(--office-border-medium);
+  transform: translateY(-1px);
+}
+
+.office-task-chip.is-active {
+  border-color: var(--status-working);
+  box-shadow: 0 0 10px rgba(97, 175, 239, 0.25);
+}
+
+.office-task-chip.is-hovered-link {
+  border-color: var(--accent-yellow);
+  box-shadow: 0 0 12px rgba(229, 192, 123, 0.35);
+}
+
+.office-task-chip-status {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.office-task-chip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.office-task-chip-title {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-task-chip-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   7. Right Dock (Persistent Tabbed Container)
+   -------------------------------------------------------------------------- */
+.office-dock {
+  grid-area: dock;
+  display: flex;
+  flex-direction: column;
+  background: var(--office-bg-dock);
+  border-left: 1px solid var(--office-border-subtle);
+  overflow: hidden;
+  height: 100%;
+}
+
+.office-dock-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 40px;
+  border-bottom: 1px solid var(--office-border-subtle);
+  background: rgba(13, 14, 20, 0.6);
+  flex-shrink: 0;
+}
+
+.office-dock-tab-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--office-transition-fast);
+}
+
+.office-dock-tab-btn:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.office-dock-tab-btn.is-active {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  border-bottom-color: var(--brand);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.office-dock-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  gap: var(--space-3);
+}
+
+/* --------------------------------------------------------------------------
+   8. Dock: Roster Org Chart View
+   -------------------------------------------------------------------------- */
+.office-org-chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.office-org-leader-card {
+  background: linear-gradient(135deg, rgba(224, 108, 117, 0.12), rgba(15, 16, 25, 0.8));
+  border: 1px solid rgba(224, 108, 117, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  transition: all var(--office-transition-fast);
+}
+
+.office-org-leader-card:hover {
+  border-color: var(--brand);
+  box-shadow: 0 4px 14px rgba(224, 108, 117, 0.2);
+}
+
+.office-org-zone-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.office-org-zone-header {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+}
+
+.office-org-agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--office-bg-card);
+  border: 1px solid var(--office-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--office-transition-fast);
+}
+
+.office-org-agent-row:hover {
+  background: var(--office-bg-card-hover);
+  border-color: var(--office-border-medium);
+}
+
+.office-org-agent-row.is-selected {
+  border-color: var(--brand);
+  background: rgba(224, 108, 117, 0.08);
+}
+
+.office-org-agent-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.office-org-agent-name {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.office-org-agent-role {
+  font-size: 10px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   9. Dock: Agent Panel
+   -------------------------------------------------------------------------- */
+.office-agent-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--office-border-subtle);
+}
+
+.office-agent-subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--office-border-subtle);
+  padding-bottom: var(--space-2);
+}
+
+.office-agent-subtab-btn {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--office-transition-fast);
+}
+
+.office-agent-subtab-btn.is-active {
+  background: var(--office-bg-card);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.office-achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2);
+}
+
+.office-achievement-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: var(--space-2);
+  background: var(--office-bg-card);
+  border: 1px solid var(--office-border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+
+.office-achievement-card.is-locked {
+  opacity: 0.35;
+  filter: grayscale(0.8);
+}
+
+/* --------------------------------------------------------------------------
+   10. Reduced Motion Overrides
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

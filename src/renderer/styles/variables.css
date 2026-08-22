@@ -11,12 +11,19 @@
   --bg-modal-backdrop: rgba(0, 0, 0, 0.7);
   --chat-measure: 900px;
 
+  /* Brand identity - the source of truth for "Golti red".
+     Kept distinct from --status-error so the two can diverge. */
+  --brand: #e06c75;
+  --brand-hover: #e8828a;
+  --brand-alpha: rgba(224, 108, 117, 0.15);
+  --brand-glow: rgba(224, 108, 117, 0.3);
+
   /* Primary Accent & Brand Colors */
-  --accent-primary: #e06c75;
-  --accent-primary-hover: #e8828a;
-  --accent-primary-alpha: rgba(224, 108, 117, 0.15);
-  --accent-primary-glow: rgba(224, 108, 117, 0.3);
-  
+  --accent-primary: var(--brand);
+  --accent-primary-hover: var(--brand-hover);
+  --accent-primary-alpha: var(--brand-alpha);
+  --accent-primary-glow: var(--brand-glow);
+
   --accent-cyan: #56b6c2;
   --accent-green: #98c379;
   --accent-yellow: #e5c07b;
@@ -33,16 +40,44 @@
   --status-warn: #e5c07b;
   --status-warn-soft: rgba(229, 192, 123, 0.12);
 
+  /* Surface elevation aliases */
+  --surface-1: var(--bg-app);
+  --surface-2: var(--bg-sidebar);
+  --surface-3: var(--bg-card);
+  --surface-4: var(--bg-card-hover);
+
   /* Typography / Text Colors */
   --text-primary: #f0f2f8;
   --text-secondary: #9aa0b4;
   --text-muted: #5c637a;
   --text-on-accent: #ffffff;
 
+  /* Type scale */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
   /* Borders & Dividers */
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-medium: rgba(255, 255, 255, 0.12);
   --border-accent: rgba(224, 108, 117, 0.4);
+
+  /* Interaction overlays - previously hardcoded at ~10 call sites */
+  --hover-overlay: rgba(255, 255, 255, 0.04);
+  --hover-overlay-strong: rgba(255, 255, 255, 0.06);
 
   /* Fonts */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -63,8 +98,33 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+  --space-7: 28px;
   --space-8: 32px;
+  --space-9: 36px;
   --space-10: 40px;
+
+  /* Z-index scale */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 20;
+  --z-dropdown: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --z-toast: 60;
+  --z-titlebar: 1000;
+
+  /* Office floor depth band - DOM agents sort within this range */
+  --z-office-floor: 5;
+  --z-office-agent: 10;
+  --z-office-hud: 25;
+
+  /* Office avatar illustration palette - small, bounded SVG art details
+     (pupils, accessories) with no existing UI-token equivalent. */
+  --office-avatar-ink: #1a1a22;
+  --office-avatar-paper: #f0f3fa;
+  --office-avatar-coffee: #6b4423;
+  --office-avatar-headphone-band: #31374e;
+  --office-avatar-laptop-body: #1c1f2c;
 
   /* Modern Dark Glass & Atmosphere Extensions */
   --bg-glass: rgba(19, 20, 31, 0.75);
@@ -86,8 +146,18 @@
   --width-sidebar-expanded: 250px;
   --width-sidebar-collapsed: 64px;
 
-  /* Transition Durations */
-  --transition-fast: 120ms ease;
-  --transition-normal: 200ms cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-slow: 350ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Motion - durations and easings are separate so they can be recombined */
+  --duration-instant: 80ms;
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+
+  --ease-linear: linear;
+  --ease-out: ease;
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Composed aliases - existing call sites depend on these */
+  --transition-fast: var(--duration-fast) var(--ease-out);
+  --transition-normal: var(--duration-normal) var(--ease-emphasized);
+  --transition-slow: var(--duration-slow) var(--ease-emphasized);
 }

@@ -10,6 +10,8 @@ import {
   dbProviders,
   dbSettings,
   dbSkills,
+  dbOfficeAgents,
+  dbOfficeTasks,
   dbAttachments,
   initDatabase
 } from './db/database'
@@ -53,7 +55,12 @@ import {
   pickContextFolder
 } from './services/context-ingest'
 import { exportConversation } from './services/export'
-import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/types'
+import type {
+  SendMessagePayload,
+  InstalledLocalModelInfo,
+  OfficeAgent,
+  OfficeTask
+} from '../shared/types'
 import { MODEL_CATALOG } from '../shared/model-catalog'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
@@ -620,6 +627,14 @@ function setupIpcHandlers(): void {
     }
     return chatMemories.searchText(q).map((m) => ({ ...m, score: 0 }))
   })
+
+  // Office (gamified agent studio)
+  ipcMain.handle('office:agents:list', () => dbOfficeAgents.list())
+  ipcMain.handle('office:agents:upsert', (_, agent: OfficeAgent) => dbOfficeAgents.upsert(agent))
+  ipcMain.handle('office:agents:delete', (_, id: string) => dbOfficeAgents.delete(id))
+  ipcMain.handle('office:tasks:list', () => dbOfficeTasks.list())
+  ipcMain.handle('office:tasks:upsert', (_, task: OfficeTask) => dbOfficeTasks.upsert(task))
+  ipcMain.handle('office:tasks:delete', (_, id: string) => dbOfficeTasks.delete(id))
 
   // Skills
   ipcMain.handle('skills:list', () => dbSkills.list())

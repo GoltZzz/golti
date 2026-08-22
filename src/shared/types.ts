@@ -702,3 +702,154 @@ export interface UndoableAction {
   label: string
   timestamp: number
 }
+
+// ==========================================
+// Gamified Agent Office Types
+// ==========================================
+
+export type AgentRole =
+  | 'orchestrator'
+  | 'coder'
+  | 'researcher'
+  | 'reviewer'
+  | 'devops'
+  | 'custom'
+
+export type AgentStatus =
+  | 'idle'
+  | 'working'
+  | 'thinking'
+  | 'break'
+  | 'meeting'
+  | 'error'
+
+export type AgentHairstyle =
+  | 'short'
+  | 'tousled'
+  | 'slick'
+  | 'afro'
+  | 'ponytail'
+  | 'bob'
+  | 'pixie'
+
+export type AgentOutfitStyle =
+  | 'tech_tee'
+  | 'hoodie'
+  | 'blazer'
+  | 'turtleneck'
+  | 'jacket'
+
+export interface AgentAvatarConfig {
+  skinColor: string
+  hairColor: string
+  outfitColor: string
+  accentColor: string
+  hairstyle?: AgentHairstyle
+  outfitStyle?: AgentOutfitStyle
+  accessory?: 'glasses' | 'headphones' | 'coffee' | 'hat' | 'laptop' | 'hoodie'
+  iconName?: string
+}
+
+export interface AgentLogEntry {
+  id: string
+  timestamp: number
+  type: 'thought' | 'tool_call' | 'message' | 'system' | 'error' | 'success'
+  content: string
+  details?: Record<string, unknown>
+}
+
+export type AgentAmbientActivity =
+  | 'none'
+  | 'coffee_break'
+  | 'water_cooler'
+  | 'whiteboard_brainstorm'
+  | 'server_diagnostics'
+  | 'coworker_chat'
+  | 'desk_stretch'
+
+export interface OfficeAgent {
+  id: string
+  name: string
+  role: AgentRole
+  roleTitle: string
+  avatar: AgentAvatarConfig
+  status: AgentStatus
+  statusMessage?: string
+  currentTaskId?: string
+  deskId: string
+  position: { x: number; y: number }
+  targetPosition?: { x: number; y: number }
+  facingDirection?: 'south' | 'north' | 'east' | 'west'
+  walkFrame?: number
+  ambientActivity?: AgentAmbientActivity
+  ambientTimer?: number
+  pathWaypoints?: { x: number; y: number }[]
+  model: string
+  providerId: string
+  temperature?: number
+  systemPrompt: string
+  assignedSkillIds: string[]
+  level: number
+  xp: number
+  xpToNextLevel: number
+  stats: {
+    tasksCompleted: number
+    messagesSent: number
+    toolCallsCount: number
+    coffeeBreaksCount: number
+  }
+  logs: AgentLogEntry[]
+  /** Ids into the long-term memory store, not raw strings. */
+  memories: string[]
+  /** Token allowance for the current shift; drives the on-floor energy meter. */
+  tokenBudget: number
+  tokensUsed: number
+  /** The real Conversation backing this agent's work, created lazily. */
+  conversationId?: string
+  /** Achievement keys already unlocked, so each fires exactly once. */
+  unlockedAchievements: string[]
+}
+
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
+export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'completed'
+
+export interface OfficeTask {
+  id: string
+  title: string
+  description?: string
+  priority: TaskPriority
+  status: TaskStatus
+  assignedAgentId?: string
+  createdBy: 'user' | 'orchestrator' | string
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
+  resultSnippet?: string
+  /** Set while a real generation is running for this task. */
+  generationId?: string
+  messageId?: string
+}
+
+export interface OfficeEnvelope {
+  id: string
+  fromAgentId: string
+  toAgentId: string
+  fromPos: { x: number; y: number }
+  toPos: { x: number; y: number }
+  progress: number // 0 to 1
+  message: string
+  type: 'task_delegation' | 'code_review' | 'research_data' | 'chat_ping' | 'status_update'
+  createdAt: number
+}
+
+export interface OfficeDesk {
+  id: string
+  name: string
+  zone: 'director' | 'bullpen' | 'research' | 'breakroom' | 'server'
+  x: number
+  y: number
+  assignedAgentId?: string
+  orientation: 'north' | 'south' | 'east' | 'west'
+  screens: number
+}
+

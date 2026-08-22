@@ -10,11 +10,12 @@ import { MemorySettings } from './components/settings/MemorySettings'
 import { useSidebarStore } from './stores/sidebarStore'
 import { useMemoryStore } from './stores/memoryStore'
 import { useSkillStore } from './stores/skillStore'
+import { OfficeView } from './components/office/OfficeView'
 import { GlobalSearchModal } from './components/search/GlobalSearchModal'
 import type { Memory, Skill } from '../shared/types'
 
 export const App: React.FC = () => {
-  const { activeTab } = useSidebarStore()
+  const { activeTab, topTab } = useSidebarStore()
   const addSavedMemories = useMemoryStore((s) => s.addSavedMemories)
   const upsertSkill = useSkillStore((s) => s.upsertSkill)
   const [isSearchOpen, setIsSearchOpen] = React.useState(false)
@@ -39,6 +40,10 @@ export const App: React.FC = () => {
   }, [])
 
   const renderContent = () => {
+    if (topTab === 'office') {
+      return <OfficeView />
+    }
+
     switch (activeTab) {
       case 'chat':
         return <ChatView />
