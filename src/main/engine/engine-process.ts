@@ -395,16 +395,19 @@ export async function startEngine(
   // On a GPU backend, pick the discrete device explicitly (hybrid machines
   // otherwise default to the integrated GPU) and size offload from *its* free
   // VRAM rather than a system-wide probe.
+  // The probes below each spawn a subprocess and are independent, so start
+  // them together rather than paying for each one in sequence.
+  const cpuCountsPromise = detectCpuCounts()
+  const mmprojPromise = modelPath ? engineSupportsMmproj(binaryPath) : Promise.resolve(false)
   let device: EngineDevice | null = null
   if (backend === 'vulkan') {
-    const devices = await listEngineDevices(binaryPath)
+    const [devices, gpu] = await Promise.all([listEngineDevices(binaryPath), detectGpu()])
     // Honour an explicit device choice when it's still present; otherwise
     // auto-pick the discrete GPU for the detected vendor.
     if (preferredDeviceId) {
       device = devices.find((d) => d.id === preferredDeviceId) ?? null
     }
     if (!device) {
-      const gpu = await detectGpu()
       device = pickEngineDevice(devices, gpu.vendor)
     }
     if (device) {
@@ -417,9 +420,9 @@ export async function startEngine(
   let fellBack = false
 
   const layerCount = readGgufModelInfo(modelPath)?.blockCount
-  const threads = chooseThreadCount(await detectCpuCounts())
+  const threads = chooseThreadCount(await cpuCountsPromise)
   let tuningEnabled = true
-  let mmprojEnabled = modelPath ? await engineSupportsMmproj(binaryPath) : false
+  let mmprojEnabled = await mmprojPromise
   let mmprojOffload = true
   console.log(
     `[GoltiEngine] Offload ${layers} of ${layerCount ?? 'unknown'} layers, ${threads} generation threads`

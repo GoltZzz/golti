@@ -641,6 +641,8 @@ export interface Settings {
   systemPrompt: string
   osPlatformOverride?: 'auto' | 'darwin' | 'win32' | 'linux'
   engineEnabled: boolean
+  /** Path of the model the engine last loaded successfully; auto-started on launch. */
+  lastEngineModel?: string
   memoryEnabled: boolean
   engineModelDir?: string
   enginePort: number

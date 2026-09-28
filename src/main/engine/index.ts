@@ -22,7 +22,26 @@ import {
 import { EngineDownloadProgress, EngineState } from '../../shared/types'
 import { dbProviders } from '../db/database'
 
-export async function initEngine(): Promise<EngineState> {
+export interface InitEngineOptions {
+  /** Model the user last had loaded; preferred over the first file on disk. */
+  preferredModelPath?: string
+  port?: number
+  gpuLayers?: number
+  deviceId?: string
+}
+
+/** Picks the startup model: the last-used one if it still exists, else the first on disk. */
+export function pickStartupModel(
+  models: { filepath: string }[],
+  preferredModelPath?: string
+): string | undefined {
+  if (preferredModelPath && models.some((m) => m.filepath === preferredModelPath)) {
+    return preferredModelPath
+  }
+  return models[0]?.filepath
+}
+
+export async function initEngine(options: InitEngineOptions = {}): Promise<EngineState> {
   const isInstalled = isBinaryInstalled()
   if (!isInstalled) {
     return getEngineState()
@@ -30,7 +49,7 @@ export async function initEngine(): Promise<EngineState> {
 
   // Check if any local GGUF models exist
   const models = listLocalModels()
-  const defaultModelPath = models.length > 0 ? models[0].filepath : undefined
+  const defaultModelPath = pickStartupModel(models, options.preferredModelPath)
 
   // Ensure Golti Engine provider is active in DB
   const providers = dbProviders.list()
@@ -40,7 +59,7 @@ export async function initEngine(): Promise<EngineState> {
   }
 
   try {
-    const state = await startEngine(defaultModelPath)
+    const state = await startEngine(defaultModelPath, options.port, options.gpuLayers, options.deviceId)
     return state
   } catch (e) {
     console.warn('[GoltiEngine] Failed to auto-start engine on init:', e)

@@ -61,6 +61,7 @@ import { readVram } from './system/vram'
 import { readGgufModelInfo } from './engine/gguf'
 import {
   initEngine,
+  pickStartupModel,
   stopEngine,
   startEngine,
   getEngineState,
@@ -413,14 +414,7 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
-  const iconPath = resolveAppIcon()
-  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS - set it explicitly.
-  if (iconPath && process.platform === 'darwin' && app.dock) {
-    app.dock.setIcon(iconPath)
-  }
-
-  initDatabase()
+async function runBackgroundStartup(): Promise<void> {
   try {
     const swept = sweepAttachments()
     if (swept.rows || swept.files) {
@@ -429,23 +423,62 @@ app.whenReady().then(() => {
   } catch (err) {
     console.warn('[attachments] sweep failed:', err)
   }
+
+  initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
+
+  // Model servers start one at a time: loading several GGUF files at once
+  // saturates disk and memory bandwidth. Embedding and memory servers also
+  // start on demand, so this only warms them ahead of first use.
+  const settings = dbSettings.get()
+  if (settings.engineEnabled !== false) {
+    const { layers, device } = resolveEngineOffload(settings)
+    await initEngine({
+      preferredModelPath: settings.lastEngineModel,
+      port: settings.enginePort,
+      gpuLayers: layers,
+      deviceId: device
+    }).catch((err) => console.warn('[Engine Init Warning]', err))
+  }
+  await prewarmEmbeddingServer().catch((err) => console.warn('[EmbeddingServer Init Warning]', err))
+  await prewarmMemoryServer().catch((err) => console.warn('[MemoryServer Init Warning]', err))
+}
+
+app.whenReady().then(() => {
+  const iconPath = resolveAppIcon()
+  // BrowserWindow `icon` does not replace the Electron dock glyph on macOS - set it explicitly.
+  if (iconPath && process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(iconPath)
+  }
+
+  initDatabase()
   setupIpcHandlers()
   createWindow()
 
   // Subscribe engine status changes to send to renderer
   onEngineStatusChange((state) => {
     sendToRenderer('engine:status-change', state)
+    // Remember the loaded model so the next launch starts the same one.
+    if (state.status === 'running' && state.loadedModel) {
+      if (dbSettings.get().lastEngineModel !== state.loadedModel) {
+        dbSettings.update({ lastEngineModel: state.loadedModel })
+      }
+    }
   })
 
   onSearchRuntimeStatusChange((state) => {
     sendToRenderer('search-runtime:status-change', state)
   })
 
-  // Auto-init engine if enabled
-  initEngine().catch((err) => console.warn('[Engine Init Warning]', err))
-  initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
-  prewarmEmbeddingServer().catch((err) => console.warn('[EmbeddingServer Init Warning]', err))
-  prewarmMemoryServer().catch((err) => console.warn('[MemoryServer Init Warning]', err))
+  // Heavy background work waits until the window has painted, so model loads
+  // and disk scans don't compete with the renderer for CPU and I/O.
+  let backgroundStarted = false
+  const startBackgroundServices = (): void => {
+    if (backgroundStarted) return
+    backgroundStarted = true
+    runBackgroundStartup().catch((err) => console.warn('[Startup Warning]', err))
+  }
+  mainWindow?.once('ready-to-show', startBackgroundServices)
+  setTimeout(startBackgroundServices, 5000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -927,7 +960,7 @@ function setupIpcHandlers(): void {
   ipcMain.handle('engine:start', async () => {
     const settings = dbSettings.get()
     const models = listLocalModels()
-    const defaultModel = models.length > 0 ? models[0].filepath : undefined
+    const defaultModel = pickStartupModel(models, settings.lastEngineModel)
     const { layers, device } = resolveEngineOffload(settings)
     return await startEngine(defaultModel, settings.enginePort, layers, device)
   })
