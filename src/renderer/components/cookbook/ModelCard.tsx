@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { memo, useEffect, useMemo, useState } from 'react'
 import { CookbookModel, SystemInfoFull } from '../../../shared/types'
 import { describeDiskFit, getCompatibility, getDiskFit } from '../../../shared/compatibility'
 import { describeOffload, estimateOffload } from '../../../shared/gpu-offload'
@@ -35,7 +35,9 @@ interface ModelCardProps {
   isInstalled?: boolean
 }
 
-export const ModelCard: React.FC<ModelCardProps> = ({
+// Memoized so a search keystroke in the parent does not re-render every
+// already-mounted card; cards still update on their own engine-store changes.
+export const ModelCard: React.FC<ModelCardProps> = memo(({
   model,
   systemInfo,
   isInstalled
@@ -710,4 +712,4 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       />
     </div>
   )
-}
+})

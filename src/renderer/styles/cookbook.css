@@ -815,6 +815,11 @@
   gap: var(--space-4);
 }
 
+/* Scroll sentinel that mounts the next page of catalog cards. */
+.catalog-load-more {
+  height: 1px;
+}
+
 /* Model Card Styles */
 .model-card {
   background: var(--bg-card);
