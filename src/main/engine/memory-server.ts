@@ -1,7 +1,7 @@
-import { spawn, ChildProcess } from 'child_process'
+import { ChildProcess } from 'child_process'
 import fs from 'fs'
 import path from 'path'
-import { getBinaryPath, isBinaryInstalled, getEngineSpawnEnv } from './binary-manager'
+import { getBinaryPath, isBinaryInstalled, spawnEngineBinary } from './binary-manager'
 import { getModelDir } from './model-downloader'
 import { dbSettings } from '../db/database'
 
@@ -57,11 +57,7 @@ async function ensureServerRunning(filename: string): Promise<boolean> {
 
     const binaryPath = getBinaryPath()
     try {
-      serverProcess = spawn(binaryPath, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: false,
-        env: getEngineSpawnEnv(binaryPath)
-      })
+      serverProcess = spawnEngineBinary(binaryPath, args)
     } catch (err) {
       console.warn('[MemoryServer] Spawn failed:', err)
       serverProcess = null
