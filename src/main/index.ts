@@ -6,6 +6,7 @@ import {
   dbCitations,
   dbContext,
   dbConversations,
+  dbMcpServers,
   dbMessages,
   dbProviders,
   dbSettings,
@@ -53,7 +54,21 @@ import {
   pickContextFolder
 } from './services/context-ingest'
 import { exportConversation } from './services/export'
-import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/types'
+import type {
+  SendMessagePayload,
+  InstalledLocalModelInfo,
+  McpServerConfig,
+  ToolApprovalDecision
+} from '../shared/types'
+import {
+  getMcpServerStates,
+  onMcpStatusChange,
+  reconnectMcpServer,
+  stopAllMcpServers,
+  syncMcpServers
+} from './mcp/mcp-manager'
+import { resolveToolApproval } from './mcp/tool-approval'
+import { validateMcpServerConfig } from '../shared/mcp-tools'
 import { MODEL_CATALOG } from '../shared/model-catalog'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
@@ -426,6 +441,10 @@ async function runBackgroundStartup(): Promise<void> {
 
   initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
 
+  // MCP servers are independent child processes or remote endpoints, so they
+  // connect in the background without waiting on the model servers below.
+  syncMcpServers(dbMcpServers.list())
+
   // Model servers start one at a time: loading several GGUF files at once
   // saturates disk and memory bandwidth. Embedding and memory servers also
   // start on demand, so this only warms them ahead of first use.
@@ -467,6 +486,10 @@ app.whenReady().then(() => {
 
   onSearchRuntimeStatusChange((state) => {
     sendToRenderer('search-runtime:status-change', state)
+  })
+
+  onMcpStatusChange((states) => {
+    sendToRenderer('mcp:status-change', states)
   })
 
   // Heavy background work waits until the window has painted, so model loads
@@ -520,7 +543,7 @@ app.on('before-quit', (event) => {
   }
 
   stopMemoryServer()
-  Promise.all([stopEngine(), stopSearchRuntime(), stopEmbeddingServer()])
+  Promise.all([stopEngine(), stopSearchRuntime(), stopEmbeddingServer(), stopAllMcpServers()])
     .catch((err) => console.warn('[Quit cleanup]', err))
     .finally(() => {
       cleanupComplete = true
@@ -764,6 +787,26 @@ function setupIpcHandlers(): void {
   ipcMain.handle('settings:get', () => dbSettings.get())
   ipcMain.handle('settings:update', (_, settings: any) => dbSettings.update(settings))
 
+  // MCP servers
+  ipcMain.handle('mcp:servers:list', () => dbMcpServers.list())
+  ipcMain.handle('mcp:servers:save', (_, server: McpServerConfig) => {
+    const problem = validateMcpServerConfig(server)
+    if (problem) throw new Error(problem)
+    dbMcpServers.upsert(server)
+    syncMcpServers(dbMcpServers.list())
+    return server
+  })
+  ipcMain.handle('mcp:servers:delete', (_, id: string) => {
+    dbMcpServers.delete(id)
+    syncMcpServers(dbMcpServers.list())
+  })
+  ipcMain.handle('mcp:status', () => getMcpServerStates())
+  ipcMain.handle('mcp:reconnect', async (_, id: string) => {
+    const server = dbMcpServers.get(id)
+    if (server) await reconnectMcpServer(server)
+    return getMcpServerStates()
+  })
+
   // Local web search runtime
   ipcMain.handle('web-search:test', async (_, query?: string) => testWebSearch(query))
   ipcMain.handle('search-runtime:status', () => getSearchRuntimeState())
@@ -800,6 +843,9 @@ function setupIpcHandlers(): void {
   })
 
   ipcMain.handle('ai:chat:cancel', (_, generationId: string) => cancelGeneration(generationId))
+  ipcMain.handle('ai:tool-approval', (_, toolCallId: string, decision: ToolApprovalDecision) =>
+    resolveToolApproval(toolCallId, decision)
+  )
   ipcMain.handle('ai:chat:resync', (_, conversationId: string) =>
     resyncGeneration(mainWindow, conversationId)
   )

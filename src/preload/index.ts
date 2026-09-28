@@ -25,7 +25,10 @@ import type {
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
   CookbookModel,
-  VramReading
+  VramReading,
+  McpServerConfig,
+  McpServerState,
+  ToolApprovalDecision
 } from '../shared/types'
 import type { HFModelSummary } from '../shared/hf-catalog'
 
@@ -194,6 +197,19 @@ const api = {
     return () => ipcRenderer.removeListener('search-runtime:status-change', listener)
   },
 
+  // MCP servers
+  listMcpServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke('mcp:servers:list'),
+  saveMcpServer: (server: McpServerConfig): Promise<McpServerConfig> =>
+    ipcRenderer.invoke('mcp:servers:save', server),
+  deleteMcpServer: (id: string): Promise<void> => ipcRenderer.invoke('mcp:servers:delete', id),
+  getMcpStatus: (): Promise<McpServerState[]> => ipcRenderer.invoke('mcp:status'),
+  reconnectMcpServer: (id: string): Promise<McpServerState[]> => ipcRenderer.invoke('mcp:reconnect', id),
+  onMcpStatusChange: (callback: (states: McpServerState[]) => void) => {
+    const listener = (_: unknown, states: McpServerState[]) => callback(states)
+    ipcRenderer.on('mcp:status-change', listener)
+    return () => ipcRenderer.removeListener('mcp:status-change', listener)
+  },
+
   // AI & Models
   getModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('ai:models'),
   sendMessage: (
@@ -202,6 +218,8 @@ const api = {
     ipcRenderer.invoke('ai:chat', payload),
   cancelGeneration: (generationId: string): Promise<boolean> =>
     ipcRenderer.invoke('ai:chat:cancel', generationId),
+  respondToolApproval: (toolCallId: string, decision: ToolApprovalDecision): Promise<boolean> =>
+    ipcRenderer.invoke('ai:tool-approval', toolCallId, decision),
   resyncGeneration: (
     conversationId: string
   ): Promise<{ generationId: string; messageId: string } | null> =>

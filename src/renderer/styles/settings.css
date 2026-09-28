@@ -354,3 +354,82 @@
   justify-content: center;
   margin: 0 auto var(--space-3) auto;
 }
+
+/* MCP servers */
+.mcp-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.mcp-server {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background-color: var(--bg-app);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.mcp-server__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mcp-server__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-server__target {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-server__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mcp-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--text-muted);
+}
+.mcp-dot.is-connected { background-color: var(--status-success); }
+.mcp-dot.is-connecting { background-color: var(--status-warn); }
+.mcp-dot.is-error { background-color: var(--status-error); }
+.mcp-dot.is-off { opacity: 0.4; }
+
+.mcp-tools summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.mcp-tools ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mcp-tools code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}

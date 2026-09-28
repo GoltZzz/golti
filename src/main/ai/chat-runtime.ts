@@ -3,10 +3,12 @@ import type {
   Artifact,
   Shell,
   Citation,
+  McpToolInfo,
   Message,
   SendMessagePayload,
   StreamChunkPayload,
   TokenUsage,
+  ToolCallRecord,
   WebSearchMode,
   WebSearchStatus
 } from '../../shared/types'
@@ -43,6 +45,15 @@ import {
   selectContextItems
 } from '../../shared/prompt-assembly'
 import { CONTINUE_INSTRUCTION, normalizeFinishReason } from '../../shared/finish-reason'
+import {
+  buildToolCatalogPrompt,
+  extractToolCall,
+  formatToolResult,
+  resolveToolCall,
+  stripToolCalls,
+  toolLabel,
+  type ToolCallRequest
+} from '../../shared/mcp-tools'
 import { resolveContextWindow } from './context-window'
 import {
   dbArtifacts,
@@ -50,6 +61,7 @@ import {
   dbCitations,
   dbContext,
   dbConversations,
+  dbMcpServers,
   dbMessages,
   dbSettings,
   dbSkills
@@ -62,6 +74,8 @@ import { startDeepResearch } from './deep-research'
 import { presentableErrorMessage } from '../../shared/error-display'
 import { extractAndStoreMemories } from './memory-extractor'
 import { buildMemoryRecallBlock } from './memory-recall'
+import { callMcpTool, listMcpTools, waitForMcpServers } from '../mcp/mcp-manager'
+import { waitForToolApproval } from '../mcp/tool-approval'
 
 interface ActiveGeneration {
   generationId: string
@@ -77,6 +91,15 @@ const activeGenerations = new Map<string, ActiveGeneration>()
 
 /** Cap on model-requested mid-turn searches, so a model can't loop on searching forever. */
 const MAX_SEARCH_ROUNDS = 3
+
+/** Cap on MCP tool calls per turn, so an agent can't loop on tools forever. */
+const MAX_TOOL_ROUNDS = 6
+/** Longest tool output handed back to the model; the rest is cut. */
+const MAX_TOOL_RESULT_CHARS = 6000
+/** Longest tool output kept on the message for the user to inspect. */
+const MAX_TOOL_PREVIEW_CHARS = 2000
+/** How long a turn waits for MCP servers that are still starting up. */
+const MCP_STARTUP_WAIT_MS = 5000
 
 /** Appended only when the message came from a skill that asks questions (/grill-me). */
 const ASK_USER_SYSTEM_SUFFIX = [
@@ -120,9 +143,15 @@ const COMPOSER_AGENT_SYSTEM_SUFFIX = [
   'You are operating in Agent mode.',
   'Treat the user message as a task to accomplish: clarify the goal if needed, break work into clear steps, and work toward a concrete outcome.',
   'Be proactive and structured. Prefer actionable plans and specific recommendations over vague advice.',
-  'Ask before suggesting destructive or irreversible actions.',
-  'Note: filesystem, shell, and other tool execution are not available yet in this build - do not claim you ran tools or modified files. Reason through the task and provide the best guidance, plans, and code you can without tool access.'
+  'Ask before suggesting destructive or irreversible actions.'
 ].join(' ')
+
+/** Agent mode with no MCP tools connected: keep the model honest about what it can do. */
+const AGENT_NO_TOOLS_NOTE =
+  'Note: no tools are connected right now, so you cannot run commands, read files, or take actions - do not claim you did. Reason through the task and provide the best guidance, plans, and code you can without tool access.'
+
+const TOOL_LIMIT_NOTE =
+  'The tool-call limit for this turn is reached. Finish the task with what you already have and do not call more tools.'
 
 function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -407,10 +436,22 @@ export async function startChatGeneration(
   // ask for results itself.
   const searchToolEnabled = mode !== 'off' && !continuing && askUserActive
 
+  // MCP tools are an Agent-mode capability: they can take real actions, so the
+  // user opts in by switching modes. Interviews and deep research run their own loops.
+  let mcpTools: McpToolInfo[] = []
+  if (composerMode === 'agent' && !continuing && !askUserActive && !deepResearchEnabled) {
+    await waitForMcpServers(MCP_STARTUP_WAIT_MS)
+    mcpTools = listMcpTools()
+  }
+
   const effectiveSystem = buildSystemPrompt({
     basePrompt: systemPrompt || conv?.systemPrompt || settings.systemPrompt,
     modeSuffix: [
-      composerMode === 'agent' ? COMPOSER_AGENT_SYSTEM_SUFFIX : '',
+      composerMode === 'agent'
+        ? `${COMPOSER_AGENT_SYSTEM_SUFFIX}\n\n${
+            mcpTools.length ? buildToolCatalogPrompt(mcpTools, MAX_TOOL_ROUNDS) : AGENT_NO_TOOLS_NOTE
+          }`
+        : '',
       askUserActive && interviewSkill
         ? `Active skill — follow these instructions for every turn of this conversation:\n\n${skillInstructions}`
         : '',
@@ -611,6 +652,7 @@ export async function startChatGeneration(
     let thinkingEndTime: number | null = null
     let usage: TokenUsage | undefined
     let finishReason: string | undefined
+    const toolCalls: ToolCallRecord[] = []
 
     const streamParser = createThinkStreamParser()
 
@@ -715,32 +757,160 @@ export async function startChatGeneration(
         }
     }
 
+    const publishCorrection = () => {
+      activeGen.content = priorContent + generated
+      sendChunk(win, {
+        conversationId,
+        messageId: assistantMsgId,
+        generationId,
+        correctedContent: priorContent + generated,
+        done: false,
+        eventType: 'correction'
+      })
+    }
+
+    /** Persist and stream one tool call's latest state, so a re-selected or reloaded chat shows it. */
+    const publishToolCall = (record: ToolCallRecord) => {
+      const idx = toolCalls.findIndex((c) => c.id === record.id)
+      if (idx === -1) toolCalls.push(record)
+      else toolCalls[idx] = record
+      dbMessages.update(assistantMsgId, { toolCalls: [...toolCalls] })
+      sendChunk(win, {
+        conversationId,
+        messageId: assistantMsgId,
+        generationId,
+        toolCall: record,
+        done: false,
+        eventType: 'tool'
+      })
+    }
+
+    /** Characters a tool result may take: at most half of the context still free. */
+    const toolResultBudget = () => {
+      const usedTokens =
+        estimateTokens(effectiveSystem || '') +
+        historyForModel.reduce((sum, m) => sum + estimateTokens(m.content), 0) +
+        estimateTokens(generated)
+      const freeTokens = contextWindow - reservedOutput - usedTokens
+      return Math.max(500, Math.min(MAX_TOOL_RESULT_CHARS, freeTokens * 2))
+    }
+
+    /** Run one model-requested tool call and return the note handed back to the model. */
+    const runToolRound = async (request: ToolCallRequest): Promise<string> => {
+      const resolved = resolveToolCall(request, mcpTools)
+      if (!resolved.ok) return resolved.error
+      const { tool } = resolved
+      const label = toolLabel(tool)
+      let record: ToolCallRecord = {
+        id: newId('tool'),
+        serverId: tool.serverId,
+        serverName: tool.serverName,
+        tool: tool.name,
+        arguments: request.arguments,
+        status: 'running',
+        startedAt: Date.now()
+      }
+      const update = (patch: Partial<ToolCallRecord>) => {
+        record = { ...record, ...patch }
+        publishToolCall(record)
+      }
+
+      const server = dbMcpServers.get(tool.serverId)
+      if (server?.autoApprove) {
+        publishToolCall(record)
+      } else {
+        update({ status: 'awaiting-approval' })
+        const decision = await waitForToolApproval(record.id, controller.signal)
+        if (decision === 'deny') {
+          update({ status: controller.signal.aborted ? 'cancelled' : 'denied', finishedAt: Date.now() })
+          return `The user declined to run ${label}. Do not call it again this turn; continue without it or ask the user how to proceed.`
+        }
+        if (decision === 'always' && server) dbMcpServers.upsert({ ...server, autoApprove: true })
+        update({ status: 'running', startedAt: Date.now() })
+      }
+
+      try {
+        const result = await callMcpTool(tool.serverId, tool.name, request.arguments, controller.signal)
+        const text = formatToolResult(result, toolResultBudget())
+        update({
+          status: result.isError ? 'error' : 'success',
+          result: text.slice(0, MAX_TOOL_PREVIEW_CHARS),
+          finishedAt: Date.now()
+        })
+        return result.isError ? `${label} reported an error:\n${text}` : `Result of ${label}:\n${text}`
+      } catch (err: any) {
+        const message = err?.message || String(err)
+        update({
+          status: controller.signal.aborted ? 'cancelled' : 'error',
+          result: message,
+          finishedAt: Date.now()
+        })
+        return `${label} failed: ${message}`
+      }
+    }
+
     try {
       let searchRounds = 0
+      let toolRounds = 0
+      let toolLimitReached = false
+      // Where the reply stood after the last tool round, so each round replays only its own text.
+      let segmentStart = 0
 
-      // Each pass streams until the model either finishes or asks for a web
-      // search; on a search it resumes with the results appended to its history.
+      // Each pass streams until the model either finishes or pauses to call a
+      // tool or search the web; it then resumes with the result in its history.
       for (;;) {
         await streamOnce(historyForModel)
-
-        const searchRequest = searchToolEnabled ? extractSearchRequest(generated) : null
-        if (!searchRequest || controller.signal.aborted) {
-          if (searchRequest) generated = stripSearchRequests(generated)
+        if (controller.signal.aborted) {
+          generated = stripToolCalls(stripSearchRequests(generated))
           break
         }
+
+        const toolRequest = mcpTools.length ? extractToolCall(generated) : null
+        if (toolRequest) {
+          // Text after the call was written without its result, so it is dropped.
+          const segment = generated.slice(segmentStart, toolRequest.fenceStart)
+          generated = generated.slice(0, toolRequest.fenceStart).trimEnd()
+          publishCorrection()
+
+          let note = TOOL_LIMIT_NOTE
+          if (toolRounds < MAX_TOOL_ROUNDS) {
+            toolRounds++
+            note = await runToolRound(toolRequest)
+          } else if (toolLimitReached) {
+            break // Already told to stop and still calling: end the turn here.
+          } else {
+            toolLimitReached = true
+          }
+          if (controller.signal.aborted) break
+
+          historyForModel.push(
+            {
+              id: `partial_${historyForModel.length}`,
+              conversationId,
+              role: 'assistant',
+              content: `${segment}${toolRequest.raw}`.trim(),
+              createdAt: Date.now()
+            },
+            {
+              id: `tool_result_${historyForModel.length}`,
+              conversationId,
+              role: 'system',
+              content: `${note}\n\nContinue from where you stopped. Do not repeat what you already wrote. Call another tool if the task still needs one; otherwise give your answer.`,
+              createdAt: Date.now()
+            }
+          )
+          if (generated) generated += '\n\n'
+          segmentStart = generated.length
+          continue
+        }
+
+        const searchRequest = searchToolEnabled ? extractSearchRequest(generated) : null
+        if (!searchRequest) break
 
         // Pull the half-written block off the visible reply before the search runs,
         // so the user never sees the raw JSON sitting in the message.
         generated = stripSearchRequests(generated)
-        activeGen.content = priorContent + generated
-        sendChunk(win, {
-          conversationId,
-          messageId: assistantMsgId,
-          generationId,
-          correctedContent: priorContent + generated,
-          done: false,
-          eventType: 'correction'
-        })
+        publishCorrection()
 
         let roundNote: string
         if (searchRounds >= MAX_SEARCH_ROUNDS) {
@@ -986,7 +1156,7 @@ export async function startChatGeneration(
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const totalThinkingDurationMs =
           thinkingStartTime ? (thinkingEndTime || Date.now()) - thinkingStartTime : undefined
-        const stoppedContent = priorContent + generated
+        const stoppedContent = priorContent + stripToolCalls(generated)
         dbMessages.update(assistantMsgId, {
           content: stoppedContent || '(generation stopped)',
           reasoningContent: reasoningAccumulated || undefined,

@@ -293,7 +293,75 @@ export interface Message {
   tokensPerSec?: number
   finishReason?: string
   attachments?: MessageAttachment[]
+  /** MCP tool calls the model made while writing this reply, in call order. */
+  toolCalls?: ToolCallRecord[]
 }
+
+/** How Golti reaches an MCP server: a local child process, or a remote HTTP endpoint. */
+export type McpTransport = 'stdio' | 'http'
+
+export interface McpServerConfig {
+  id: string
+  name: string
+  enabled: boolean
+  transport: McpTransport
+  /** stdio: executable to launch, e.g. `npx`. */
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  cwd?: string
+  /** http: Streamable HTTP endpoint (legacy SSE endpoints are tried as a fallback). */
+  url?: string
+  headers?: Record<string, string>
+  /** Run this server's tools without asking the user first. */
+  autoApprove?: boolean
+}
+
+export type McpServerStatus = 'connecting' | 'connected' | 'error'
+
+export interface McpToolInfo {
+  serverId: string
+  serverName: string
+  name: string
+  description?: string
+  inputSchema?: Record<string, unknown>
+}
+
+/** Live state of an enabled server. Disabled servers have no state. */
+export interface McpServerState {
+  id: string
+  status: McpServerStatus
+  tools: McpToolInfo[]
+  error?: string
+  /** Name and version the server reported during the handshake. */
+  serverInfo?: string
+  /** Recent stderr output of a stdio server, for diagnosing startup failures. */
+  lastLogs?: string
+}
+
+export type ToolCallStatus =
+  | 'awaiting-approval'
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'denied'
+  | 'cancelled'
+
+export interface ToolCallRecord {
+  id: string
+  serverId: string
+  serverName: string
+  tool: string
+  arguments: Record<string, unknown>
+  status: ToolCallStatus
+  /** What the tool returned (or why it failed), truncated for display. */
+  result?: string
+  startedAt: number
+  finishedAt?: number
+}
+
+/** 'always' allows this call and every later call to the same server. */
+export type ToolApprovalDecision = 'allow' | 'always' | 'deny'
 
 export interface MessageVersion {
   id: string
@@ -421,6 +489,7 @@ export type StreamEventType =
   | 'research-step'
   | 'research-sources'
   | 'correction'
+  | 'tool'
 
 export interface StreamChunkPayload {
   conversationId: string
@@ -442,6 +511,8 @@ export interface StreamChunkPayload {
   searchStatus?: WebSearchStatus
   researchPlan?: ResearchPlan
   researchStep?: ResearchStep
+  /** Latest state of one tool call; replaces any earlier record with the same id. */
+  toolCall?: ToolCallRecord
   eventType?: StreamEventType
   finishReason?: string
 }

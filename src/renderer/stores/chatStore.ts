@@ -13,6 +13,7 @@ import type {
   ModelInfo,
   StreamChunkPayload,
   TokenBudget,
+  ToolCallRecord,
   WebSearchStatus
 } from '../../shared/types'
 import {
@@ -203,6 +204,13 @@ function conversationScopedReset() {
     researchProgressByMessageId: {} as Record<string, ResearchProgress>,
     conversationError: null as string | null
   }
+}
+
+function mergeToolCall(existing: ToolCallRecord[] | undefined, next: ToolCallRecord): ToolCallRecord[] {
+  const list = existing ?? []
+  return list.some((c) => c.id === next.id)
+    ? list.map((c) => (c.id === next.id ? next : c))
+    : [...list, next]
 }
 
 /** Monotonic tokens so async loads cannot overwrite a newer selection. */
@@ -993,6 +1001,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         searchStatus,
         researchPlan,
         researchStep,
+        toolCall,
         finishReason
       } = chunk
 
@@ -1041,7 +1050,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               error: error || msg.error,
               tokensIn: usage?.promptTokens ?? msg.tokensIn,
               tokensOut: usage?.completionTokens ?? msg.tokensOut,
-              finishReason: done ? finishReason : undefined
+              finishReason: done ? finishReason : undefined,
+              toolCalls: toolCall ? mergeToolCall(msg.toolCalls, toolCall) : msg.toolCalls
             }
           }
           return msg
