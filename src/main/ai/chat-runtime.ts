@@ -717,6 +717,7 @@ export async function startChatGeneration(
 
     try {
       let searchRounds = 0
+      let searchLimitReached = false
 
       // Each pass streams until the model either finishes or asks for a web
       // search; on a search it resumes with the results appended to its history.
@@ -744,6 +745,9 @@ export async function startChatGeneration(
 
         let roundNote: string
         if (searchRounds >= MAX_SEARCH_ROUNDS) {
+          // Already told to stop and still searching: end the turn here.
+          if (searchLimitReached) break
+          searchLimitReached = true
           roundNote =
             'The search limit for this turn is reached. Answer with what you already know and do not search again.'
         } else {
