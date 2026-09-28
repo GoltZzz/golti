@@ -78,7 +78,7 @@ export const SkillsSettings: React.FC = () => {
   const slugPreview = draft ? normalizeSkillName(draft.name) : "";
 
   return (
-    <div className="settings-panel settings-panel--narrow">
+    <div className="settings-panel">
       <div className="settings-card">
         <h3 className="settings-card__title">
           <SquareSlash size={16} /> Skills

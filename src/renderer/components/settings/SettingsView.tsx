@@ -169,7 +169,7 @@ export const SettingsView: React.FC = () => {
         {activeSubTab === "providers" && <ProviderConfig />}
 
         {activeSubTab === "engine" && (
-          <div className="settings-panel settings-panel--wide">
+          <div className="settings-panel">
             {/* Engine UI Toggle Setting */}
             <div className="settings-card">
               <div className="settings-row">
@@ -392,7 +392,7 @@ export const SettingsView: React.FC = () => {
         {activeSubTab === "skills" && <SkillsSettings />}
 
         {activeSubTab === "general" && (
-          <div className="settings-panel settings-panel--narrow">
+          <div className="settings-panel">
             {/* System Prompt */}
             <div className="settings-card">
               <h3 className="settings-card__title">System Prompt</h3>
@@ -578,7 +578,7 @@ export const SettingsView: React.FC = () => {
         )}
 
         {activeSubTab === "about" && (
-          <div className="settings-panel" style={{ maxWidth: "540px" }}>
+          <div className="settings-panel">
             <div className="about-card">
               <div className="about-badge">
                 <EggLogo size={24} title="Golti" />

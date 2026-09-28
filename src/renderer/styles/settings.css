@@ -72,9 +72,6 @@
   gap: var(--space-4);
 }
 
-.settings-panel--narrow { max-width: 640px; }
-.settings-panel--wide { max-width: 720px; }
-
 /* Cards & sections */
 .settings-card {
   padding: var(--space-4);
