@@ -459,6 +459,11 @@ export interface ChatRequestOptions {
    * llama.cpp grammar constraints; providers that cannot enforce it ignore it.
    */
   responseSchema?: Record<string, unknown>
+  /**
+   * Ask the local engine to skip the model's thinking phase. Only chat templates
+   * with an `enable_thinking` switch honour it; others think regardless.
+   */
+  disableThinking?: boolean
   /** Attachment bytes for this generation, keyed by message id. */
   attachments?: Map<string, LoadedAttachment[]>
 }

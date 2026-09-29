@@ -30,7 +30,11 @@ import {
 } from '../../shared/research-progress'
 import { useInspectorStore } from './inspectorStore'
 import { useSkillStore } from './skillStore'
-import { DEFAULT_CONVERSATION_TITLE, fallbackTitle } from '../../shared/conversation-title'
+import {
+  DEFAULT_CONVERSATION_TITLE,
+  fallbackTitle,
+  normalizeUserTitle
+} from '../../shared/conversation-title'
 
 declare global {
   interface Window {
@@ -92,6 +96,7 @@ interface ChatState {
   startBlankConversation: () => void
   deleteConversation: (id: string) => Promise<void>
   pinConversation: (id: string, pinned: boolean) => Promise<void>
+  renameConversation: (id: string, title: string) => Promise<void>
   archiveConversation: (id: string) => Promise<void>
   exportConversation: (format: 'markdown' | 'json') => Promise<void>
   searchConversations: (query: string) => Promise<void>
@@ -458,6 +463,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await window.goltiAPI.updateConversation(id, { pinned })
         await get().fetchConversations()
       }
+    })
+    set({ actionRedoStack: [] })
+  },
+
+  renameConversation: async (id: string, rawTitle: string) => {
+    const title = normalizeUserTitle(rawTitle)
+    const prev = get().conversations.find((c) => c.id === id)?.title
+    if (!title || prev === undefined || title === prev) return
+
+    const apply = async (next: string) => {
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, title: next } : c))
+      }))
+      await window.goltiAPI.updateConversation(id, { title: next })
+    }
+
+    try {
+      await apply(title)
+    } catch (err) {
+      console.error('Failed to rename conversation:', err)
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, title: prev } : c)),
+        conversationError: 'Failed to rename conversation'
+      }))
+      return
+    }
+    get().actionUndoStack.push({
+      id: `rename_${Date.now()}`,
+      label: 'Rename conversation',
+      undo: () => apply(prev),
+      redo: () => apply(title)
     })
     set({ actionRedoStack: [] })
   },

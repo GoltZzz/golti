@@ -128,6 +128,7 @@ export async function* streamGoltiEngineChat(
         max_tokens: maxOutputTokens,
         stop: gen.stopSequences,
         cache_prompt: true,
+        ...(options?.disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
         ...(options?.responseSchema
           ? {
               response_format: {

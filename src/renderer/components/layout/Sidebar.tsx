@@ -11,6 +11,7 @@ import {
   PanelLeft,
   Trash2,
   Pin,
+  Pencil,
   Archive,
   Download,
   Home,
@@ -21,7 +22,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { ConfirmDialog } from '../common/ConfirmDialog'
-import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
+import { DEFAULT_CONVERSATION_TITLE, MAX_USER_TITLE_LENGTH } from '../../../shared/conversation-title'
 
 export const Sidebar: React.FC = () => {
   const { isCollapsed, activeTab, toggleCollapsed, setActiveTab } = useSidebarStore()
@@ -34,6 +35,7 @@ export const Sidebar: React.FC = () => {
     startBlankConversation,
     deleteConversation,
     pinConversation,
+    renameConversation,
     archiveConversation,
     exportConversation,
     searchConversations,
@@ -45,6 +47,14 @@ export const Sidebar: React.FC = () => {
   const [localQuery, setLocalQuery] = useState('')
   const [topTab, setTopTab] = useState<'home' | 'code'>('home')
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null)
+
+  // Enter and clicking away both save; an empty title keeps the old one.
+  const commitRename = () => {
+    if (!renaming) return
+    setRenaming(null)
+    void renameConversation(renaming.id, renaming.draft)
+  }
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [detectedPlatform, setDetectedPlatform] = useState<'darwin' | 'win32' | 'linux'>('darwin')
@@ -404,7 +414,35 @@ export const Sidebar: React.FC = () => {
                             aria-label="Generating"
                           />
                         )}
-                        {conv.title}
+                        {renaming?.id === conv.id ? (
+                          <input
+                            className="conv-rename-input"
+                            value={renaming.draft}
+                            maxLength={MAX_USER_TITLE_LENGTH}
+                            autoFocus
+                            aria-label="Conversation title"
+                            onFocus={(e) => e.currentTarget.select()}
+                            onClick={(e) => e.stopPropagation()}
+                            onDoubleClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setRenaming({ id: conv.id, draft: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRename()
+                              else if (e.key === 'Escape') setRenaming(null)
+                            }}
+                            onBlur={commitRename}
+                          />
+                        ) : (
+                          <span
+                            className="conv-title"
+                            title="Double-click to rename"
+                            onDoubleClick={(e) => {
+                              e.stopPropagation()
+                              setRenaming({ id: conv.id, draft: conv.title })
+                            }}
+                          >
+                            {conv.title}
+                          </span>
+                        )}
                       </div>
                       {hit?.snippet && localQuery.trim() && (
                         <div
@@ -421,6 +459,13 @@ export const Sidebar: React.FC = () => {
                       )}
                     </div>
                     <div className="conv-item-actions" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        title="Rename"
+                        aria-label="Rename conversation"
+                        onClick={() => setRenaming({ id: conv.id, draft: conv.title })}
+                      >
+                        <Pencil size={12} />
+                      </button>
                       <button
                         title={conv.pinned ? 'Unpin' : 'Pin'}
                         aria-label={conv.pinned ? 'Unpin conversation' : 'Pin conversation'}

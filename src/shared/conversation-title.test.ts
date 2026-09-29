@@ -2,9 +2,23 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_CONVERSATION_TITLE,
   MAX_TITLE_LENGTH,
+  MAX_USER_TITLE_LENGTH,
   fallbackTitle,
+  normalizeUserTitle,
   sanitizeGeneratedTitle
 } from '../shared/conversation-title'
+
+describe('normalizeUserTitle', () => {
+  it('keeps what the user typed, minus stray whitespace', () => {
+    expect(normalizeUserTitle('  Trip   plans\nfor June ')).toBe('Trip plans for June')
+    expect(normalizeUserTitle('"Quoted" title.')).toBe('"Quoted" title.')
+  })
+
+  it('rejects an empty title and caps long ones', () => {
+    expect(normalizeUserTitle('   ')).toBeNull()
+    expect(normalizeUserTitle('x'.repeat(500))).toBe('x'.repeat(MAX_USER_TITLE_LENGTH))
+  })
+})
 
 describe('fallbackTitle', () => {
   it('uses a short prompt verbatim', () => {

@@ -2925,3 +2925,21 @@
 .attachment-lightbox-close:hover {
   border-color: var(--accent-primary);
 }
+
+.conv-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--bg-input);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-xs);
+  outline: none;
+}
