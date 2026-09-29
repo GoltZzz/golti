@@ -7,6 +7,7 @@ import type {
   ConversationExportOptions,
   ConversationSearchHit,
   ConversationGroup,
+  StartupState,
   Message,
   MessageAttachment,
   MessageSearchHit,
@@ -34,6 +35,17 @@ import type {
 import type { HFModelSummary } from '../shared/hf-catalog'
 
 const api = {
+  // Canvas previews load from their own origin, outside the app's CSP.
+  registerPreview: (html: string): Promise<string> => ipcRenderer.invoke('preview:register', html),
+
+  // Startup progress (welcome screen)
+  getStartupState: (): Promise<StartupState> => ipcRenderer.invoke('startup:get-state'),
+  onStartupProgress: (callback: (state: StartupState) => void) => {
+    const listener = (_: any, state: StartupState) => callback(state)
+    ipcRenderer.on('startup:progress', listener)
+    return () => ipcRenderer.removeListener('startup:progress', listener)
+  },
+
   // DB Conversations
   getConversations: (): Promise<Conversation[]> => ipcRenderer.invoke('db:conversations:list'),
   getConversation: (id: string): Promise<Conversation | undefined> =>

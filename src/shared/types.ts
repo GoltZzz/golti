@@ -790,3 +790,20 @@ export interface UndoableAction {
   label: string
   timestamp: number
 }
+
+export type StartupStepId = 'database' | 'attachments' | 'search' | 'mcp' | 'engine' | 'embedding' | 'memory'
+
+export type StartupStepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'error'
+
+export interface StartupStep {
+  id: StartupStepId
+  label: string
+  status: StartupStepStatus
+  error?: string
+}
+
+/** Progress of the main-process startup sequence, shown on the welcome screen. */
+export interface StartupState {
+  steps: StartupStep[]
+  done: boolean
+}

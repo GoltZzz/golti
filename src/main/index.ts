@@ -112,6 +112,20 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
+import {
+  handlePreviewScheme,
+  installNavigationGuards,
+  registerPreview,
+  registerPreviewScheme
+} from './window-security'
+import { pathToFileURL } from 'url'
+import {
+  finishStartup,
+  getStartupState,
+  onStartupProgress,
+  runStartupStep,
+  setStartupStep
+} from './startup-progress'
 import { normalizeSkillName, isBuiltinSkill, BUILTIN_SKILL_NAMES } from '../shared/types'
 
 const execAsync = promisify(exec)
@@ -353,6 +367,17 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
 
 export let mainWindow: BrowserWindow | null = null
 
+/** The page the app window is allowed to show; see window-security.ts. */
+function appEntryUrl(): string {
+  return (
+    process.env.ELECTRON_RENDERER_URL ??
+    pathToFileURL(path.join(__dirname, '../renderer/index.html')).href
+  )
+}
+
+registerPreviewScheme()
+installNavigationGuards(appEntryUrl)
+
 /**
  * Send an IPC message to the renderer, but only if the window and its
  * webContents are still alive. During quit the process `exit` events can fire
@@ -423,44 +448,50 @@ function createWindow(): void {
     cancelAllGenerations()
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  mainWindow.loadURL(appEntryUrl())
 }
 
 async function runBackgroundStartup(): Promise<void> {
-  try {
+  await runStartupStep('attachments', () => {
     const swept = sweepAttachments()
     if (swept.rows || swept.files) {
       console.log(`[attachments] swept ${swept.rows} stale rows, ${swept.files} orphaned files`)
     }
-  } catch (err) {
-    console.warn('[attachments] sweep failed:', err)
-  }
+  })
 
-  initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
+  // The search runtime check runs alongside the model servers below.
+  const search = runStartupStep('search', async () => {
+    await initSearchRuntime()
+  })
 
   // MCP servers are independent child processes or remote endpoints, so they
   // connect in the background without waiting on the model servers below.
-  syncMcpServers(dbMcpServers.list())
+  await runStartupStep('mcp', () => {
+    const servers = dbMcpServers.list()
+    if (!servers.some((s) => s.enabled)) return 'skipped'
+    syncMcpServers(servers)
+  })
 
   // Model servers start one at a time: loading several GGUF files at once
   // saturates disk and memory bandwidth. Embedding and memory servers also
   // start on demand, so this only warms them ahead of first use.
   const settings = dbSettings.get()
-  if (settings.engineEnabled !== false) {
+  await runStartupStep('engine', async () => {
+    if (settings.engineEnabled === false) return 'skipped'
     const { layers, device } = resolveEngineOffload(settings)
     await initEngine({
       preferredModelPath: settings.lastEngineModel,
       port: settings.enginePort,
       gpuLayers: layers,
       deviceId: device
-    }).catch((err) => console.warn('[Engine Init Warning]', err))
-  }
-  await prewarmEmbeddingServer().catch((err) => console.warn('[EmbeddingServer Init Warning]', err))
-  await prewarmMemoryServer().catch((err) => console.warn('[MemoryServer Init Warning]', err))
+    })
+  })
+  await runStartupStep('embedding', () => prewarmEmbeddingServer())
+  await runStartupStep('memory', async () => {
+    if (!dbSettings.get().memoryModel?.trim()) return 'skipped'
+    await prewarmMemoryServer()
+  })
+  await search
 }
 
 app.whenReady().then(() => {
@@ -470,8 +501,11 @@ app.whenReady().then(() => {
     app.dock.setIcon(iconPath)
   }
 
+  setStartupStep('database', 'running')
   initDatabase()
+  setStartupStep('database', 'done')
   setupIpcHandlers()
+  handlePreviewScheme()
   createWindow()
 
   // Subscribe engine status changes to send to renderer
@@ -493,13 +527,20 @@ app.whenReady().then(() => {
     sendToRenderer('mcp:status-change', states)
   })
 
+  onStartupProgress((state) => {
+    sendToRenderer('startup:progress', state)
+  })
+
   // Heavy background work waits until the window has painted, so model loads
   // and disk scans don't compete with the renderer for CPU and I/O.
   let backgroundStarted = false
   const startBackgroundServices = (): void => {
     if (backgroundStarted) return
     backgroundStarted = true
-    runBackgroundStartup().catch((err) => console.warn('[Startup Warning]', err))
+    runBackgroundStartup()
+      .catch((err) => console.warn('[Startup Warning]', err))
+      // Never leave the welcome screen waiting on a sequence that blew up.
+      .finally(finishStartup)
   }
   mainWindow?.once('ready-to-show', startBackgroundServices)
   setTimeout(startBackgroundServices, 5000)
@@ -573,6 +614,8 @@ function setupIpcHandlers(): void {
   ipcMain.handle('db:conversations:update', (_, id: string, updates: any) => dbConversations.update(id, updates))
   ipcMain.handle('db:conversations:delete', (_, id: string) => dbConversations.delete(id))
   ipcMain.handle('db:conversations:search', (_, query: string) => dbConversations.search(query))
+  ipcMain.handle('startup:get-state', () => getStartupState())
+  ipcMain.handle('preview:register', (_, html: string) => registerPreview(String(html)))
   ipcMain.handle('db:groups:list', () => dbConversationGroups.list())
   ipcMain.handle('db:groups:create', (_, group: any) => dbConversationGroups.create(group))
   ipcMain.handle('db:groups:update', (_, id: string, updates: any) => dbConversationGroups.update(id, updates))

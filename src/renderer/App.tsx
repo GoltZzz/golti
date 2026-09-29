@@ -11,6 +11,7 @@ import { useSidebarStore } from './stores/sidebarStore'
 import { useMemoryStore } from './stores/memoryStore'
 import { useSkillStore } from './stores/skillStore'
 import { GlobalSearchModal } from './components/search/GlobalSearchModal'
+import { StartupOverlay } from './components/layout/StartupOverlay'
 import type { Memory, Skill } from '../shared/types'
 
 export const App: React.FC = () => {
@@ -82,6 +83,7 @@ export const App: React.FC = () => {
       </div>
       <StatusBar />
       <GlobalSearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+      <StartupOverlay />
     </div>
   )
 }
