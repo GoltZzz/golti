@@ -1,7 +1,14 @@
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { AIProviderConfig, Conversation, McpServerConfig, Message, Settings } from '../../shared/types'
+import {
+  AIProviderConfig,
+  Conversation,
+  ConversationGroup,
+  McpServerConfig,
+  Message,
+  Settings
+} from '../../shared/types'
 import { backupJsonStore, getSqlite } from './sqlite'
 import {
   chatArtifacts,
@@ -10,6 +17,7 @@ import {
   chatCitations,
   chatContext,
   chatConversations,
+  chatGroups,
   chatMessages
 } from './chat-repos'
 import { chatSkills, seedDefaultSkills } from './skill-repos'
@@ -212,6 +220,14 @@ export const dbConversations = {
   update: (id: string, updates: Partial<Conversation>): void => chatConversations.update(id, updates),
   delete: (id: string): void => chatConversations.delete(id),
   search: (query: string) => chatConversations.search(query)
+}
+
+// Conversation group (folder) helpers - SQLite-backed
+export const dbConversationGroups = {
+  list: (): ConversationGroup[] => chatGroups.list(),
+  create: (group: ConversationGroup): void => chatGroups.create(group),
+  update: (id: string, updates: Partial<ConversationGroup>): void => chatGroups.update(id, updates),
+  delete: (id: string): void => chatGroups.delete(id)
 }
 
 // Message DB Helper Methods - SQLite-backed

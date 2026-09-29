@@ -4,6 +4,7 @@ import type {
   Citation,
   ContextItem,
   Conversation,
+  ConversationGroup,
   ConversationSearchHit,
   GenerationSettings,
   Message,
@@ -45,7 +46,18 @@ function mapConversation(row: any): Conversation {
     archived: Boolean(row.archived),
     systemPrompt: row.system_prompt ?? undefined,
     generationSettings: parseGenSettings(row.generation_settings),
-    activeLeafId: row.active_leaf_id ?? null
+    activeLeafId: row.active_leaf_id ?? null,
+    groupId: row.group_id ?? null
+  }
+}
+
+function mapGroup(row: any): ConversationGroup {
+  return {
+    id: row.id,
+    name: row.name,
+    sortOrder: row.sort_order,
+    collapsed: Boolean(row.collapsed),
+    createdAt: row.created_at
   }
 }
 
@@ -183,8 +195,8 @@ export const chatConversations = {
     const db = getSqlite()
     db.prepare(
       `INSERT INTO conversations
-        (id, title, model, provider_id, created_at, updated_at, pinned, archived, system_prompt, generation_settings, active_leaf_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, title, model, provider_id, created_at, updated_at, pinned, archived, system_prompt, generation_settings, active_leaf_id, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       conv.id,
       conv.title,
@@ -196,7 +208,8 @@ export const chatConversations = {
       conv.archived ? 1 : 0,
       conv.systemPrompt ?? null,
       conv.generationSettings ? JSON.stringify(conv.generationSettings) : null,
-      conv.activeLeafId ?? null
+      conv.activeLeafId ?? null,
+      conv.groupId ?? null
     )
     syncConversationFts(conv.id, conv.title, '')
   },
@@ -213,7 +226,8 @@ export const chatConversations = {
     db.prepare(
       `UPDATE conversations SET
         title = ?, model = ?, provider_id = ?, updated_at = ?,
-        pinned = ?, archived = ?, system_prompt = ?, generation_settings = ?, active_leaf_id = ?
+        pinned = ?, archived = ?, system_prompt = ?, generation_settings = ?, active_leaf_id = ?,
+        group_id = ?
        WHERE id = ?`
     ).run(
       next.title,
@@ -225,6 +239,7 @@ export const chatConversations = {
       next.systemPrompt ?? null,
       next.generationSettings ? JSON.stringify(next.generationSettings) : null,
       next.activeLeafId ?? null,
+      next.groupId ?? null,
       id
     )
     syncConversationFts(id, next.title, '')
@@ -334,6 +349,44 @@ export const chatConversations = {
       updatedAt: r.updated_at,
       pinned: Boolean(r.pinned)
     }))
+  }
+}
+
+export const chatGroups = {
+  list: (): ConversationGroup[] => {
+    const db = getSqlite()
+    return db
+      .prepare('SELECT * FROM conversation_groups ORDER BY sort_order ASC, created_at ASC')
+      .all()
+      .map(mapGroup)
+  },
+
+  create: (group: ConversationGroup): void => {
+    const db = getSqlite()
+    db.prepare(
+      `INSERT INTO conversation_groups (id, name, sort_order, collapsed, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(group.id, group.name, group.sortOrder, group.collapsed ? 1 : 0, group.createdAt)
+  },
+
+  update: (id: string, updates: Partial<Omit<ConversationGroup, 'id' | 'createdAt'>>): void => {
+    const db = getSqlite()
+    const row = db.prepare('SELECT * FROM conversation_groups WHERE id = ?').get(id)
+    if (!row) return
+    const next = { ...mapGroup(row), ...updates }
+    db.prepare(
+      'UPDATE conversation_groups SET name = ?, sort_order = ?, collapsed = ? WHERE id = ?'
+    ).run(next.name, next.sortOrder, next.collapsed ? 1 : 0, id)
+  },
+
+  /** Deleting a group keeps its conversations; they fall back to ungrouped. */
+  delete: (id: string): void => {
+    const db = getSqlite()
+    const run = db.transaction(() => {
+      db.prepare('UPDATE conversations SET group_id = NULL WHERE group_id = ?').run(id)
+      db.prepare('DELETE FROM conversation_groups WHERE id = ?').run(id)
+    })
+    run()
   }
 }
 

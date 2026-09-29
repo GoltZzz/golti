@@ -6,6 +6,7 @@ import {
   dbCitations,
   dbContext,
   dbConversations,
+  dbConversationGroups,
   dbMcpServers,
   dbMessages,
   dbProviders,
@@ -572,6 +573,10 @@ function setupIpcHandlers(): void {
   ipcMain.handle('db:conversations:update', (_, id: string, updates: any) => dbConversations.update(id, updates))
   ipcMain.handle('db:conversations:delete', (_, id: string) => dbConversations.delete(id))
   ipcMain.handle('db:conversations:search', (_, query: string) => dbConversations.search(query))
+  ipcMain.handle('db:groups:list', () => dbConversationGroups.list())
+  ipcMain.handle('db:groups:create', (_, group: any) => dbConversationGroups.create(group))
+  ipcMain.handle('db:groups:update', (_, id: string, updates: any) => dbConversationGroups.update(id, updates))
+  ipcMain.handle('db:groups:delete', (_, id: string) => dbConversationGroups.delete(id))
 
   // DB Messages
   ipcMain.handle('db:messages:list', (_, conversationId: string) => dbMessages.listForConversation(conversationId))

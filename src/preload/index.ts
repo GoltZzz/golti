@@ -6,6 +6,7 @@ import type {
   Conversation,
   ConversationExportOptions,
   ConversationSearchHit,
+  ConversationGroup,
   Message,
   MessageAttachment,
   MessageSearchHit,
@@ -46,6 +47,14 @@ const api = {
     ipcRenderer.invoke('db:conversations:search', query),
   exportConversation: (options: ConversationExportOptions) =>
     ipcRenderer.invoke('conversations:export', options),
+
+  // DB Conversation groups
+  getConversationGroups: (): Promise<ConversationGroup[]> => ipcRenderer.invoke('db:groups:list'),
+  createConversationGroup: (group: ConversationGroup): Promise<void> =>
+    ipcRenderer.invoke('db:groups:create', group),
+  updateConversationGroup: (id: string, updates: Partial<ConversationGroup>): Promise<void> =>
+    ipcRenderer.invoke('db:groups:update', id, updates),
+  deleteConversationGroup: (id: string): Promise<void> => ipcRenderer.invoke('db:groups:delete', id),
 
   // DB Messages
   getMessages: (conversationId: string): Promise<Message[]> =>

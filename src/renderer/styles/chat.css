@@ -3098,3 +3098,119 @@
   border-radius: var(--radius-xs);
   outline: none;
 }
+
+/* Sidebar conversation groups */
+.conv-new-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+}
+
+.conv-new-group:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.conv-group {
+  border-radius: var(--radius-sm);
+  margin-bottom: 2px;
+}
+
+.conv-group.is-drop-target,
+.conv-ungrouped.is-drop-target {
+  background: rgba(255, 255, 255, 0.04);
+  outline: 1px dashed var(--accent-primary);
+}
+
+.conv-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.conv-group-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.conv-group-header:hover .conv-item-actions {
+  display: flex;
+}
+
+.conv-group-header:hover .conv-group-count {
+  display: none;
+}
+
+.conv-group-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.conv-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+}
+
+.conv-group-empty {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.conv-move-menu {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  z-index: 20;
+  min-width: 160px;
+  max-width: 220px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.conv-move-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.conv-move-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-move-menu button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.conv-move-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

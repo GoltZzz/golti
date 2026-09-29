@@ -102,6 +102,16 @@ export interface Conversation {
   systemPrompt?: string
   generationSettings?: GenerationSettings
   activeLeafId?: string | null
+  /** User-defined group (folder) this conversation lives in; null = ungrouped. */
+  groupId?: string | null
+}
+
+export interface ConversationGroup {
+  id: string
+  name: string
+  sortOrder: number
+  collapsed: boolean
+  createdAt: number
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system'
