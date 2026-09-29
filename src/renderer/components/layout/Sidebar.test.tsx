@@ -5,10 +5,11 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { Conversation } from '../../../shared/types'
 
 const updateConversation = vi.fn(async () => undefined)
+const getMessages = vi.fn(async () => [])
 
 // Every other IPC call resolves to nothing; subscriptions return an unsubscribe.
 ;(window as any).goltiAPI = new Proxy(
-  { updateConversation },
+  { updateConversation, getMessages },
   {
     get: (target: Record<string, unknown>, key: string) =>
       target[key] ?? (key.startsWith('on') ? () => () => undefined : async () => undefined)
@@ -24,7 +25,10 @@ function conversation(id: string, title: string): Conversation {
 
 beforeEach(() => {
   updateConversation.mockClear()
+  getMessages.mockClear()
   useChatStore.setState({
+    currentConversationId: null,
+    conversationError: null,
     conversations: [conversation('c1', 'Old title'), conversation('c2', 'Other chat')],
     actionUndoStack: [],
     actionRedoStack: []
@@ -97,5 +101,36 @@ describe('Sidebar conversation rename', () => {
     })
     expect(titleOf('c1')).toBe('Old title')
     expect(updateConversation).toHaveBeenLastCalledWith('c1', { title: 'Old title' })
+  })
+})
+
+describe('Sidebar conversation selection', () => {
+  it('does not reload the chat that is already open', async () => {
+    render(<Sidebar />)
+    await act(async () => {
+      fireEvent.click(screen.getByText('Old title'))
+    })
+    expect(getMessages).toHaveBeenCalledTimes(1)
+    expect(useChatStore.getState().currentConversationId).toBe('c1')
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Old title'))
+      fireEvent.click(screen.getByText('Old title'))
+    })
+    expect(getMessages).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Other chat'))
+    })
+    expect(getMessages).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries the open chat when its last load failed', async () => {
+    useChatStore.setState({ currentConversationId: 'c1', conversationError: 'Failed to load conversation' })
+    render(<Sidebar />)
+    await act(async () => {
+      fireEvent.click(screen.getByText('Old title'))
+    })
+    expect(getMessages).toHaveBeenCalledTimes(1)
   })
 })

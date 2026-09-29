@@ -94,6 +94,10 @@ export const Sidebar: React.FC = () => {
 
   const openConversation = async (id: string) => {
     setActiveTab('chat')
+    // Selecting reloads the chat from disk, which blanks it for a moment; the
+    // open chat only needs that when its last load failed.
+    const { currentConversationId: openId, conversationError: loadError } = useChatStore.getState()
+    if (id === openId && !loadError) return
     await selectConversation(id)
   }
 
