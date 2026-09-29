@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MessageSquare,
   Brain,
@@ -11,17 +11,30 @@ import {
   PanelLeft,
   Trash2,
   Pin,
+  Pencil,
   Archive,
   Download,
   Home,
-  Code2
+  Code2,
+  Folder,
+  FolderPlus,
+  FolderInput,
+  FolderMinus,
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react'
 import { useSidebarStore, ActiveTab } from '../../stores/sidebarStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useMemoryStore } from '../../stores/memoryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { ConfirmDialog } from '../common/ConfirmDialog'
-import { DEFAULT_CONVERSATION_TITLE } from '../../../shared/conversation-title'
+import { DEFAULT_CONVERSATION_TITLE, MAX_USER_TITLE_LENGTH } from '../../../shared/conversation-title'
+import type { Conversation } from '../../../shared/types'
+
+/** DataTransfer type used when dragging a conversation onto a group. */
+const CONV_DRAG_TYPE = 'application/x-golti-conversation'
+/** Drop-target key for the ungrouped list. */
+const UNGROUPED = '__ungrouped__'
 
 export const Sidebar: React.FC = () => {
   const { isCollapsed, activeTab, toggleCollapsed, setActiveTab } = useSidebarStore()
@@ -34,6 +47,13 @@ export const Sidebar: React.FC = () => {
     startBlankConversation,
     deleteConversation,
     pinConversation,
+    renameConversation,
+    conversationGroups,
+    createConversationGroup,
+    renameConversationGroup,
+    toggleConversationGroupCollapsed,
+    deleteConversationGroup,
+    moveConversationToGroup,
     archiveConversation,
     exportConversation,
     searchConversations,
@@ -45,6 +65,57 @@ export const Sidebar: React.FC = () => {
   const [localQuery, setLocalQuery] = useState('')
   const [topTab, setTopTab] = useState<'home' | 'code'>('home')
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null)
+
+  // Enter and clicking away both save; an empty title keeps the old one.
+  const commitRename = () => {
+    if (!renaming) return
+    setRenaming(null)
+    void renameConversation(renaming.id, renaming.draft)
+  }
+  const [renamingGroup, setRenamingGroup] = useState<{ id: string; draft: string } | null>(null)
+  const commitGroupRename = () => {
+    if (!renamingGroup) return
+    setRenamingGroup(null)
+    void renameConversationGroup(renamingGroup.id, renamingGroup.draft)
+  }
+
+  // A new group can be started from the header or from a chat's "Move to" menu,
+  // in which case that chat goes into the group once it's created.
+  const [newGroup, setNewGroup] = useState<{ draft: string; moveConversationId: string | null } | null>(
+    null
+  )
+  const commitNewGroup = async () => {
+    if (!newGroup) return
+    setNewGroup(null)
+    const groupId = await createConversationGroup(newGroup.draft)
+    if (groupId && newGroup.moveConversationId) {
+      await moveConversationToGroup(newGroup.moveConversationId, groupId)
+    }
+  }
+
+  const [pendingGroupDelete, setPendingGroupDelete] = useState<{ id: string; name: string } | null>(null)
+  const [moveMenuFor, setMoveMenuFor] = useState<string | null>(null)
+  const moveMenuRef = useRef<HTMLDivElement | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!moveMenuFor) return
+    const onDown = (e: MouseEvent) => {
+      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) setMoveMenuFor(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoveMenuFor(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moveMenuFor])
+
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [detectedPlatform, setDetectedPlatform] = useState<'darwin' | 'win32' | 'linux'>('darwin')
@@ -82,8 +153,30 @@ export const Sidebar: React.FC = () => {
     )
   }, [conversations, searchHits, localQuery, currentConversationId])
 
+  const isSearching = localQuery.trim().length > 0
+
+  const groupedConversations = useMemo(() => {
+    const known = new Set(conversationGroups.map((g) => g.id))
+    const byGroup = new Map<string, Conversation[]>()
+    const ungrouped: Conversation[] = []
+    for (const conv of displayedConversations) {
+      if (conv.groupId && known.has(conv.groupId)) {
+        const list = byGroup.get(conv.groupId)
+        if (list) list.push(conv)
+        else byGroup.set(conv.groupId, [conv])
+      } else {
+        ungrouped.push(conv)
+      }
+    }
+    return { byGroup, ungrouped }
+  }, [displayedConversations, conversationGroups])
+
   const openConversation = async (id: string) => {
     setActiveTab('chat')
+    // Selecting reloads the chat from disk, which blanks it for a moment; the
+    // open chat only needs that when its last load failed.
+    const { currentConversationId: openId, conversationError: loadError } = useChatStore.getState()
+    if (id === openId && !loadError) return
     await selectConversation(id)
   }
 
@@ -100,6 +193,20 @@ export const Sidebar: React.FC = () => {
     { id: 'cookbook', label: 'Hardware Cookbook', icon: <BookOpen size={18} /> }
   ]
 
+  const confirmGroupDelete = async () => {
+    if (!pendingGroupDelete) return
+    setIsDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteConversationGroup(pendingGroupDelete.id)
+      setPendingGroupDelete(null)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete group.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const confirmDelete = async () => {
     if (!pendingDelete) return
     setIsDeleting(true)
@@ -111,6 +218,219 @@ export const Sidebar: React.FC = () => {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete conversation.')
     } finally {
       setIsDeleting(false)
+    }
+  }
+
+  const renderConversation = (conv: Conversation) => {
+    const isSelected = conv.id === currentConversationId
+    const isGenerating = generatingConversationIds.includes(conv.id)
+    const hit = searchHits.find((h) => h.conversationId === conv.id)
+    return (
+      <div key={conv.id} style={{ position: 'relative' }}>
+        <div
+          className="conv-item"
+          draggable={renaming?.id !== conv.id}
+          onDragStart={(e) => {
+            e.dataTransfer.setData(CONV_DRAG_TYPE, conv.id)
+            e.dataTransfer.effectAllowed = 'move'
+            setDraggingId(conv.id)
+          }}
+          onDragEnd={() => {
+            setDraggingId(null)
+            setDropTarget(null)
+          }}
+          onClick={() => openConversation(conv.id)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '6px 8px',
+            borderRadius: 'var(--radius-sm)',
+            backgroundColor: isSelected ? 'var(--bg-card-hover)' : 'transparent',
+            color: isSelected ? 'var(--text-primary)' : 'var(--text-muted)',
+            fontSize: '13px',
+            cursor: 'pointer',
+            gap: 4
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              {conv.pinned && <Pin size={11} className="conv-pin" />}
+              {isGenerating && (
+                <span
+                  className="conv-generating-dot"
+                  title="Generating…"
+                  aria-label="Generating"
+                />
+              )}
+              {renaming?.id === conv.id ? (
+                <input
+                  className="conv-rename-input"
+                  value={renaming.draft}
+                  maxLength={MAX_USER_TITLE_LENGTH}
+                  autoFocus
+                  aria-label="Conversation title"
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setRenaming({ id: conv.id, draft: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename()
+                    else if (e.key === 'Escape') setRenaming(null)
+                  }}
+                  onBlur={commitRename}
+                />
+              ) : (
+                <span
+                  className="conv-title"
+                  title="Double-click to rename"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation()
+                    setRenaming({ id: conv.id, draft: conv.title })
+                  }}
+                >
+                  {conv.title}
+                </span>
+              )}
+            </div>
+            {hit?.snippet && localQuery.trim() && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {hit.snippet}
+              </div>
+            )}
+          </div>
+          <div className="conv-item-actions" onClick={(e) => e.stopPropagation()}>
+            <button
+              title="Rename"
+              aria-label="Rename conversation"
+              onClick={() => setRenaming({ id: conv.id, draft: conv.title })}
+            >
+              <Pencil size={12} />
+            </button>
+            <button
+              title="Move to group"
+              aria-label="Move conversation to group"
+              aria-expanded={moveMenuFor === conv.id}
+              onClick={() => setMoveMenuFor(moveMenuFor === conv.id ? null : conv.id)}
+            >
+              <FolderInput size={12} />
+            </button>
+            <button
+              title={conv.pinned ? 'Unpin' : 'Pin'}
+              aria-label={conv.pinned ? 'Unpin conversation' : 'Pin conversation'}
+              onClick={() => pinConversation(conv.id, !conv.pinned)}
+            >
+              <Pin size={12} />
+            </button>
+            <button
+              title="Archive"
+              aria-label="Archive conversation"
+              onClick={() => archiveConversation(conv.id)}
+            >
+              <Archive size={12} />
+            </button>
+            <button
+              title="Export Markdown"
+              aria-label="Export conversation"
+              onClick={async () => {
+                await selectConversation(conv.id)
+                await exportConversation('markdown')
+              }}
+            >
+              <Download size={12} />
+            </button>
+            <button
+              title="Delete"
+              aria-label="Delete conversation"
+              onClick={() => {
+                setDeleteError(null)
+                setPendingDelete({ id: conv.id, title: conv.title })
+              }}
+              style={{ color: 'var(--accent-primary)' }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        </div>
+        {moveMenuFor === conv.id && (
+          <div ref={moveMenuRef} className="conv-move-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+            {conversationGroups.map((g) => (
+              <button
+                key={g.id}
+                role="menuitem"
+                disabled={conv.groupId === g.id}
+                onClick={() => {
+                  setMoveMenuFor(null)
+                  void moveConversationToGroup(conv.id, g.id)
+                }}
+              >
+                <Folder size={12} />
+                <span>{g.name}</span>
+              </button>
+            ))}
+            {conv.groupId && (
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMoveMenuFor(null)
+                  void moveConversationToGroup(conv.id, null)
+                }}
+              >
+                <FolderMinus size={12} />
+                <span>Remove from group</span>
+              </button>
+            )}
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMoveMenuFor(null)
+                setNewGroup({ draft: '', moveConversationId: conv.id })
+              }}
+            >
+              <FolderPlus size={12} />
+              <span>New group…</span>
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const dropProps = (target: string | null) => {
+    const key = target ?? UNGROUPED
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!e.dataTransfer.types.includes(CONV_DRAG_TYPE)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (dropTarget !== key) setDropTarget(key)
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(null)
+      },
+      onDrop: (e: React.DragEvent) => {
+        const id = e.dataTransfer.getData(CONV_DRAG_TYPE)
+        setDropTarget(null)
+        if (!id) return
+        e.preventDefault()
+        void moveConversationToGroup(id, target)
+      }
     }
   }
 
@@ -318,6 +638,9 @@ export const Sidebar: React.FC = () => {
           >
             <div
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
                 fontSize: '11px',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -326,7 +649,15 @@ export const Sidebar: React.FC = () => {
                 padding: '0 8px 8px 8px'
               }}
             >
-              Recents
+              <span>Recents</span>
+              <button
+                className="conv-new-group"
+                title="New group"
+                aria-label="New group"
+                onClick={() => setNewGroup({ draft: '', moveConversationId: null })}
+              >
+                <FolderPlus size={14} />
+              </button>
             </div>
 
             <div className="conv-search" style={{ position: 'relative' }}>
@@ -363,104 +694,119 @@ export const Sidebar: React.FC = () => {
               </span>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {displayedConversations.map((conv) => {
-                const isSelected = conv.id === currentConversationId
-                const isGenerating = generatingConversationIds.includes(conv.id)
-                const hit = searchHits.find((h) => h.conversationId === conv.id)
+            {newGroup && (
+              <div className="conv-search">
+                <input
+                  value={newGroup.draft}
+                  maxLength={MAX_USER_TITLE_LENGTH}
+                  autoFocus
+                  placeholder="Group name"
+                  aria-label="New group name"
+                  onChange={(e) => setNewGroup({ ...newGroup, draft: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitNewGroup()
+                    else if (e.key === 'Escape') setNewGroup(null)
+                  }}
+                  onBlur={commitNewGroup}
+                />
+              </div>
+            )}
+
+            {isSearching ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {displayedConversations.map(renderConversation)}
+              </div>
+            ) : (
+              conversationGroups.map((group) => {
+                const items = groupedConversations.byGroup.get(group.id) ?? []
                 return (
                   <div
-                    key={conv.id}
-                    className="conv-item"
-                    onClick={() => openConversation(conv.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 8px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: isSelected ? 'var(--bg-card-hover)' : 'transparent',
-                      color: isSelected ? 'var(--text-primary)' : 'var(--text-muted)',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                      gap: 4
-                    }}
+                    key={group.id}
+                    className={`conv-group${dropTarget === group.id ? ' is-drop-target' : ''}`}
+                    {...dropProps(group.id)}
                   >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}
-                      >
-                        {conv.pinned && <Pin size={11} className="conv-pin" />}
-                        {isGenerating && (
-                          <span
-                            className="conv-generating-dot"
-                            title="Generating…"
-                            aria-label="Generating"
-                          />
-                        )}
-                        {conv.title}
-                      </div>
-                      {hit?.snippet && localQuery.trim() && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: 'var(--text-muted)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                    <div
+                      className="conv-group-header"
+                      role="button"
+                      aria-expanded={!group.collapsed}
+                      onClick={() => toggleConversationGroupCollapsed(group.id)}
+                    >
+                      {group.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                      <Folder size={12} />
+                      {renamingGroup?.id === group.id ? (
+                        <input
+                          className="conv-rename-input"
+                          value={renamingGroup.draft}
+                          maxLength={MAX_USER_TITLE_LENGTH}
+                          autoFocus
+                          aria-label="Group name"
+                          onFocus={(e) => e.currentTarget.select()}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setRenamingGroup({ id: group.id, draft: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitGroupRename()
+                            else if (e.key === 'Escape') setRenamingGroup(null)
+                          }}
+                          onBlur={commitGroupRename}
+                        />
+                      ) : (
+                        <span
+                          className="conv-title"
+                          style={{ flex: 1 }}
+                          title="Double-click to rename"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation()
+                            setRenamingGroup({ id: group.id, draft: group.name })
                           }}
                         >
-                          {hit.snippet}
-                        </div>
+                          {group.name}
+                        </span>
                       )}
+                      <span className="conv-group-count">{items.length}</span>
+                      <div className="conv-item-actions" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          title="Rename group"
+                          aria-label="Rename group"
+                          onClick={() => setRenamingGroup({ id: group.id, draft: group.name })}
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          title="Delete group"
+                          aria-label="Delete group"
+                          onClick={() => {
+                            setDeleteError(null)
+                            setPendingGroupDelete({ id: group.id, name: group.name })
+                          }}
+                          style={{ color: 'var(--accent-primary)' }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="conv-item-actions" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        title={conv.pinned ? 'Unpin' : 'Pin'}
-                        aria-label={conv.pinned ? 'Unpin conversation' : 'Pin conversation'}
-                        onClick={() => pinConversation(conv.id, !conv.pinned)}
-                      >
-                        <Pin size={12} />
-                      </button>
-                      <button
-                        title="Archive"
-                        aria-label="Archive conversation"
-                        onClick={() => archiveConversation(conv.id)}
-                      >
-                        <Archive size={12} />
-                      </button>
-                      <button
-                        title="Export Markdown"
-                        aria-label="Export conversation"
-                        onClick={async () => {
-                          await selectConversation(conv.id)
-                          await exportConversation('markdown')
-                        }}
-                      >
-                        <Download size={12} />
-                      </button>
-                      <button
-                        title="Delete"
-                        aria-label="Delete conversation"
-                        onClick={() => {
-                          setDeleteError(null)
-                          setPendingDelete({ id: conv.id, title: conv.title })
-                        }}
-                        style={{ color: 'var(--accent-primary)' }}
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
+                    {!group.collapsed && (
+                      <div className="conv-group-items">
+                        {items.map(renderConversation)}
+                        {items.length === 0 && (
+                          <div className="conv-group-empty">Drag chats here</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
-              })}
-              {displayedConversations.length === 0 && (
+              })
+            )}
+
+            <div
+              className={dropTarget === UNGROUPED ? 'conv-ungrouped is-drop-target' : 'conv-ungrouped'}
+              style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
+              {...(isSearching ? {} : dropProps(null))}
+            >
+              {!isSearching && groupedConversations.ungrouped.map(renderConversation)}
+              {draggingId && !isSearching && groupedConversations.ungrouped.length === 0 && (
+                <div className="conv-group-empty">Drop here to remove from group</div>
+              )}
+              {displayedConversations.length === 0 && (isSearching || conversationGroups.length === 0) && (
                 <div style={{ padding: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   {localQuery.trim() ? 'No matching chats.' : 'No conversations yet.'}
                 </div>
@@ -524,6 +870,28 @@ export const Sidebar: React.FC = () => {
       onCancel={() => {
         if (isDeleting) return
         setPendingDelete(null)
+        setDeleteError(null)
+      }}
+    />
+
+    <ConfirmDialog
+      open={pendingGroupDelete !== null}
+      icon={<Trash2 size={18} className="delete-model-icon" />}
+      title="Delete group"
+      message={
+        <>
+          Delete the group <strong>{pendingGroupDelete?.name}</strong>? Its chats are kept and move
+          back to Recents.
+        </>
+      }
+      confirmLabel="Delete"
+      busyLabel="Deleting…"
+      isBusy={isDeleting}
+      error={deleteError}
+      onConfirm={confirmGroupDelete}
+      onCancel={() => {
+        if (isDeleting) return
+        setPendingGroupDelete(null)
         setDeleteError(null)
       }}
     />

@@ -5,6 +5,7 @@ import type {
   ComposerMode,
   ContextItem,
   Conversation,
+  ConversationGroup,
   GenerationSettings,
   Message,
   MessageAttachment,
@@ -13,6 +14,7 @@ import type {
   ModelInfo,
   StreamChunkPayload,
   TokenBudget,
+  ToolCallRecord,
   WebSearchStatus
 } from '../../shared/types'
 import {
@@ -30,7 +32,11 @@ import {
 } from '../../shared/research-progress'
 import { useInspectorStore } from './inspectorStore'
 import { useSkillStore } from './skillStore'
-import { DEFAULT_CONVERSATION_TITLE, fallbackTitle } from '../../shared/conversation-title'
+import {
+  DEFAULT_CONVERSATION_TITLE,
+  fallbackTitle,
+  normalizeUserTitle
+} from '../../shared/conversation-title'
 
 declare global {
   interface Window {
@@ -47,6 +53,7 @@ interface UndoEntry {
 
 interface ChatState {
   conversations: Conversation[]
+  conversationGroups: ConversationGroup[]
   currentConversationId: string | null
   messages: Message[]
   visibleMessages: Message[]
@@ -92,6 +99,13 @@ interface ChatState {
   startBlankConversation: () => void
   deleteConversation: (id: string) => Promise<void>
   pinConversation: (id: string, pinned: boolean) => Promise<void>
+  renameConversation: (id: string, title: string) => Promise<void>
+  fetchConversationGroups: () => Promise<void>
+  createConversationGroup: (name: string) => Promise<string | null>
+  renameConversationGroup: (id: string, name: string) => Promise<void>
+  toggleConversationGroupCollapsed: (id: string) => Promise<void>
+  deleteConversationGroup: (id: string) => Promise<void>
+  moveConversationToGroup: (id: string, groupId: string | null) => Promise<void>
   archiveConversation: (id: string) => Promise<void>
   exportConversation: (format: 'markdown' | 'json') => Promise<void>
   searchConversations: (query: string) => Promise<void>
@@ -205,6 +219,13 @@ function conversationScopedReset() {
   }
 }
 
+function mergeToolCall(existing: ToolCallRecord[] | undefined, next: ToolCallRecord): ToolCallRecord[] {
+  const list = existing ?? []
+  return list.some((c) => c.id === next.id)
+    ? list.map((c) => (c.id === next.id ? next : c))
+    : [...list, next]
+}
+
 /** Monotonic tokens so async loads cannot overwrite a newer selection. */
 let selectSeq = 0
 let budgetSeq = 0
@@ -213,6 +234,7 @@ let artifactsSeq = 0
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
+  conversationGroups: [],
   currentConversationId: null,
   messages: [],
   visibleMessages: [],
@@ -458,6 +480,153 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await window.goltiAPI.updateConversation(id, { pinned })
         await get().fetchConversations()
       }
+    })
+    set({ actionRedoStack: [] })
+  },
+
+  renameConversation: async (id: string, rawTitle: string) => {
+    const title = normalizeUserTitle(rawTitle)
+    const prev = get().conversations.find((c) => c.id === id)?.title
+    if (!title || prev === undefined || title === prev) return
+
+    const apply = async (next: string) => {
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, title: next } : c))
+      }))
+      await window.goltiAPI.updateConversation(id, { title: next })
+    }
+
+    try {
+      await apply(title)
+    } catch (err) {
+      console.error('Failed to rename conversation:', err)
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, title: prev } : c)),
+        conversationError: 'Failed to rename conversation'
+      }))
+      return
+    }
+    get().actionUndoStack.push({
+      id: `rename_${Date.now()}`,
+      label: 'Rename conversation',
+      undo: () => apply(prev),
+      redo: () => apply(title)
+    })
+    set({ actionRedoStack: [] })
+  },
+
+  fetchConversationGroups: async () => {
+    try {
+      const groups = await window.goltiAPI.getConversationGroups()
+      set({ conversationGroups: Array.isArray(groups) ? groups : [] })
+    } catch (err) {
+      console.error('Failed to fetch conversation groups:', err)
+    }
+  },
+
+  createConversationGroup: async (rawName: string) => {
+    const name = normalizeUserTitle(rawName)
+    if (!name) return null
+    const groups = get().conversationGroups
+    const group: ConversationGroup = {
+      id: newClientId('group'),
+      name,
+      sortOrder: groups.reduce((max, g) => Math.max(max, g.sortOrder), -1) + 1,
+      collapsed: false,
+      createdAt: Date.now()
+    }
+    set({ conversationGroups: [...groups, group] })
+    try {
+      await window.goltiAPI.createConversationGroup(group)
+    } catch (err) {
+      console.error('Failed to create group:', err)
+      set((state) => ({
+        conversationGroups: state.conversationGroups.filter((g) => g.id !== group.id),
+        conversationError: 'Failed to create group'
+      }))
+      return null
+    }
+    return group.id
+  },
+
+  renameConversationGroup: async (id: string, rawName: string) => {
+    const name = normalizeUserTitle(rawName)
+    const prev = get().conversationGroups.find((g) => g.id === id)?.name
+    if (!name || prev === undefined || name === prev) return
+    const apply = async (next: string) => {
+      set((state) => ({
+        conversationGroups: state.conversationGroups.map((g) => (g.id === id ? { ...g, name: next } : g))
+      }))
+      await window.goltiAPI.updateConversationGroup(id, { name: next })
+    }
+    try {
+      await apply(name)
+    } catch (err) {
+      console.error('Failed to rename group:', err)
+      set((state) => ({
+        conversationGroups: state.conversationGroups.map((g) => (g.id === id ? { ...g, name: prev } : g)),
+        conversationError: 'Failed to rename group'
+      }))
+      return
+    }
+    get().actionUndoStack.push({
+      id: `group_rename_${Date.now()}`,
+      label: 'Rename group',
+      undo: () => apply(prev),
+      redo: () => apply(name)
+    })
+    set({ actionRedoStack: [] })
+  },
+
+  toggleConversationGroupCollapsed: async (id: string) => {
+    const group = get().conversationGroups.find((g) => g.id === id)
+    if (!group) return
+    const collapsed = !group.collapsed
+    set((state) => ({
+      conversationGroups: state.conversationGroups.map((g) => (g.id === id ? { ...g, collapsed } : g))
+    }))
+    try {
+      await window.goltiAPI.updateConversationGroup(id, { collapsed })
+    } catch (err) {
+      // Collapse state is cosmetic; keep the UI responsive even if it didn't persist.
+      console.error('Failed to save group collapse state:', err)
+    }
+  },
+
+  deleteConversationGroup: async (id: string) => {
+    await window.goltiAPI.deleteConversationGroup(id)
+    set((state) => ({
+      conversationGroups: state.conversationGroups.filter((g) => g.id !== id),
+      conversations: state.conversations.map((c) => (c.groupId === id ? { ...c, groupId: null } : c))
+    }))
+  },
+
+  moveConversationToGroup: async (id: string, groupId: string | null) => {
+    const conv = get().conversations.find((c) => c.id === id)
+    if (!conv) return
+    const prev = conv.groupId ?? null
+    if (prev === groupId) return
+    const apply = async (next: string | null) => {
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, groupId: next } : c))
+      }))
+      await window.goltiAPI.updateConversation(id, { groupId: next })
+    }
+    try {
+      await apply(groupId)
+    } catch (err) {
+      console.error('Failed to move conversation:', err)
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === id ? { ...c, groupId: prev } : c)),
+        conversationError: 'Failed to move conversation'
+      }))
+      return
+    }
+    get().actionUndoStack.push({
+      id: `move_${Date.now()}`,
+      label: 'Move conversation',
+      undo: () => apply(prev),
+      redo: () => apply(groupId)
     })
     set({ actionRedoStack: [] })
   },
@@ -993,6 +1162,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         searchStatus,
         researchPlan,
         researchStep,
+        toolCall,
         finishReason
       } = chunk
 
@@ -1041,7 +1211,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               error: error || msg.error,
               tokensIn: usage?.promptTokens ?? msg.tokensIn,
               tokensOut: usage?.completionTokens ?? msg.tokensOut,
-              finishReason: done ? finishReason : undefined
+              finishReason: done ? finishReason : undefined,
+              toolCalls: toolCall ? mergeToolCall(msg.toolCalls, toolCall) : msg.toolCalls
             }
           }
           return msg

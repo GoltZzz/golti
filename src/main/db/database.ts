@@ -1,7 +1,14 @@
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { AIProviderConfig, Conversation, Message, Settings } from '../../shared/types'
+import {
+  AIProviderConfig,
+  Conversation,
+  ConversationGroup,
+  McpServerConfig,
+  Message,
+  Settings
+} from '../../shared/types'
 import { backupJsonStore, getSqlite } from './sqlite'
 import {
   chatArtifacts,
@@ -10,6 +17,7 @@ import {
   chatCitations,
   chatContext,
   chatConversations,
+  chatGroups,
   chatMessages
 } from './chat-repos'
 import { chatSkills, seedDefaultSkills } from './skill-repos'
@@ -17,6 +25,7 @@ import { chatSkills, seedDefaultSkills } from './skill-repos'
 interface DBData {
   settings: Settings
   providers: AIProviderConfig[]
+  mcpServers?: McpServerConfig[]
   conversations: Conversation[]
   messages: Message[]
   _chatMigratedToSqlite?: boolean
@@ -213,6 +222,14 @@ export const dbConversations = {
   search: (query: string) => chatConversations.search(query)
 }
 
+// Conversation group (folder) helpers - SQLite-backed
+export const dbConversationGroups = {
+  list: (): ConversationGroup[] => chatGroups.list(),
+  create: (group: ConversationGroup): void => chatGroups.create(group),
+  update: (id: string, updates: Partial<ConversationGroup>): void => chatGroups.update(id, updates),
+  delete: (id: string): void => chatGroups.delete(id)
+}
+
 // Message DB Helper Methods - SQLite-backed
 export const dbMessages = {
   listForConversation: (conversationId: string): Message[] =>
@@ -255,6 +272,30 @@ export const dbProviders = {
   delete: (id: string): void => {
     const db = loadDb()
     db.providers = db.providers.filter((p) => p.id !== id)
+    saveDb()
+  }
+}
+
+// MCP Server DB Helper Methods - JSON
+export const dbMcpServers = {
+  list: (): McpServerConfig[] => loadDb().mcpServers ?? [],
+
+  get: (id: string): McpServerConfig | undefined =>
+    (loadDb().mcpServers ?? []).find((s) => s.id === id),
+
+  upsert: (server: McpServerConfig): void => {
+    const db = loadDb()
+    const servers = db.mcpServers ?? []
+    const index = servers.findIndex((s) => s.id === server.id)
+    if (index !== -1) servers[index] = server
+    else servers.push(server)
+    db.mcpServers = servers
+    saveDb()
+  },
+
+  delete: (id: string): void => {
+    const db = loadDb()
+    db.mcpServers = (db.mcpServers ?? []).filter((s) => s.id !== id)
     saveDb()
   }
 }

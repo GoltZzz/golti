@@ -54,7 +54,7 @@ export const ProviderConfig: React.FC = () => {
   }
 
   return (
-    <div className="settings-panel settings-panel--narrow">
+    <div className="settings-panel">
       <div>
         <h3 className="settings-card__title">AI Providers & Backends</h3>
         <p className="settings-card__desc">

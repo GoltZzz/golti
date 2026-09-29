@@ -6,6 +6,8 @@ import type {
   Conversation,
   ConversationExportOptions,
   ConversationSearchHit,
+  ConversationGroup,
+  StartupState,
   Message,
   MessageAttachment,
   MessageSearchHit,
@@ -25,11 +27,25 @@ import type {
   SearchRuntimeProgress,
   InstalledLocalModelInfo,
   CookbookModel,
-  VramReading
+  VramReading,
+  McpServerConfig,
+  McpServerState,
+  ToolApprovalDecision
 } from '../shared/types'
 import type { HFModelSummary } from '../shared/hf-catalog'
 
 const api = {
+  // Canvas previews load from their own origin, outside the app's CSP.
+  registerPreview: (html: string): Promise<string> => ipcRenderer.invoke('preview:register', html),
+
+  // Startup progress (welcome screen)
+  getStartupState: (): Promise<StartupState> => ipcRenderer.invoke('startup:get-state'),
+  onStartupProgress: (callback: (state: StartupState) => void) => {
+    const listener = (_: any, state: StartupState) => callback(state)
+    ipcRenderer.on('startup:progress', listener)
+    return () => ipcRenderer.removeListener('startup:progress', listener)
+  },
+
   // DB Conversations
   getConversations: (): Promise<Conversation[]> => ipcRenderer.invoke('db:conversations:list'),
   getConversation: (id: string): Promise<Conversation | undefined> =>
@@ -43,6 +59,14 @@ const api = {
     ipcRenderer.invoke('db:conversations:search', query),
   exportConversation: (options: ConversationExportOptions) =>
     ipcRenderer.invoke('conversations:export', options),
+
+  // DB Conversation groups
+  getConversationGroups: (): Promise<ConversationGroup[]> => ipcRenderer.invoke('db:groups:list'),
+  createConversationGroup: (group: ConversationGroup): Promise<void> =>
+    ipcRenderer.invoke('db:groups:create', group),
+  updateConversationGroup: (id: string, updates: Partial<ConversationGroup>): Promise<void> =>
+    ipcRenderer.invoke('db:groups:update', id, updates),
+  deleteConversationGroup: (id: string): Promise<void> => ipcRenderer.invoke('db:groups:delete', id),
 
   // DB Messages
   getMessages: (conversationId: string): Promise<Message[]> =>
@@ -194,6 +218,19 @@ const api = {
     return () => ipcRenderer.removeListener('search-runtime:status-change', listener)
   },
 
+  // MCP servers
+  listMcpServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke('mcp:servers:list'),
+  saveMcpServer: (server: McpServerConfig): Promise<McpServerConfig> =>
+    ipcRenderer.invoke('mcp:servers:save', server),
+  deleteMcpServer: (id: string): Promise<void> => ipcRenderer.invoke('mcp:servers:delete', id),
+  getMcpStatus: (): Promise<McpServerState[]> => ipcRenderer.invoke('mcp:status'),
+  reconnectMcpServer: (id: string): Promise<McpServerState[]> => ipcRenderer.invoke('mcp:reconnect', id),
+  onMcpStatusChange: (callback: (states: McpServerState[]) => void) => {
+    const listener = (_: unknown, states: McpServerState[]) => callback(states)
+    ipcRenderer.on('mcp:status-change', listener)
+    return () => ipcRenderer.removeListener('mcp:status-change', listener)
+  },
+
   // AI & Models
   getModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('ai:models'),
   sendMessage: (
@@ -202,6 +239,8 @@ const api = {
     ipcRenderer.invoke('ai:chat', payload),
   cancelGeneration: (generationId: string): Promise<boolean> =>
     ipcRenderer.invoke('ai:chat:cancel', generationId),
+  respondToolApproval: (toolCallId: string, decision: ToolApprovalDecision): Promise<boolean> =>
+    ipcRenderer.invoke('ai:tool-approval', toolCallId, decision),
   resyncGeneration: (
     conversationId: string
   ): Promise<{ generationId: string; messageId: string } | null> =>

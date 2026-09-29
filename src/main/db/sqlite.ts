@@ -292,6 +292,27 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
         ON message_attachments(conversation_id, message_id);
       CREATE INDEX IF NOT EXISTS idx_attachments_storage ON message_attachments(storage_path);
     `
+  },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE messages ADD COLUMN tool_calls TEXT;
+    `
+  },
+  {
+    version: 11,
+    sql: `
+      CREATE TABLE IF NOT EXISTS conversation_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        collapsed INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      ALTER TABLE conversations ADD COLUMN group_id TEXT
+        REFERENCES conversation_groups(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_conversations_group ON conversations(group_id);
+    `
   }
 ]
 

@@ -13,6 +13,7 @@ export const ChatView: React.FC = () => {
     sendMessage,
     isGenerating,
     fetchConversations,
+    fetchConversationGroups,
     setupStreamListener,
     undoAction,
     redoAction,
@@ -30,6 +31,7 @@ export const ChatView: React.FC = () => {
 
   useEffect(() => {
     fetchConversations()
+    fetchConversationGroups()
     fetchModels()
     hydrateWebSearchPreference()
     const cleanup = setupStreamListener()

@@ -10,7 +10,8 @@ import {
   chatMessages,
   chatContext,
   chatArtifacts,
-  chatAttachments
+  chatAttachments,
+  chatGroups
 } from './chat-repos'
 
 describe('sqlite chat repos', () => {
@@ -235,6 +236,35 @@ describe('sqlite chat repos', () => {
 
     chatMessages.update('a9', { finishReason: undefined })
     expect(chatMessages.get('a9')?.finishReason).toBeUndefined()
+  })
+
+  it('groups conversations and ungroups them when the group is deleted', () => {
+    chatGroups.create({ id: 'g1', name: 'Work', sortOrder: 1, collapsed: false, createdAt: 1 })
+    chatGroups.create({ id: 'g0', name: 'Home', sortOrder: 0, collapsed: false, createdAt: 2 })
+    chatConversations.create({
+      id: 'cg',
+      title: 'Grouped',
+      model: 'm',
+      providerId: 'p',
+      createdAt: 1,
+      updatedAt: 1,
+      pinned: false,
+      archived: false,
+      groupId: 'g1'
+    })
+
+    expect(chatGroups.list().map((g) => g.id)).toEqual(['g0', 'g1'])
+    expect(chatConversations.get('cg')?.groupId).toBe('g1')
+
+    chatGroups.update('g1', { name: 'Job', collapsed: true })
+    expect(chatGroups.list().find((g) => g.id === 'g1')).toMatchObject({ name: 'Job', collapsed: true })
+
+    chatConversations.update('cg', { groupId: 'g0' })
+    expect(chatConversations.get('cg')?.groupId).toBe('g0')
+
+    chatGroups.delete('g0')
+    expect(chatGroups.list().map((g) => g.id)).toEqual(['g1'])
+    expect(chatConversations.get('cg')?.groupId).toBeNull()
   })
 
   it('runs migrations idempotently', () => {

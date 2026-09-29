@@ -8,9 +8,160 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      /*
+       * Welcome screen. These rules live here, not in the CSS bundle, so the
+       * static splash below paints before any JS or stylesheet has loaded.
+       * StartupOverlay.tsx reuses the same classes to take over seamlessly.
+       */
+      html,
+      body {
+        margin: 0;
+        background: #0b0c10;
+      }
+      .startup-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding-top: 38px; /* --height-titlebar: centre under the title bar */
+        box-sizing: border-box;
+        background: #0b0c10;
+        color: #9aa0b4;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        user-select: none;
+        transition: opacity 320ms ease;
+      }
+      .startup-screen.is-static {
+        -webkit-app-region: drag;
+      }
+      .startup-screen.is-overlay {
+        top: 38px;
+        padding-top: 0;
+      }
+      .startup-screen.is-leaving {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .startup-logo {
+        width: 64px;
+        height: 77px;
+        /* The asset strokes in near-black for light backgrounds; flip it for the dark splash. */
+        filter: invert(1);
+        animation: startup-bob 2.4s ease-in-out infinite;
+      }
+      .startup-title {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        color: #f0f2f8;
+      }
+      .startup-status {
+        min-height: 18px;
+        font-size: 13px;
+      }
+      .startup-bar {
+        position: relative;
+        width: 220px;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .startup-bar > span {
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: 2px;
+        background: #e06c75;
+        transition: width 300ms ease;
+      }
+      .startup-bar.is-indeterminate > span {
+        width: 35%;
+        animation: startup-sweep 1.2s ease-in-out infinite;
+      }
+      .startup-steps {
+        margin: 6px 0 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 220px;
+        font-size: 12px;
+      }
+      .startup-steps li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #5c637a;
+      }
+      .startup-steps li[data-status='running'] {
+        color: #f0f2f8;
+      }
+      .startup-steps li[data-status='done'] {
+        color: #9aa0b4;
+      }
+      .startup-steps li[data-status='error'] {
+        color: #e06c75;
+      }
+      .startup-step-icon {
+        display: inline-flex;
+        width: 12px;
+        justify-content: center;
+      }
+      .startup-steps li[data-status='done'] .startup-step-icon {
+        color: #98c379;
+      }
+      .startup-skip {
+        margin-top: 10px;
+        padding: 6px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        background: transparent;
+        color: #9aa0b4;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        animation: startup-fade-in 300ms ease;
+      }
+      .startup-skip:hover {
+        color: #f0f2f8;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      @keyframes startup-bob {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-4px); }
+      }
+      @keyframes startup-sweep {
+        0% { left: -35%; }
+        100% { left: 100%; }
+      }
+      @keyframes startup-fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .startup-logo,
+        .startup-bar.is-indeterminate > span {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Replaced as soon as React mounts; StartupOverlay continues from here. -->
+      <div class="startup-screen is-static" role="status" aria-label="Starting Golti">
+        <img class="startup-logo" src="./assets/golti-egg.svg" alt="" />
+        <div class="startup-title">Golti</div>
+        <div class="startup-status">Starting…</div>
+        <div class="startup-bar is-indeterminate"><span></span></div>
+      </div>
+    </div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

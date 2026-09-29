@@ -6,7 +6,7 @@
   "author": "golti",
   "homepage": "https://github.com/golti/golti",
   "scripts": {
-    "dev": "node scripts/patch-electron-name.js && npx @electron/rebuild -f -w better-sqlite3 && electron-vite dev",
+    "dev": "node scripts/patch-electron-name.js && node scripts/prepare-electron-native.js && electron-vite dev",
     "build": "npm run typecheck && electron-builder install-app-deps && electron-vite build",
     "postinstall": "electron-builder install-app-deps && node scripts/patch-electron-name.js",
     "typecheck": "tsc --noEmit",
@@ -22,6 +22,7 @@
     "build:linux": "npm run stage:search-runtime && npm run build && electron-builder --linux"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "adm-zip": "^0.6.0",
     "better-sqlite3": "^12.11.1",
     "lucide-react": "^0.475.0",

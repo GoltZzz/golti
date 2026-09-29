@@ -6,6 +6,8 @@ import {
   dbCitations,
   dbContext,
   dbConversations,
+  dbConversationGroups,
+  dbMcpServers,
   dbMessages,
   dbProviders,
   dbSettings,
@@ -53,7 +55,21 @@ import {
   pickContextFolder
 } from './services/context-ingest'
 import { exportConversation } from './services/export'
-import type { SendMessagePayload, InstalledLocalModelInfo } from '../shared/types'
+import type {
+  SendMessagePayload,
+  InstalledLocalModelInfo,
+  McpServerConfig,
+  ToolApprovalDecision
+} from '../shared/types'
+import {
+  getMcpServerStates,
+  onMcpStatusChange,
+  reconnectMcpServer,
+  stopAllMcpServers,
+  syncMcpServers
+} from './mcp/mcp-manager'
+import { resolveToolApproval } from './mcp/tool-approval'
+import { validateMcpServerConfig } from '../shared/mcp-tools'
 import { MODEL_CATALOG } from '../shared/model-catalog'
 import { testWebSearch } from './services/web-search'
 import { getAvailableMemoryBytes } from './system/memory'
@@ -61,6 +77,7 @@ import { readVram } from './system/vram'
 import { readGgufModelInfo } from './engine/gguf'
 import {
   initEngine,
+  pickStartupModel,
   stopEngine,
   startEngine,
   getEngineState,
@@ -95,6 +112,20 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import { SystemInfoFull } from '../shared/types'
+import {
+  handlePreviewScheme,
+  installNavigationGuards,
+  registerPreview,
+  registerPreviewScheme
+} from './window-security'
+import { pathToFileURL } from 'url'
+import {
+  finishStartup,
+  getStartupState,
+  onStartupProgress,
+  runStartupStep,
+  setStartupStep
+} from './startup-progress'
 import { normalizeSkillName, isBuiltinSkill, BUILTIN_SKILL_NAMES } from '../shared/types'
 
 const execAsync = promisify(exec)
@@ -336,6 +367,17 @@ async function getFullSystemInfo(): Promise<SystemInfoFull> {
 
 export let mainWindow: BrowserWindow | null = null
 
+/** The page the app window is allowed to show; see window-security.ts. */
+function appEntryUrl(): string {
+  return (
+    process.env.ELECTRON_RENDERER_URL ??
+    pathToFileURL(path.join(__dirname, '../renderer/index.html')).href
+  )
+}
+
+registerPreviewScheme()
+installNavigationGuards(appEntryUrl)
+
 /**
  * Send an IPC message to the renderer, but only if the window and its
  * webContents are still alive. During quit the process `exit` events can fire
@@ -406,11 +448,50 @@ function createWindow(): void {
     cancelAllGenerations()
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  mainWindow.loadURL(appEntryUrl())
+}
+
+async function runBackgroundStartup(): Promise<void> {
+  await runStartupStep('attachments', () => {
+    const swept = sweepAttachments()
+    if (swept.rows || swept.files) {
+      console.log(`[attachments] swept ${swept.rows} stale rows, ${swept.files} orphaned files`)
+    }
+  })
+
+  // The search runtime check runs alongside the model servers below.
+  const search = runStartupStep('search', async () => {
+    await initSearchRuntime()
+  })
+
+  // MCP servers are independent child processes or remote endpoints, so they
+  // connect in the background without waiting on the model servers below.
+  await runStartupStep('mcp', () => {
+    const servers = dbMcpServers.list()
+    if (!servers.some((s) => s.enabled)) return 'skipped'
+    syncMcpServers(servers)
+  })
+
+  // Model servers start one at a time: loading several GGUF files at once
+  // saturates disk and memory bandwidth. Embedding and memory servers also
+  // start on demand, so this only warms them ahead of first use.
+  const settings = dbSettings.get()
+  await runStartupStep('engine', async () => {
+    if (settings.engineEnabled === false) return 'skipped'
+    const { layers, device } = resolveEngineOffload(settings)
+    await initEngine({
+      preferredModelPath: settings.lastEngineModel,
+      port: settings.enginePort,
+      gpuLayers: layers,
+      deviceId: device
+    })
+  })
+  await runStartupStep('embedding', () => prewarmEmbeddingServer())
+  await runStartupStep('memory', async () => {
+    if (!dbSettings.get().memoryModel?.trim()) return 'skipped'
+    await prewarmMemoryServer()
+  })
+  await search
 }
 
 app.whenReady().then(() => {
@@ -420,32 +501,49 @@ app.whenReady().then(() => {
     app.dock.setIcon(iconPath)
   }
 
+  setStartupStep('database', 'running')
   initDatabase()
-  try {
-    const swept = sweepAttachments()
-    if (swept.rows || swept.files) {
-      console.log(`[attachments] swept ${swept.rows} stale rows, ${swept.files} orphaned files`)
-    }
-  } catch (err) {
-    console.warn('[attachments] sweep failed:', err)
-  }
+  setStartupStep('database', 'done')
   setupIpcHandlers()
+  handlePreviewScheme()
   createWindow()
 
   // Subscribe engine status changes to send to renderer
   onEngineStatusChange((state) => {
     sendToRenderer('engine:status-change', state)
+    // Remember the loaded model so the next launch starts the same one.
+    if (state.status === 'running' && state.loadedModel) {
+      if (dbSettings.get().lastEngineModel !== state.loadedModel) {
+        dbSettings.update({ lastEngineModel: state.loadedModel })
+      }
+    }
   })
 
   onSearchRuntimeStatusChange((state) => {
     sendToRenderer('search-runtime:status-change', state)
   })
 
-  // Auto-init engine if enabled
-  initEngine().catch((err) => console.warn('[Engine Init Warning]', err))
-  initSearchRuntime().catch((err) => console.warn('[SearchRuntime Init Warning]', err))
-  prewarmEmbeddingServer().catch((err) => console.warn('[EmbeddingServer Init Warning]', err))
-  prewarmMemoryServer().catch((err) => console.warn('[MemoryServer Init Warning]', err))
+  onMcpStatusChange((states) => {
+    sendToRenderer('mcp:status-change', states)
+  })
+
+  onStartupProgress((state) => {
+    sendToRenderer('startup:progress', state)
+  })
+
+  // Heavy background work waits until the window has painted, so model loads
+  // and disk scans don't compete with the renderer for CPU and I/O.
+  let backgroundStarted = false
+  const startBackgroundServices = (): void => {
+    if (backgroundStarted) return
+    backgroundStarted = true
+    runBackgroundStartup()
+      .catch((err) => console.warn('[Startup Warning]', err))
+      // Never leave the welcome screen waiting on a sequence that blew up.
+      .finally(finishStartup)
+  }
+  mainWindow?.once('ready-to-show', startBackgroundServices)
+  setTimeout(startBackgroundServices, 5000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -487,7 +585,7 @@ app.on('before-quit', (event) => {
   }
 
   stopMemoryServer()
-  Promise.all([stopEngine(), stopSearchRuntime(), stopEmbeddingServer()])
+  Promise.all([stopEngine(), stopSearchRuntime(), stopEmbeddingServer(), stopAllMcpServers()])
     .catch((err) => console.warn('[Quit cleanup]', err))
     .finally(() => {
       cleanupComplete = true
@@ -516,6 +614,12 @@ function setupIpcHandlers(): void {
   ipcMain.handle('db:conversations:update', (_, id: string, updates: any) => dbConversations.update(id, updates))
   ipcMain.handle('db:conversations:delete', (_, id: string) => dbConversations.delete(id))
   ipcMain.handle('db:conversations:search', (_, query: string) => dbConversations.search(query))
+  ipcMain.handle('startup:get-state', () => getStartupState())
+  ipcMain.handle('preview:register', (_, html: string) => registerPreview(String(html)))
+  ipcMain.handle('db:groups:list', () => dbConversationGroups.list())
+  ipcMain.handle('db:groups:create', (_, group: any) => dbConversationGroups.create(group))
+  ipcMain.handle('db:groups:update', (_, id: string, updates: any) => dbConversationGroups.update(id, updates))
+  ipcMain.handle('db:groups:delete', (_, id: string) => dbConversationGroups.delete(id))
 
   // DB Messages
   ipcMain.handle('db:messages:list', (_, conversationId: string) => dbMessages.listForConversation(conversationId))
@@ -731,6 +835,26 @@ function setupIpcHandlers(): void {
   ipcMain.handle('settings:get', () => dbSettings.get())
   ipcMain.handle('settings:update', (_, settings: any) => dbSettings.update(settings))
 
+  // MCP servers
+  ipcMain.handle('mcp:servers:list', () => dbMcpServers.list())
+  ipcMain.handle('mcp:servers:save', (_, server: McpServerConfig) => {
+    const problem = validateMcpServerConfig(server)
+    if (problem) throw new Error(problem)
+    dbMcpServers.upsert(server)
+    syncMcpServers(dbMcpServers.list())
+    return server
+  })
+  ipcMain.handle('mcp:servers:delete', (_, id: string) => {
+    dbMcpServers.delete(id)
+    syncMcpServers(dbMcpServers.list())
+  })
+  ipcMain.handle('mcp:status', () => getMcpServerStates())
+  ipcMain.handle('mcp:reconnect', async (_, id: string) => {
+    const server = dbMcpServers.get(id)
+    if (server) await reconnectMcpServer(server)
+    return getMcpServerStates()
+  })
+
   // Local web search runtime
   ipcMain.handle('web-search:test', async (_, query?: string) => testWebSearch(query))
   ipcMain.handle('search-runtime:status', () => getSearchRuntimeState())
@@ -767,6 +891,9 @@ function setupIpcHandlers(): void {
   })
 
   ipcMain.handle('ai:chat:cancel', (_, generationId: string) => cancelGeneration(generationId))
+  ipcMain.handle('ai:tool-approval', (_, toolCallId: string, decision: ToolApprovalDecision) =>
+    resolveToolApproval(toolCallId, decision)
+  )
   ipcMain.handle('ai:chat:resync', (_, conversationId: string) =>
     resyncGeneration(mainWindow, conversationId)
   )
@@ -927,7 +1054,7 @@ function setupIpcHandlers(): void {
   ipcMain.handle('engine:start', async () => {
     const settings = dbSettings.get()
     const models = listLocalModels()
-    const defaultModel = models.length > 0 ? models[0].filepath : undefined
+    const defaultModel = pickStartupModel(models, settings.lastEngineModel)
     const { layers, device } = resolveEngineOffload(settings)
     return await startEngine(defaultModel, settings.enginePort, layers, device)
   })

@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { exec } from 'child_process'
+import { exec, execFileSync, spawn, ChildProcess, SpawnOptions } from 'child_process'
 import { promisify } from 'util'
 import { app } from 'electron'
 import AdmZip from 'adm-zip'
@@ -87,6 +87,44 @@ export function getEngineSpawnEnv(
   const libPath = Array.from(dirs).join(path.delimiter)
   env[key] = env[key] ? `${libPath}${path.delimiter}${env[key]}` : libPath
   return env
+}
+
+let pdeathsigSupported: boolean | undefined
+
+/**
+ * Linux only: `setpriv --pdeathsig KILL` has the kernel kill the server the
+ * moment Golti's main process dies, including crashes and SIGKILL where no quit
+ * handler runs. Without it the server is reparented to init and keeps its model
+ * resident in VRAM. `--pdeathsig` needs util-linux 2.33+, so probe once.
+ */
+function supportsPdeathsig(): boolean {
+  if (process.platform !== 'linux') return false
+  if (pdeathsigSupported === undefined) {
+    try {
+      const help = execFileSync('setpriv', ['--help'], { encoding: 'utf8', timeout: 2000 })
+      pdeathsigSupported = help.includes('--pdeathsig')
+    } catch {
+      pdeathsigSupported = false
+    }
+  }
+  return pdeathsigSupported
+}
+
+/**
+ * Spawns an engine binary (llama-server) so it cannot outlive Golti. Windows
+ * gets this for free: libuv puts non-detached children in a kill-on-close job.
+ */
+export function spawnEngineBinary(binaryPath: string, args: string[]): ChildProcess {
+  const options: SpawnOptions = {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+    env: getEngineSpawnEnv(binaryPath)
+  }
+  if (supportsPdeathsig()) {
+    // setpriv execs in place, so the pid and signals still reach llama-server.
+    return spawn('setpriv', ['--pdeathsig', 'KILL', '--', binaryPath, ...args], options)
+  }
+  return spawn(binaryPath, args, options)
 }
 
 export function getEngineDir(): string {

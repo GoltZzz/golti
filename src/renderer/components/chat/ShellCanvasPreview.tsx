@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Monitor, Smartphone, Tablet, RefreshCw, ZoomIn, ZoomOut, Maximize2, AlertCircle, Wrench } from 'lucide-react'
-import mermaid from 'mermaid'
 import { explainMermaidError, sanitizeMermaid } from '../../../shared/mermaid-sanitize'
 
 interface ShellCanvasPreviewProps {
@@ -17,6 +16,29 @@ interface MermaidFriendlyError {
   tip?: string
   offendingLine?: string
   raw: string
+}
+
+// Mermaid is several MB; load it on first diagram render instead of at app start.
+let mermaidPromise: Promise<typeof import('mermaid').default> | null = null
+
+function loadMermaid(): Promise<typeof import('mermaid').default> {
+  if (!mermaidPromise) {
+    mermaidPromise = import('mermaid')
+      .then(({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          securityLevel: 'loose',
+          fontFamily: 'var(--font-sans, system-ui, sans-serif)'
+        })
+        return mermaid
+      })
+      .catch((err) => {
+        mermaidPromise = null
+        throw err
+      })
+  }
+  return mermaidPromise
 }
 
 export const ShellCanvasPreview: React.FC<ShellCanvasPreviewProps> = ({
@@ -43,15 +65,6 @@ export const ShellCanvasPreview: React.FC<ShellCanvasPreviewProps> = ({
     )
 
   useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'dark',
-      securityLevel: 'loose',
-      fontFamily: 'var(--font-sans, system-ui, sans-serif)'
-    })
-  }, [])
-
-  useEffect(() => {
     if (!isMermaid) return
     let isCancelled = false
 
@@ -62,6 +75,7 @@ export const ShellCanvasPreview: React.FC<ShellCanvasPreviewProps> = ({
       setMermaidSvg(null)
 
       const tryRender = async (source: string) => {
+        const mermaid = await loadMermaid()
         const id = `mermaid-canvas-${Math.random().toString(36).slice(2, 9)}`
         return mermaid.render(id, source)
       }
@@ -150,6 +164,23 @@ export const ShellCanvasPreview: React.FC<ShellCanvasPreviewProps> = ({
 </body>
 </html>`
   }
+
+  // The app's CSP would also bind a srcdoc iframe, blocking the inline scripts
+  // canvases rely on, so the document is served from its own preview origin.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (isMermaid || isSvg) return
+    let alive = true
+    window.goltiAPI
+      .registerPreview(getIframeSrcDoc())
+      .then((url: string) => {
+        if (alive) setPreviewUrl(url)
+      })
+      .catch((err: unknown) => console.error('Failed to prepare canvas preview:', err))
+    return () => {
+      alive = false
+    }
+  }, [content, isMermaid, isSvg, key])
 
   return (
     <div className="shell-canvas-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
@@ -338,9 +369,9 @@ export const ShellCanvasPreview: React.FC<ShellCanvasPreviewProps> = ({
             />
           ) : (
             <iframe
-              key={key}
+              key={previewUrl ?? 'pending'}
               title={title || 'Shell Canvas Live Preview'}
-              srcDoc={getIframeSrcDoc()}
+              src={previewUrl ?? 'about:blank'}
               style={{
                 width: '100%',
                 height: '100%',

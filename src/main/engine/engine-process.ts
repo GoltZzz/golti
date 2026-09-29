@@ -1,8 +1,15 @@
 import fs from 'fs'
 import net from 'net'
-import { spawn, execFile, ChildProcess } from 'child_process'
+import { execFile, ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { getBinaryPath, getEngineSpawnEnv, isBinaryInstalled, getInstalledBackend, LLAMA_VERSION } from './binary-manager'
+import {
+  getBinaryPath,
+  getEngineSpawnEnv,
+  isBinaryInstalled,
+  getInstalledBackend,
+  spawnEngineBinary,
+  LLAMA_VERSION
+} from './binary-manager'
 import { detectGpu, GpuVendor } from './gpu-detect'
 import {
   computeContextSize,
@@ -40,6 +47,51 @@ let currentState: EngineState = {
   port: 8391,
   loadedModel: undefined,
   error: undefined
+}
+
+/**
+ * Startup, the renderer and the chat provider can all start or load a model at
+ * the same moment. Unserialized, a second start overwrites `currentProcess`
+ * while the first server is still alive; quit then stops the wrong one and the
+ * orphan keeps its model in VRAM. Every lifecycle change runs through here.
+ */
+let lifecycle: Promise<unknown> = Promise.resolve()
+function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = lifecycle.then(fn, fn)
+  lifecycle = run.catch(() => {})
+  return run
+}
+
+/** Bumped by every stop or reload, so a start still loading knows to give up. */
+let startEpoch = 0
+
+/**
+ * A start holds the queue for the whole model load, so a stop waiting behind it
+ * would delay quit by that long. Kill the loading attempt now instead; the
+ * start sees the epoch change and bails without retrying.
+ */
+function preemptStart(): void {
+  startEpoch++
+  if (currentState.status === 'starting') {
+    try { currentProcess?.kill('SIGKILL') } catch {}
+  }
+}
+
+/** Signals `proc` and resolves once it has actually exited, escalating to SIGKILL. */
+function killAndWait(proc: ChildProcess, graceMs = 2000): Promise<void> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve()
+  return new Promise((resolve) => {
+    const escalate = setTimeout(() => {
+      try { proc.kill('SIGKILL') } catch {}
+      // Don't hang quit on a process stuck in the driver.
+      setTimeout(resolve, graceMs)
+    }, graceMs)
+    proc.once('exit', () => {
+      clearTimeout(escalate)
+      resolve()
+    })
+    try { proc.kill('SIGTERM') } catch {}
+  })
 }
 
 /**
@@ -275,11 +327,7 @@ interface AttemptResult {
 
 /** Spawns one llama-server attempt and watches for an early GPU failure. */
 function spawnAttempt(binaryPath: string, args: string[]): AttemptResult {
-  const proc = spawn(binaryPath, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: false,
-    env: getEngineSpawnEnv(binaryPath)
-  })
+  const proc = spawnEngineBinary(binaryPath, args)
 
   let stderrBuffer = ''
   let listening = false
@@ -353,15 +401,28 @@ function statSizeBytes(filePath?: string): number | undefined {
   }
 }
 
-export async function startEngine(
+export function startEngine(
   modelPath?: string,
   port: number = 8391,
   gpuLayers?: number,
   preferredDeviceId?: string
 ): Promise<EngineState> {
+  const epoch = startEpoch
+  return serialized(() => startEngineNow(epoch, modelPath, port, gpuLayers, preferredDeviceId))
+}
+
+async function startEngineNow(
+  epoch: number,
+  modelPath?: string,
+  port: number = 8391,
+  gpuLayers?: number,
+  preferredDeviceId?: string
+): Promise<EngineState> {
+  if (epoch !== startEpoch) return currentState
+
   if (currentProcess) {
     if (modelPath && currentState.loadedModel !== modelPath) {
-      await stopEngine()
+      await stopEngineNow()
     } else {
       return currentState
     }
@@ -395,16 +456,19 @@ export async function startEngine(
   // On a GPU backend, pick the discrete device explicitly (hybrid machines
   // otherwise default to the integrated GPU) and size offload from *its* free
   // VRAM rather than a system-wide probe.
+  // The probes below each spawn a subprocess and are independent, so start
+  // them together rather than paying for each one in sequence.
+  const cpuCountsPromise = detectCpuCounts()
+  const mmprojPromise = modelPath ? engineSupportsMmproj(binaryPath) : Promise.resolve(false)
   let device: EngineDevice | null = null
   if (backend === 'vulkan') {
-    const devices = await listEngineDevices(binaryPath)
+    const [devices, gpu] = await Promise.all([listEngineDevices(binaryPath), detectGpu()])
     // Honour an explicit device choice when it's still present; otherwise
     // auto-pick the discrete GPU for the detected vendor.
     if (preferredDeviceId) {
       device = devices.find((d) => d.id === preferredDeviceId) ?? null
     }
     if (!device) {
-      const gpu = await detectGpu()
       device = pickEngineDevice(devices, gpu.vendor)
     }
     if (device) {
@@ -417,9 +481,9 @@ export async function startEngine(
   let fellBack = false
 
   const layerCount = readGgufModelInfo(modelPath)?.blockCount
-  const threads = chooseThreadCount(await detectCpuCounts())
+  const threads = chooseThreadCount(await cpuCountsPromise)
   let tuningEnabled = true
-  let mmprojEnabled = modelPath ? await engineSupportsMmproj(binaryPath) : false
+  let mmprojEnabled = await mmprojPromise
   let mmprojOffload = true
   console.log(
     `[GoltiEngine] Offload ${layers} of ${layerCount ?? 'unknown'} layers, ${threads} generation threads`
@@ -465,6 +529,8 @@ export async function startEngine(
   })
 
   while (true) {
+    if (epoch !== startEpoch) return currentState
+
     const args: string[] = [
       '--host', '127.0.0.1',
       '--port', String(actualPort),
@@ -493,6 +559,11 @@ export async function startEngine(
 
     currentProcess = attempt.process
     const pid = currentProcess.pid
+    const discard = async () => {
+      // Wait for the exit so the next attempt doesn't race it for VRAM.
+      await killAndWait(attempt.process)
+      if (currentProcess === attempt.process) currentProcess = null
+    }
     updateState({
       pid,
       binaryPath,
@@ -507,10 +578,15 @@ export async function startEngine(
 
     const isHealthy = await waitForHealthy(actualPort, attempt, loadBudgetMs)
 
+    if (epoch !== startEpoch) {
+      // Stopped or superseded while loading - neither retry nor commit.
+      await discard()
+      return currentState
+    }
+
     if (!isHealthy && attempt.hasExited() && projectorPath && isMmprojFailure(attempt.getStderr())) {
       // A mismatched projector kills the server outright: shed offload, then vision.
-      try { currentProcess?.kill('SIGKILL') } catch {}
-      currentProcess = null
+      await discard()
       if (mmprojOffload) {
         console.warn('[GoltiEngine] Projector failed to offload, retrying on CPU')
         mmprojOffload = false
@@ -524,8 +600,7 @@ export async function startEngine(
     if (!isHealthy && attempt.hasExited() && tuningEnabled && isUnsupportedArgFailure(attempt.getStderr())) {
       // This engine build rejects one of the performance flags - retry plain.
       console.warn('[GoltiEngine] Engine rejected tuning flags, retrying without them')
-      try { currentProcess?.kill('SIGKILL') } catch {}
-      currentProcess = null
+      await discard()
       tuningEnabled = false
       continue
     }
@@ -536,8 +611,7 @@ export async function startEngine(
       // GPU couldn't fit the model - shed layers and retry the same binary.
       const nextLayers = reduceOffloadLayers(layers, layerCount)
       console.warn(`[GoltiEngine] GPU offload failed at ${layers} layers, retrying with ${nextLayers}`)
-      try { currentProcess?.kill('SIGKILL') } catch {}
-      currentProcess = null
+      await discard()
       layers = nextLayers
       fellBack = true
       continue
@@ -547,8 +621,7 @@ export async function startEngine(
       const stderr = attempt.getStderr().trim()
       if (layers !== 0) {
         console.warn(`[GoltiEngine] Health check failed at ${layers} layers, falling back to CPU`)
-        try { currentProcess?.kill('SIGKILL') } catch {}
-        currentProcess = null
+        await discard()
         layers = 0
         fellBack = true
         continue
@@ -556,8 +629,7 @@ export async function startEngine(
       if (contextSize > MIN_CONTEXT_SIZE) {
         const nextContext = reduceContextSize(contextSize)
         console.warn(`[GoltiEngine] Health check failed at ctx-size ${contextSize}, retrying with ${nextContext}`)
-        try { currentProcess?.kill('SIGKILL') } catch {}
-        currentProcess = null
+        await discard()
         contextSize = nextContext
         continue
       }
@@ -570,8 +642,7 @@ export async function startEngine(
         freeMemoryBytes
       })
       console.error('[GoltiEngine] Server failed to start:', failure.kind, stderr)
-      try { currentProcess?.kill('SIGKILL') } catch {}
-      currentProcess = null
+      await discard()
       updateState({
         status: 'error',
         error: engineFailureText(failure),
@@ -583,8 +654,11 @@ export async function startEngine(
     }
 
     // Committed to this process - attach the long-lived listeners.
-    currentProcess.on('exit', (code, signal) => {
+    const proc = attempt.process
+    proc.on('exit', (code, signal) => {
       console.log(`[llama-server] process exited with code ${code}, signal ${signal}`)
+      // A newer server may own the slot by now; leave its handle and state alone.
+      if (currentProcess !== proc) return
       const isUnexpected = code !== 0 && code !== null && signal === null
       const stderrMsg = attempt.getStderr().trim()
       currentProcess = null
@@ -609,8 +683,9 @@ export async function startEngine(
         updateState({ status: 'stopped', pid: undefined, loadedModel: undefined, failure: undefined })
       }
     })
-    currentProcess.on('error', (err) => {
+    proc.on('error', (err) => {
       console.error('[llama-server error]', err)
+      if (currentProcess !== proc) return
       currentProcess = null
       updateState({ status: 'error', error: err.message, lastLogs: err.stack || err.message, pid: undefined })
     })
@@ -628,29 +703,31 @@ export async function startEngine(
   }
 }
 
-export async function stopEngine(): Promise<EngineState> {
-  if (currentProcess) {
-    currentProcess.kill('SIGTERM')
-    let attempts = 0
-    while (currentProcess && attempts < 10) {
-      await new Promise((r) => setTimeout(r, 200))
-      attempts++
-    }
-    if (currentProcess) {
-      currentProcess.kill('SIGKILL')
-      currentProcess = null
-    }
+export function stopEngine(): Promise<EngineState> {
+  preemptStart()
+  return serialized(stopEngineNow)
+}
+
+async function stopEngineNow(): Promise<EngineState> {
+  const proc = currentProcess
+  if (proc) {
+    await killAndWait(proc)
+    if (currentProcess === proc) currentProcess = null
   }
   updateState({ status: isBinaryInstalled() ? 'stopped' : 'not-installed', pid: undefined, loadedModel: undefined })
   return currentState
 }
 
-export async function loadModelInEngine(
+export function loadModelInEngine(
   modelPath: string,
   port: number = 8391,
   gpuLayers?: number,
   preferredDeviceId?: string
 ): Promise<EngineState> {
-  await stopEngine()
-  return startEngine(modelPath, port, gpuLayers, preferredDeviceId)
+  preemptStart()
+  const epoch = startEpoch
+  return serialized(async () => {
+    await stopEngineNow()
+    return startEngineNow(epoch, modelPath, port, gpuLayers, preferredDeviceId)
+  })
 }

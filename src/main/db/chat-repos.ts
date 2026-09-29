@@ -4,12 +4,14 @@ import type {
   Citation,
   ContextItem,
   Conversation,
+  ConversationGroup,
   ConversationSearchHit,
   GenerationSettings,
   Message,
   MessageAttachment,
   MessageSearchHit,
-  MessageVersion
+  MessageVersion,
+  ToolCallRecord
 } from '../../shared/types'
 import { getSqlite } from './sqlite'
 
@@ -17,6 +19,16 @@ function parseGenSettings(raw: string | null): GenerationSettings | undefined {
   if (!raw) return undefined
   try {
     return JSON.parse(raw) as GenerationSettings
+  } catch {
+    return undefined
+  }
+}
+
+function parseToolCalls(raw: string | null): ToolCallRecord[] | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.length ? (parsed as ToolCallRecord[]) : undefined
   } catch {
     return undefined
   }
@@ -34,7 +46,18 @@ function mapConversation(row: any): Conversation {
     archived: Boolean(row.archived),
     systemPrompt: row.system_prompt ?? undefined,
     generationSettings: parseGenSettings(row.generation_settings),
-    activeLeafId: row.active_leaf_id ?? null
+    activeLeafId: row.active_leaf_id ?? null,
+    groupId: row.group_id ?? null
+  }
+}
+
+function mapGroup(row: any): ConversationGroup {
+  return {
+    id: row.id,
+    name: row.name,
+    sortOrder: row.sort_order,
+    collapsed: Boolean(row.collapsed),
+    createdAt: row.created_at
   }
 }
 
@@ -59,7 +82,8 @@ function mapMessage(row: any): Message {
     thinkingDurationMs: row.thinking_duration_ms ?? undefined,
     ttftMs: row.ttft_ms ?? undefined,
     tokensPerSec: row.tokens_per_sec ?? undefined,
-    finishReason: row.finish_reason ?? undefined
+    finishReason: row.finish_reason ?? undefined,
+    toolCalls: parseToolCalls(row.tool_calls)
   }
 }
 
@@ -171,8 +195,8 @@ export const chatConversations = {
     const db = getSqlite()
     db.prepare(
       `INSERT INTO conversations
-        (id, title, model, provider_id, created_at, updated_at, pinned, archived, system_prompt, generation_settings, active_leaf_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, title, model, provider_id, created_at, updated_at, pinned, archived, system_prompt, generation_settings, active_leaf_id, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       conv.id,
       conv.title,
@@ -184,7 +208,8 @@ export const chatConversations = {
       conv.archived ? 1 : 0,
       conv.systemPrompt ?? null,
       conv.generationSettings ? JSON.stringify(conv.generationSettings) : null,
-      conv.activeLeafId ?? null
+      conv.activeLeafId ?? null,
+      conv.groupId ?? null
     )
     syncConversationFts(conv.id, conv.title, '')
   },
@@ -201,7 +226,8 @@ export const chatConversations = {
     db.prepare(
       `UPDATE conversations SET
         title = ?, model = ?, provider_id = ?, updated_at = ?,
-        pinned = ?, archived = ?, system_prompt = ?, generation_settings = ?, active_leaf_id = ?
+        pinned = ?, archived = ?, system_prompt = ?, generation_settings = ?, active_leaf_id = ?,
+        group_id = ?
        WHERE id = ?`
     ).run(
       next.title,
@@ -213,6 +239,7 @@ export const chatConversations = {
       next.systemPrompt ?? null,
       next.generationSettings ? JSON.stringify(next.generationSettings) : null,
       next.activeLeafId ?? null,
+      next.groupId ?? null,
       id
     )
     syncConversationFts(id, next.title, '')
@@ -325,6 +352,44 @@ export const chatConversations = {
   }
 }
 
+export const chatGroups = {
+  list: (): ConversationGroup[] => {
+    const db = getSqlite()
+    return db
+      .prepare('SELECT * FROM conversation_groups ORDER BY sort_order ASC, created_at ASC')
+      .all()
+      .map(mapGroup)
+  },
+
+  create: (group: ConversationGroup): void => {
+    const db = getSqlite()
+    db.prepare(
+      `INSERT INTO conversation_groups (id, name, sort_order, collapsed, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(group.id, group.name, group.sortOrder, group.collapsed ? 1 : 0, group.createdAt)
+  },
+
+  update: (id: string, updates: Partial<Omit<ConversationGroup, 'id' | 'createdAt'>>): void => {
+    const db = getSqlite()
+    const row = db.prepare('SELECT * FROM conversation_groups WHERE id = ?').get(id)
+    if (!row) return
+    const next = { ...mapGroup(row), ...updates }
+    db.prepare(
+      'UPDATE conversation_groups SET name = ?, sort_order = ?, collapsed = ? WHERE id = ?'
+    ).run(next.name, next.sortOrder, next.collapsed ? 1 : 0, id)
+  },
+
+  /** Deleting a group keeps its conversations; they fall back to ungrouped. */
+  delete: (id: string): void => {
+    const db = getSqlite()
+    const run = db.transaction(() => {
+      db.prepare('UPDATE conversations SET group_id = NULL WHERE group_id = ?').run(id)
+      db.prepare('DELETE FROM conversation_groups WHERE id = ?').run(id)
+    })
+    run()
+  }
+}
+
 export const chatMessages = {
   listForConversation: (conversationId: string): Message[] => {
     const db = getSqlite()
@@ -352,8 +417,8 @@ export const chatMessages = {
       `INSERT INTO messages
         (id, conversation_id, role, content, model, tokens_in, tokens_out, created_at, updated_at,
          parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms,
-         finish_reason, display_content, ttft_ms, tokens_per_sec)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         finish_reason, display_content, ttft_ms, tokens_per_sec, tool_calls)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       msg.id,
       msg.conversationId,
@@ -374,7 +439,8 @@ export const chatMessages = {
       msg.finishReason ?? null,
       msg.displayContent ?? null,
       msg.ttftMs ?? null,
-      msg.tokensPerSec ?? null
+      msg.tokensPerSec ?? null,
+      msg.toolCalls?.length ? JSON.stringify(msg.toolCalls) : null
     )
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversationId)
     syncMessageFts(msg.id, msg.conversationId, msg.content)
@@ -392,7 +458,7 @@ export const chatMessages = {
         content = ?, model = ?, tokens_in = ?, tokens_out = ?, updated_at = ?,
         parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?,
         reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?, display_content = ?,
-        ttft_ms = ?, tokens_per_sec = ?
+        ttft_ms = ?, tokens_per_sec = ?, tool_calls = ?
        WHERE id = ?`
     ).run(
       next.content,
@@ -411,6 +477,7 @@ export const chatMessages = {
       next.displayContent ?? null,
       next.ttftMs ?? null,
       next.tokensPerSec ?? null,
+      next.toolCalls?.length ? JSON.stringify(next.toolCalls) : null,
       id
     )
     syncMessageFts(id, next.conversationId, next.content)

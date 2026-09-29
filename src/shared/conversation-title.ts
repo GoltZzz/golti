@@ -9,6 +9,9 @@ export const DEFAULT_CONVERSATION_TITLE = 'New Conversation'
 /** Titles longer than this get cut at a word boundary. */
 export const MAX_TITLE_LENGTH = 48
 
+/** Titles the user types are kept as written, up to this length. */
+export const MAX_USER_TITLE_LENGTH = 120
+
 /**
  * Anything longer than this coming back from a model is not a title, it is the
  * model answering the prompt instead of naming it. Reject and keep the fallback.
@@ -68,6 +71,12 @@ export function sanitizeGeneratedTitle(raw: string): string | null {
   if (!text) return null
 
   return truncateTitle(text)
+}
+
+/** Clean a title the user typed. Returns null when nothing is left to save. */
+export function normalizeUserTitle(raw: string): string | null {
+  const text = collapseWhitespace(raw).slice(0, MAX_USER_TITLE_LENGTH).trim()
+  return text || null
 }
 
 function collapseWhitespace(value: string): string {
