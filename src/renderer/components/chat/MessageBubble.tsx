@@ -50,6 +50,8 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { ThinkingBlock } from './ThinkingBlock'
 import { EngineMemoryErrorCard } from './EngineMemoryErrorCard'
 import { MessageAttachments } from './MessageAttachments'
+import { ToolCallList } from './ToolCallList'
+import { stripToolCalls } from '../../../shared/mcp-tools'
 
 interface MessageBubbleProps {
   message: Message
@@ -121,6 +123,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   }, [isUser, message.content, message.displayContent])
 
   const effectiveReasoning = message.reasoningContent || extractedReasoning
+  const awaitingApproval = !!message.toolCalls?.some((c) => c.status === 'awaiting-approval')
 
   const memoryErrorDetails = useMemo(() => {
     if (isUser) return null
@@ -176,7 +179,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
   const displayCleanContent = useMemo(() => {
     if (!cleanContent) return ''
     const target = message.isStreaming ? streamingAsk.visible : cleanContent
-    let text = stripSearchRequests(stripAskUser(target))
+    let text = stripToolCalls(stripSearchRequests(stripAskUser(target)))
     if (memoryErrorDetails?.isMemoryError) {
       text = text
         .replace(/\n*\*\[Error:.*?\]\*/gi, '')
@@ -298,8 +301,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({ message
               {message.attachments && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
+              {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
+                <ToolCallList calls={message.toolCalls} live={!!message.isStreaming} />
+              )}
               {message.isStreaming && !cleanContent ? (
-                researchProgress ? null : (
+                researchProgress || awaitingApproval ? null : (
                   <div style={{ display: 'flex', gap: 4, padding: '6px 0' }}>
                     <span className="dot-flashing" />
                     <span className="dot-flashing" />

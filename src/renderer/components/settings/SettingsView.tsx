@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Server, Sliders, Info, Zap, Download, Trash2, CheckCircle2, Globe, Copy, RefreshCw, BrainCircuit, MonitorSmartphone, SquareSlash } from "lucide-react";
+import { Server, Sliders, Info, Zap, Download, Trash2, CheckCircle2, Globe, Copy, RefreshCw, BrainCircuit, MonitorSmartphone, SquareSlash, Plug } from "lucide-react";
 import { ProviderConfig } from "./ProviderConfig";
 import { SkillsSettings } from "./SkillsSettings";
+import { McpSettings } from "./McpSettings";
 import { EggLogo } from "../brand/EggLogo";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -140,6 +141,7 @@ export const SettingsView: React.FC = () => {
     { id: "providers", label: "Providers & APIs", icon: <Server size={14} /> },
     { id: "engine", label: "Golti Engine", icon: <Zap size={14} /> },
     { id: "skills", label: "Skills", icon: <SquareSlash size={14} /> },
+    { id: "mcp", label: "MCP Servers", icon: <Plug size={14} /> },
     { id: "general", label: "General & Prompt", icon: <Sliders size={14} /> },
     { id: "about", label: "About Golti", icon: <Info size={14} /> },
   ];
@@ -390,6 +392,8 @@ export const SettingsView: React.FC = () => {
         )}
 
         {activeSubTab === "skills" && <SkillsSettings />}
+
+        {activeSubTab === "mcp" && <McpSettings />}
 
         {activeSubTab === "general" && (
           <div className="settings-panel">

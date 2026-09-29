@@ -9,7 +9,8 @@ import type {
   Message,
   MessageAttachment,
   MessageSearchHit,
-  MessageVersion
+  MessageVersion,
+  ToolCallRecord
 } from '../../shared/types'
 import { getSqlite } from './sqlite'
 
@@ -17,6 +18,16 @@ function parseGenSettings(raw: string | null): GenerationSettings | undefined {
   if (!raw) return undefined
   try {
     return JSON.parse(raw) as GenerationSettings
+  } catch {
+    return undefined
+  }
+}
+
+function parseToolCalls(raw: string | null): ToolCallRecord[] | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.length ? (parsed as ToolCallRecord[]) : undefined
   } catch {
     return undefined
   }
@@ -59,7 +70,8 @@ function mapMessage(row: any): Message {
     thinkingDurationMs: row.thinking_duration_ms ?? undefined,
     ttftMs: row.ttft_ms ?? undefined,
     tokensPerSec: row.tokens_per_sec ?? undefined,
-    finishReason: row.finish_reason ?? undefined
+    finishReason: row.finish_reason ?? undefined,
+    toolCalls: parseToolCalls(row.tool_calls)
   }
 }
 
@@ -352,8 +364,8 @@ export const chatMessages = {
       `INSERT INTO messages
         (id, conversation_id, role, content, model, tokens_in, tokens_out, created_at, updated_at,
          parent_id, variant_group_id, variant_index, error, generation_id, reasoning_content, thinking_duration_ms,
-         finish_reason, display_content, ttft_ms, tokens_per_sec)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         finish_reason, display_content, ttft_ms, tokens_per_sec, tool_calls)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       msg.id,
       msg.conversationId,
@@ -374,7 +386,8 @@ export const chatMessages = {
       msg.finishReason ?? null,
       msg.displayContent ?? null,
       msg.ttftMs ?? null,
-      msg.tokensPerSec ?? null
+      msg.tokensPerSec ?? null,
+      msg.toolCalls?.length ? JSON.stringify(msg.toolCalls) : null
     )
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), msg.conversationId)
     syncMessageFts(msg.id, msg.conversationId, msg.content)
@@ -392,7 +405,7 @@ export const chatMessages = {
         content = ?, model = ?, tokens_in = ?, tokens_out = ?, updated_at = ?,
         parent_id = ?, variant_group_id = ?, variant_index = ?, error = ?, generation_id = ?,
         reasoning_content = ?, thinking_duration_ms = ?, finish_reason = ?, display_content = ?,
-        ttft_ms = ?, tokens_per_sec = ?
+        ttft_ms = ?, tokens_per_sec = ?, tool_calls = ?
        WHERE id = ?`
     ).run(
       next.content,
@@ -411,6 +424,7 @@ export const chatMessages = {
       next.displayContent ?? null,
       next.ttftMs ?? null,
       next.tokensPerSec ?? null,
+      next.toolCalls?.length ? JSON.stringify(next.toolCalls) : null,
       id
     )
     syncMessageFts(id, next.conversationId, next.content)
